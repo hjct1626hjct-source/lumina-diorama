@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Lumina Diorama" />
+  <meta name="theme-color" content="#071121" />
+  <meta name="description" content="LUMINA DIORAMA — 立体ジオラマ×サイバーネオンファンタジー 最大4人オンライン協力＆ソロ対応2Dアクション箱庭探索RPG。製作者：駿 (Created by Shun)" />
+  <title>LUMINA DIORAMA — Cyber Neon Chronicles | 製作者：駿</title>
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="icon" type="image/svg+xml" href="./icon.svg" />
+  <link rel="stylesheet" href="./css/style.css" />
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js" defer></script>
+</head>
+<body>
+  <div id="app" class="app-root">
+    <!-- Primary High-DPI Diorama Game Canvas -->
+    <canvas id="game-canvas" aria-label="LUMINA DIORAMA Game Screen"></canvas>
+
+    <!-- ============================================================ -->
+    <!-- TITLE SCREEN OVERLAY                                         -->
+    <!-- ============================================================ -->
+    <section id="screen-title" class="screen-overlay screen-title active">
+      <div class="title-layout">
+        <div class="title-spacer" aria-hidden="true"></div>
+        <div class="title-panel">
+          <div class="title-actions">
+            <button id="btn-title-continue" class="btn-neon btn-primary hidden" type="button">
+              <span class="btn-icon">▶</span>
+              <span class="btn-label">つづきから冒険する</span>
+              <span id="continue-summary" class="btn-sub"></span>
+            </button>
+            <button id="btn-title-new" class="btn-neon btn-accent" type="button">
+              <span class="btn-icon">✦</span>
+              <span class="btn-label">はじめから（ソロ / キャラ作成）</span>
+            </button>
+            <button id="btn-title-multi" class="btn-neon btn-cyber" type="button">
+              <span class="btn-icon">◈</span>
+              <span class="btn-label">オンライン協力ロビー（最大4人）</span>
+            </button>
+            <div class="title-sub-row">
+              <button id="btn-title-load" class="btn-ghost" type="button">セーブ管理</button>
+              <button id="btn-title-controls" class="btn-ghost" type="button">操作ガイド</button>
+              <button id="btn-title-mute" class="btn-ghost" type="button">🔊 音声 ON</button>
+            </div>
+          </div>
+          <footer class="creator-badge-title">
+            <span class="creator-spark">◆</span>
+            <span>製作者：駿 (Created by Shun)</span>
+            <span class="creator-spark">◆</span>
+          </footer>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- CHARACTER CREATION / JOB SELECT OVERLAY                      -->
+    <!-- ============================================================ -->
+    <section id="screen-job" class="screen-overlay modal-backdrop hidden">
+      <div class="panel-glass panel-wide">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">CHARACTER INITIALIZATION</p>
+            <h2>冒険者登録 ＆ ジョブ選択</h2>
+          </div>
+          <button id="btn-job-back" class="btn-icon-close" type="button" aria-label="戻る">✕</button>
+        </div>
+
+        <div class="name-input-row">
+          <label for="input-player-name">プレイヤー名</label>
+          <input id="input-player-name" type="text" maxlength="12" value="シュン" placeholder="名前を入力 (最大12文字)" autocomplete="off" />
+        </div>
+
+        <div id="job-cards" class="job-grid"></div>
+
+        <div class="panel-footer">
+          <span class="credit-inline">製作者：駿 (Created by Shun)</span>
+          <button id="btn-job-start" class="btn-neon btn-primary" type="button">このジョブで冒険へ出発！</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- ONLINE CO-OP MULTIPLAYER LOBBY                               -->
+    <!-- ============================================================ -->
+    <section id="screen-lobby" class="screen-overlay modal-backdrop hidden">
+      <div class="panel-glass panel-medium">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">SERVERLESS P2P CO-OP (MAX 4 PLAYERS)</p>
+            <h2>オンライン協力マルチプレイ</h2>
+          </div>
+          <button id="btn-lobby-close" class="btn-icon-close" type="button" aria-label="閉じる">✕</button>
+        </div>
+
+        <div class="lobby-note">
+          敵の強さはソロ基準のまま！最大4人でド派手に無双＆ドロップ・経験値全員獲得！
+        </div>
+
+        <div class="lobby-columns">
+          <div class="lobby-card">
+            <h3>ルームを作成（ホスト）</h3>
+            <p class="muted">合言葉を発行して友達を招待します。</p>
+            <div class="input-group">
+              <input id="input-host-code" type="text" maxlength="6" placeholder="自動発行 / 4〜6文字" autocomplete="off" />
+              <button id="btn-gen-code" class="btn-ghost" type="button">🎲 生成</button>
+            </div>
+            <button id="btn-host-room" class="btn-neon btn-primary full-width" type="button">ルームを開設して冒険開始</button>
+          </div>
+
+          <div class="lobby-card">
+            <h3>ルームに合流（ゲスト）</h3>
+            <p class="muted">ホストから聞いた合言葉を入力します。</p>
+            <div class="input-group">
+              <input id="input-join-code" type="text" maxlength="6" placeholder="合言葉を入力 (例: NEON7)" autocomplete="off" />
+            </div>
+            <button id="btn-join-room" class="btn-neon btn-cyber full-width" type="button">パーティーに合流する</button>
+          </div>
+        </div>
+
+        <div id="lobby-status-box" class="lobby-status hidden">
+          <div class="status-line">
+            <span class="status-dot"></span>
+            <span id="lobby-status-text">接続準備中...</span>
+          </div>
+          <div id="lobby-room-display" class="room-code-banner hidden">
+            <span>合言葉：</span>
+            <strong id="lobby-room-code">----</strong>
+            <button id="btn-copy-room" class="btn-ghost btn-sm" type="button">コピー</button>
+          </div>
+          <div id="lobby-party-list" class="party-chips"></div>
+          <div class="lobby-active-actions">
+            <button id="btn-lobby-resume" class="btn-neon btn-accent hidden" type="button">ゲーム画面に戻る</button>
+            <button id="btn-lobby-disconnect" class="btn-danger hidden" type="button">ルームから退出</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- OPENING STORY SEQUENCE                                       -->
+    <!-- ============================================================ -->
+    <section id="screen-intro" class="screen-overlay screen-cinematic hidden">
+      <div class="cinematic-box">
+        <p class="eyebrow">PROLOGUE — LUMINA DIORAMA</p>
+        <div id="intro-text" class="cinematic-text"></div>
+        <div class="cinematic-controls">
+          <button id="btn-intro-skip" class="btn-ghost" type="button">スキップ</button>
+          <button id="btn-intro-next" class="btn-neon btn-primary" type="button">次へ ▶</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- IN-GAME HUD                                                  -->
+    <!-- ============================================================ -->
+    <div id="hud-layer" class="hud-layer hidden">
+      <!-- Top-Left: Player Status & Party Bars -->
+      <div class="hud-top-left">
+        <div class="player-card">
+          <div class="player-card-head">
+            <span id="hud-job-badge" class="job-pill">KNIGHT</span>
+            <span id="hud-player-name" class="player-name">シュン</span>
+            <span id="hud-level" class="level-badge">Lv.1</span>
+            <span id="hud-ng-badge" class="ng-badge hidden">NG+2</span>
+          </div>
+          <div class="bar-row">
+            <span class="bar-tag hp">HP</span>
+            <div class="bar-track"><div id="hud-hp-fill" class="bar-fill hp"></div></div>
+            <span id="hud-hp-text" class="bar-num">120/120</span>
+          </div>
+          <div class="bar-row">
+            <span class="bar-tag mp">MP</span>
+            <div class="bar-track"><div id="hud-mp-fill" class="bar-fill mp"></div></div>
+            <span id="hud-mp-text" class="bar-num">60/60</span>
+          </div>
+          <div class="bar-row slim">
+            <span class="bar-tag exp">EXP</span>
+            <div class="bar-track"><div id="hud-exp-fill" class="bar-fill exp"></div></div>
+            <span id="hud-gold-text" class="gold-num">0 G</span>
+          </div>
+          <div class="bar-row slim">
+            <span class="bar-tag limit">ULT</span>
+            <div class="bar-track"><div id="hud-limit-fill" class="bar-fill limit"></div></div>
+            <span id="hud-limit-text" class="bar-num">0%</span>
+          </div>
+          <div id="hud-status-icons" class="status-pills"></div>
+        </div>
+        <!-- Co-op Party Mini Cards -->
+        <div id="hud-party-list" class="hud-party-list"></div>
+      </div>
+
+      <!-- Top-Center: Area Indicator, Boss HP Bar, Achievement Toast -->
+      <div class="hud-top-center">
+        <div id="hud-area-pill" class="area-pill">
+          <span id="hud-area-name">拠点ネオンタウン</span>
+          <span id="hud-tower-floor" class="tower-badge hidden">FLOOR 1</span>
+          <span id="hud-room-pill" class="room-pill hidden">ROOM: ----</span>
+        </div>
+
+        <div id="boss-hud" class="boss-hud hidden">
+          <div class="boss-hud-head">
+            <span id="boss-hud-title" class="boss-title">BOSS</span>
+            <span id="boss-hud-phase" class="boss-phase">PHASE 1</span>
+            <span id="boss-hud-shield" class="boss-shield hidden">🛡 守護クリスタル展開中</span>
+          </div>
+          <div class="boss-bar-track">
+            <div id="boss-hp-fill" class="boss-hp-fill"></div>
+            <div class="boss-half-mark"></div>
+          </div>
+          <div id="boss-hp-num" class="boss-hp-num">0 / 0</div>
+        </div>
+
+        <!-- Combo Counter -->
+        <div id="combo-hud" class="combo-hud hidden">
+          <div id="combo-count" class="combo-count">0 HIT</div>
+          <div id="combo-bonus" class="combo-bonus">ATK +0% / DROP +0%</div>
+        </div>
+      </div>
+
+      <!-- Top-Right: Minimap + Quick Action Buttons -->
+      <div class="hud-top-right">
+        <div class="minimap-wrap">
+          <canvas id="minimap-canvas" width="156" height="122"></canvas>
+          <div class="minimap-legend">
+            <span>●自分</span>
+            <span class="leg-ally">●味方</span>
+            <span class="leg-chest">●宝箱</span>
+            <span class="leg-boss">◆BOSS</span>
+          </div>
+        </div>
+        <div class="hud-quick-btns">
+          <button id="btn-hud-warp" class="hud-mini-btn" type="button" title="ワープ (M)">🌀 ワープ</button>
+          <button id="btn-hud-multi" class="hud-mini-btn" type="button" title="マルチプレイ">🌐 協力</button>
+          <button id="btn-hud-menu" class="hud-mini-btn" type="button" title="メニュー (Esc)">☰ メニュー</button>
+          <button id="btn-hud-mute" class="hud-mini-btn" type="button" title="ミュート">🔊</button>
+        </div>
+      </div>
+
+      <!-- Bottom-Center: Active Spell & Buff Quick Bar (visible on PC + iPad) -->
+      <div class="hud-spell-strip" id="hud-spell-strip"></div>
+
+      <!-- Collapsible Chat & Quick Stamps Drawer -->
+      <div id="chat-container" class="chat-container collapsed">
+        <button id="btn-chat-toggle" class="chat-toggle-btn" type="button">
+          💬 チャット / スタンプ <span id="chat-unread-dot" class="unread-dot hidden"></span>
+        </button>
+        <div class="chat-drawer">
+          <div id="chat-messages" class="chat-messages"></div>
+          <div id="stamp-bar" class="stamp-bar"></div>
+          <form id="chat-form" class="chat-form">
+            <input id="chat-input" type="text" maxlength="60" placeholder="メッセージを入力..." autocomplete="off" />
+            <button type="submit" class="btn-chat-send">送信</button>
+          </form>
+        </div>
+      </div>
+
+      <!-- Downed / Rescue Banner -->
+      <div id="downed-banner" class="downed-banner hidden">
+        <strong>戦闘不能！</strong> 味方が近づいて長押しすると蘇生できます（残り <span id="downed-timer">30</span>秒）
+      </div>
+
+      <!-- Touch Controls Layer (iPad / Tablet / Touch Optimized) -->
+      <div id="touch-layer" class="touch-layer">
+        <!-- Floating Joystick Zone -->
+        <div id="joystick-zone" class="joystick-zone">
+          <div id="joystick-base" class="joystick-base hidden">
+            <div id="joystick-knob" class="joystick-knob"></div>
+          </div>
+        </div>
+
+        <!-- Action Buttons Cluster -->
+        <div id="touch-actions" class="touch-actions">
+          <button id="tbtn-interact" class="tbtn tbtn-interact" type="button">
+            <svg class="tbtn-ring" viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" /></svg>
+            <span class="tbtn-ico">💬</span>
+            <span id="tbtn-interact-label" class="tbtn-txt">調べる</span>
+          </button>
+
+          <button id="tbtn-limit" class="tbtn tbtn-limit" type="button">
+            <svg class="tbtn-ring" viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" /></svg>
+            <span class="tbtn-ico">★</span>
+            <span class="tbtn-txt">必殺</span>
+          </button>
+
+          <button id="tbtn-cycle" class="tbtn tbtn-cycle" type="button">
+            <span class="tbtn-ico">↻</span>
+            <span class="tbtn-txt">切替</span>
+          </button>
+
+          <button id="tbtn-magic" class="tbtn tbtn-magic" type="button">
+            <span id="tbtn-magic-ico" class="tbtn-ico">🔥</span>
+            <span id="tbtn-magic-txt" class="tbtn-txt">魔法</span>
+          </button>
+
+          <button id="tbtn-dash" class="tbtn tbtn-dash" type="button">
+            <svg class="tbtn-ring" viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" /></svg>
+            <span class="tbtn-ico">⚡</span>
+            <span class="tbtn-txt">回避</span>
+          </button>
+
+          <button id="tbtn-attack" class="tbtn tbtn-attack" type="button">
+            <span class="tbtn-ico">⚔</span>
+            <span class="tbtn-txt">攻撃</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- CINEMATIC OVERLAYS: AREA BANNER, BOSS WARNING, TOASTS        -->
+    <!-- ============================================================ -->
+    <div id="area-banner" class="area-banner hidden">
+      <p id="area-banner-sub" class="area-banner-sub">AREA 01</p>
+      <h2 id="area-banner-title" class="area-banner-title">翠光のジオラマ樹海</h2>
+    </div>
+
+    <div id="warning-cutin" class="warning-cutin hidden">
+      <div class="warning-stripes"></div>
+      <div class="warning-content">
+        <div class="warning-tag">⚠ DANGER DETECTED ⚠</div>
+        <div class="warning-big">WARNING!!</div>
+        <div id="warning-boss-name" class="warning-boss-name">BOSS</div>
+      </div>
+      <div class="warning-stripes"></div>
+    </div>
+
+    <div id="toast-stack" class="toast-stack"></div>
+    <div id="trophy-toast" class="trophy-toast hidden">
+      <span class="trophy-icon">🏆</span>
+      <div>
+        <div class="trophy-eyebrow">ACHIEVEMENT UNLOCKED</div>
+        <div id="trophy-title" class="trophy-title">実績解除</div>
+      </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- NPC / BOSS DIALOGUE BOX                                      -->
+    <!-- ============================================================ -->
+    <div id="dialogue-box" class="dialogue-box hidden">
+      <div class="dialogue-avatar" id="dialogue-avatar">◈</div>
+      <div class="dialogue-body">
+        <div id="dialogue-speaker" class="dialogue-speaker">NPC</div>
+        <div id="dialogue-text" class="dialogue-text"></div>
+        <div class="dialogue-actions">
+          <span class="dialogue-hint">タップ / Enter で進む</span>
+          <button id="btn-dialogue-next" class="btn-neon btn-primary btn-sm" type="button">次へ ▶</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- GAME MENU MODAL (Status, Equip, Magic, Dex, Trophies, Save)  -->
+    <!-- ============================================================ -->
+    <section id="modal-menu" class="screen-overlay modal-backdrop hidden">
+      <div class="panel-glass panel-xl">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">ADVENTURER TERMINAL</p>
+            <h2>メニュー ＆ ステータス</h2>
+          </div>
+          <div class="header-right">
+            <span class="credit-inline">製作者：駿 (Created by Shun)</span>
+            <button id="btn-menu-close" class="btn-icon-close" type="button" aria-label="閉じる">✕</button>
+          </div>
+        </div>
+
+        <nav class="tab-bar" id="menu-tabs">
+          <button class="tab-btn active" data-tab="equip" type="button">装備・強化</button>
+          <button class="tab-btn" data-tab="magic" type="button">魔法・ドローン</button>
+          <button class="tab-btn" data-tab="monsters" type="button">モンスター図鑑</button>
+          <button class="tab-btn" data-tab="collection" type="button">武器・魔法図鑑</button>
+          <button class="tab-btn" data-tab="achievements" type="button">実績</button>
+          <button class="tab-btn" data-tab="settings" type="button">設定・操作UI</button>
+          <button class="tab-btn" data-tab="save" type="button">セーブ・管理</button>
+        </nav>
+
+        <div id="menu-tab-content" class="tab-content scrollable"></div>
+
+        <div class="panel-footer">
+          <button id="btn-menu-return-town" class="btn-ghost" type="button">拠点へ緊急帰還</button>
+          <button id="btn-menu-title" class="btn-danger" type="button">タイトルへ戻る</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- TOWN SHOP / BLACKSMITH / INN / DRONE / WARP MODAL            -->
+    <!-- ============================================================ -->
+    <section id="modal-facility" class="screen-overlay modal-backdrop hidden">
+      <div class="panel-glass panel-wide">
+        <div class="panel-header">
+          <div>
+            <p id="facility-eyebrow" class="eyebrow">NEON TOWN FACILITY</p>
+            <h2 id="facility-title">ショップ</h2>
+          </div>
+          <div class="header-right">
+            <span id="facility-gold" class="gold-pill">0 G</span>
+            <button id="btn-facility-close" class="btn-icon-close" type="button" aria-label="閉じる">✕</button>
+          </div>
+        </div>
+        <div id="facility-body" class="facility-body scrollable"></div>
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- DEFEAT / DEATH PENALTY OVERLAY                               -->
+    <!-- ============================================================ -->
+    <section id="screen-defeat" class="screen-overlay modal-backdrop hidden">
+      <div class="panel-glass panel-small defeat-panel">
+        <p class="eyebrow danger">SYSTEM CRITICAL</p>
+        <h2>力尽きてしまった…</h2>
+        <p id="defeat-desc" class="muted">
+          緊急転送プロトコルが発動し、拠点ネオンタウンへ帰還します。<br />
+          レベル・装備・図鑑はすべて保持されますが、所持金が半分になりました。
+        </p>
+        <div id="defeat-gold-loss" class="loss-pill">-0 G</div>
+        <button id="btn-defeat-revive" class="btn-neon btn-primary full-width" type="button">拠点ネオンタウンで再起する</button>
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- ENDING & STAFF ROLL + CLEAR RANK OVERLAY                     -->
+    <!-- ============================================================ -->
+    <section id="screen-ending" class="screen-overlay screen-ending hidden">
+      <div class="ending-container">
+        <p class="eyebrow">CHRONICLE COMPLETE</p>
+        <h1 class="ending-title">LUMINA DIORAMA</h1>
+        <p class="ending-subtitle">星結晶の光が、ふたたび箱庭の世界を満たした——</p>
+
+        <div class="ending-rank-card">
+          <div class="rank-circle" id="ending-rank-letter">S</div>
+          <div class="rank-stats" id="ending-stats"></div>
+        </div>
+
+        <div class="ending-credits">
+          <p class="credits-label">STAFF ROLL</p>
+          <div class="creator-hero">
+            <span class="creator-role">DIRECTOR / GAME DESIGN / PROGRAMMING / VISUAL &amp; SOUND</span>
+            <strong class="creator-name">製作者：駿 (Created by Shun)</strong>
+          </div>
+          <p class="credits-thanks">Thank you for playing LUMINA DIORAMA!</p>
+          <p class="credits-unlock">✨ クリア特典解放：「強くてニューゲーム (2周目)」＆「エンドレス試練の塔」✨</p>
+        </div>
+
+        <div class="ending-buttons">
+          <button id="btn-ending-tower" class="btn-neon btn-cyber" type="button">🗼 エンドレス試練の塔へ挑む</button>
+          <button id="btn-ending-ngplus" class="btn-neon btn-accent" type="button">✦ 強くてニューゲーム（2周目）</button>
+          <button id="btn-ending-continue" class="btn-neon btn-primary" type="button">拠点に戻って探索を続ける</button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script type="module" src="./js/main.js"></script>
+</body>
+</html>

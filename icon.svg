@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#071224"/>
+      <stop offset="55%" stop-color="#0d1e3a"/>
+      <stop offset="100%" stop-color="#141133"/>
+    </linearGradient>
+    <linearGradient id="topFace" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38f8d4"/>
+      <stop offset="100%" stop-color="#0891b2"/>
+    </linearGradient>
+    <linearGradient id="leftFace" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#155e75"/>
+      <stop offset="100%" stop-color="#0c2a42"/>
+    </linearGradient>
+    <linearGradient id="rightFace" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#0e7490"/>
+      <stop offset="100%" stop-color="#1e1b4b"/>
+    </linearGradient>
+    <linearGradient id="crystal" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fff7cc"/>
+      <stop offset="40%" stop-color="#67e8f9"/>
+      <stop offset="100%" stop-color="#f472b6"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="10" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <rect width="512" height="512" rx="108" fill="url(#bg)"/>
+  <!-- Subtle ambient halo -->
+  <circle cx="256" cy="240" r="170" fill="#22d3ee" opacity="0.14"/>
+  <!-- Miniature Diorama Isometric Base -->
+  <polygon points="256,210 416,288 256,366 96,288" fill="url(#topFace)" stroke="#a5f3fc" stroke-width="4"/>
+  <polygon points="96,288 256,366 256,422 96,344" fill="url(#leftFace)" stroke="#22d3ee" stroke-width="3"/>
+  <polygon points="416,288 256,366 256,422 416,344" fill="url(#rightFace)" stroke="#38bdf8" stroke-width="3"/>
+  <!-- Neon circuit trace on diorama top -->
+  <path d="M168,288 L256,245 L344,288 L256,331 Z" fill="none" stroke="#ecfeff" stroke-width="3" opacity="0.7"/>
+  <!-- Floating Star Crystal Spire -->
+  <g filter="url(#glow)">
+    <polygon points="256,74 316,192 256,268 196,192" fill="url(#crystal)" stroke="#ffffff" stroke-width="4"/>
+    <polygon points="256,74 282,192 256,268" fill="#ffffff" opacity="0.28"/>
+  </g>
+  <!-- Orbiting Neon Ring -->
+  <ellipse cx="256" cy="196" rx="122" ry="34" transform="rotate(-16 256 196)" fill="none" stroke="#38f8d4" stroke-width="6" filter="url(#glow)" opacity="0.9"/>
+  <circle cx="370" cy="162" r="10" fill="#fef08a" filter="url(#glow)"/>
+  <circle cx="142" cy="226" r="8" fill="#f472b6" filter="url(#glow)"/>
+</svg>
