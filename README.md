@@ -1,103 +1,66 @@
-# ✦ LUMINA CHRONICLES — BREATH OF THE STAR REALM —
-### 〜星結晶と古の魔王の伝説〜
+# THE LEGEND OF ZELDA: BREATH OF THE WILD — Web Open-Air 3D Edition
 
-> **製作者：駿 (Created by Shun)**
-
-**「王道ハイラル風ハイファンタジー × ゼルダ式3DアクションRPG」** の世界を駆け巡る、最大4人オンライン協力＆ソロ両対応・フル3DオープンアクションRPG。  
-外部画像・外部音源・外部3Dモデル（GLB等）のCDN依存を一切行わず、すべて **Three.js（ローカル同梱）＋プロシージャルCanvasTexture・DataTexture（トゥーンシェーダー）＋Web Audio API** で生成された完全静的サイト構成（GitHub Pages そのまま公開＆iPad PWAホーム画面アプリ化対応）です。
+*The Legend of Zelda: Breath of the Wild* (Base Game + DLC Pack 1 *The Master Trials* + DLC Pack 2 *The Champions' Ballad*) recreated as a painterly cel-shaded 3D open-air WebGL2 web game built with **TypeScript + Vite + Three.js + Custom GLSL BotW Shaders + CC0/MIT GLB Assets + Web Audio API**.
 
 ---
 
-## ✨ ゲームの魅力・搭載システム
+## Key Architecture & Implemented Systems
 
-### 🎨 1. 脱・粘土！ハイラル風トゥーンシェーディング × ペインタリー質感 × 起伏ハイトマップ地形
-- **アニメ調4階調トゥーンシェーディング（`MeshToonMaterial` + `DataTexture` グラデーションマップ + 逆光フレネルリムライト）**：単色マットな粘土質感を廃止し、暖かな太陽光（`#FFF5DC`）と空色/草色の環境バウンス光（`HemisphereLight`）による美しいアニメ調陰影を実現。
-- **プロシージャル・ペインタリーテクスチャ**：筆致のある草原芝生、石畳の目地と苔、古代シーカー風の青白いルーン文字、切石積みの城壁、木肌、王家の紋章入りチュニックをすべて `CanvasTexture` で自動描画。
-- **連続ハイトマップ自然地形・立体水面＆完全接地 (`getTerrainHeight`)**：正方形タイル床や四角いブロック壁を廃止し、頂点カラーブレンドの起伏地形・窪んだ川底に揺らぐ半透明水面・3D木製橋・自然な岩崖と古代円柱遺跡・360°遠景山並み・750本の風揺れ草ブレードと大気遠近フォグ（`FogExp2`）で広大なファンタジー世界を描写。
-- **6大ボス専用3Dスカルプト造形＆関節稼働モーション**：聖樹の守護巨獣・白銀の水晶古竜・遺跡巨像・溶岩竜神・6枚光翼の災厄魔王＆天界神将を円柱や箱の積み木ではなく専用3Dモデルで造形。
+### 1. Painterly BotW Custom Toon Visual Pipeline (`src/rendering/`)
+- **Custom 3-Step Cel-Shaded BotW Toon Shader (`BotWToonShader.ts`)**: Quantized 3-step lighting (Highlight / Midtone / Cool Blue-Violet Shadow Tint), directional Fresnel backlight rim lighting, height-and-distance atmospheric scattering aerial perspective fog, cloud shadow dapple, animated orange → cyan Sheikah Jomon constellation circuits, and Magnesis/Stasis rune highlight overlays.
+- **Triplanar Slope/Height/Biome Terrain Shader**: Zero UV stretching on sheer cliffs (>35° triplanar rock strata), multi-scale watercolor grass, snow peaks, rippled Gerudo desert sand, volcanic basalt & glowing lava cracks, wet shoreline sand, shimmering cel water, and 5,200+ wind-swaying InstancedMesh grass blades with player trample parting.
+- **High-Resolution Procedural Watercolor Textures (`ProceduralTextures.ts`)**: 512×512 CanvasTextures + Sobel-derived NormalMaps for grass, cliffs, sand, snow, volcanic rock, Sheikah Jomon spiral relief + emissive circuits, stone masonry, wood planks, Champion's Tunic / Sheikah / Gerudo fabrics, and expressive anime hero face.
+- **Unified GLB Model Pipeline (`ModelLoader.ts`)**: 21 CC0/MIT `.glb` models in `public/models/` (chests, barrels, crates, ruins, rigged & animated NPCs/travelers/warriors, Stal-skeletons, horses, foxes, birds) auto-normalized via `Box3`, strictly grounded at `y = 0`, auto-converted to the BotW 3-step toon shader with preserved textures, and auto-connected to `AnimationMixer` (see `CREDITS.md`).
+- **Sculpted 6.5-Head Hero Rig (`LinkCharacterModel.ts`)**: Curved LatheGeometry torso/tunic/boots, Hylian pointed ears, layered swept golden hair, painted anime face, live armor swapping across 107 armor pieces + 15 Kochi Dye colors + naked/underwear state, hip Sheikah Slate, Master Sword, Hylian Shield, and deployable Paraglider.
 
-### 🦸 2. 6.5頭身スタイライズド勇者造形 ＆ 体型選択（男性型[デフォルト] / 女性型 / スリム・中性型）
-- **王道勇者プロポーション**：シャープな顎ライン、ハイリア風の尖った耳、立体的な多房スパイキーヘア、逆三角形の胸板（または選択体型）、肩当て（ポールドロン）、風になびくマント、折り返しレザーブーツを備えた6.5頭身モデル。
-- **体型（BodyType）リアルタイム切替**：キャラ作成時はもちろん、冒険中の「設定」メニューからも **「男性型（標準）」「女性型」「スリム/中性型」** をいつでも切り替え可能（セーブデータおよびオンライン協力プレイにも完全同期）。
-- **抜刀・納刀システム**：非戦闘の探索時は剣とハイリア風クレスト盾を背中に納刀し、攻撃・ガード時に素早く右手・左手に抜刀して構えます。
+### 2. Seamless 15-Region Hyrule Geography, Climate & Open-Air Audio (`src/world/`, `src/audio/`)
+- **All 15 Sheikah Tower Regions** seamlessly streamed via LOD terrain chunks + permanent distant panorama skirt with strictly ordered highest peaks: **Gerudo Summit (800m) > Hebra Peak (750m) > Death Mountain (700m)**.
+- **24-Real-Minute Day/Night Cycle & Regional Climate**: 3-hour weather forecast, zero rainfall in Gerudo Desert, real temperature calculation (`°C`/`°F`, cold/heat hazard tiers, extreme cold down to `-63°C`, freezing water, Eldin volcanic `ERROR`), precipitation/ash/Blood Moon embers, and 168-real-minute **Blood Moon** cycle.
+- **CEDEC 2017 Open-Air Audio Engine (`OpenAirAudioEngine.ts`)**: 3-band wind, 6-cell hex spatialized insects, canopy birds, rain/thunder, volcanic rumble, sparse impressionistic solo piano field BGM, settlement/stable melodies, Guardian targeting frantic piano alarm, Blood Moon drone, and 20 procedural SFX.
 
-### 🎥 3. ゼルダ式TPS背中越しカメラ ＆ Zターゲット（注目ロックオン）
-- **カメラ向き基準の直感3D移動**：カメラが見ている前方＝前進（W / スティック上）の3Dアクション標準移動。壁や地面へのめり込みを自動回避するレイキャストカメラ補正を搭載。
-- **3モード視点切替（`🎥 視点` / `V` キー）**：**標準TPS（背中越し） ➔ 近距離アクションTPS ➔ FPS（一人称視点・自キャラ頭部非表示）** をワンタップで切替可能。
-- **🎯 Zターゲット注目ロックオン（`🎯 注目` / `Z` / `Tab` / 中クリック）**：最寄りの敵やボスに黄金の回転ターゲットマーカーを固定し、敵を中心に回り込む平行移動（ストレイフ）やバック宙ステップ回避が可能。
+### 3. Havok-Style Physics × GDC 2017 Chemistry Engine & Sheikah Runes (`src/physics/`, `src/gameplay/`)
+- **3-Law Chemistry Engine**: 5 Elements (`Fire`, `Water`, `Ice`, `Wind`, `Electricity`) × 7 Materials (`Wood`, `Metal`, `Grass`, `Organic`, `Stone`, `WaterSurface`, `IceBlock`) — igniting dry grass spawns visible flames & rising **thermal updrafts** that lift Link's Paraglider!
+- **All Sheikah Runes & Master Cycle Zero**: Magnesis (20m metal scan, beam, pendulum inertia, thunderstorm lightning rod, 2-stack Minecart Flying Machine), Remote Bombs Round & Square (`+` upgraded independent CDs, Windbomb BIL impulse), Stasis / Stasis+ (kinetic arrows, Stasis Overflow, enemy freeze), Cryonis (max 3 climbable ice pillars on water), Camera + Hyrule Compendium + Sheikah Sensor+, and **Master Cycle Zero** (1,000 unit tank, 2.777/s burn, exact paradoxical `min(1000, sum(base) * 2^n)` fuel math, Desert/Volcano summon ban).
+- **Combat & Movement Physics**: Universal wall climbing (with rain slip), Paraglider, Shield Surfing (snow/sand/grass/rock friction), Swimming, midair Bow **Bullet-Time** (`1/19` world speed), Perfect Guard → Guardian Beam Reflection, Perfect Dodge → Flurry Rush, Sneakstrike (`8x`), exact BotW damage formula, Whistle Sprint, BTB, and all 4 Champions' Abilities.
 
-### ⚔️ 4. 無双の爽快感 × ゼルダ式「盾パリィ（ジャストガード）」＆「ラッシュ（ジャスト回避）」
-- **方向別3段コンボ＆大回転斬り**：右袈裟斬り ➔ 左斬り上げ ➔ 360°大回転斬りのダイナミックな剣閃トレイル。
-- **🛡️ 盾ガード ＆ ジャストガード（パリィ反射）**：盾を構えた瞬間（0.28秒以内）に敵の攻撃を受け止めると黄金衝撃波が発生！近接敵やボスを体勢崩壊（**被ダメージ1.5倍の `BREAK!` 状態**）にし、敵の魔法弾・レーザーは **威力3倍で敵へ跳ね返す（ビームパリィ）**！
-- **⚡ ジャスト回避 ➔ ラッシュ（Flurry Rush）**：敵の突進・弾・ボスの赤予兆の直前にステップ回避すると世界がスローモーションになり、2.6秒間の **「⚡ ラッシュ！（攻撃連打）」** が発動！攻撃ボタンを押すたびに敵へ高速踏み込み＆青い残像の超高速連撃を叩き込みます。
-- **がんばりゲージ（円形スタミナホイール）＆ ⏫ 飛躍（ジャンプ）**：ダッシュ・盾受け時にプレイヤー横にゼルダ風の円形スタミナリングが表示。ジャンプで段差やダメージ床トラップを飛び越えられます。
-
-### 🌐 5. サーバーレス最大4人オンライン協力＆全既存コンテンツ完全搭載
-- **3大ジョブ（ブレイドナイト / アークメイジ / シャドウローグ）**、5種の属性・補助魔法、リミット必殺技、王都の施設（武具店・魔導院・王立鍛冶工房 `+1〜+10`・宿屋・精霊オーブ工房・転移石碑）、守護精霊オーブ（自動援護＆アイテム吸引）、全5大エリア＋王都＋隠し部屋＋暗闇の洞窟＋封印の星核聖域（裏ボス）＋剣の試練・無限の塔、図鑑・実績・オート＆手動3スロットセーブ・NG+、PeerJS最大4人協力プレイ（合言葉ルーム・長押し蘇生・チャット＆スタンプ）、Web Audio APIシンセBGM/SEをすべて完全搭載！
+### 4. Complete Lore, 23 Memories, 147 Quests, 107 Armors, Architecture, Enemies & NPC EventFlow (`src/data/`, `src/entities/`, `src/ui/`)
+- **3-Layer Hyrule History Chronicle**, **All 23 Memories** (Base #1–#18 + DLC EX#1–#5), **15 Main / 42 Shrine / 90 Side Quests** (incl. Tarrey Town 110 wood + wedding, Zora Monuments 1–10, Koko's Kitchen 1–4, Kass's 8 songs, Stolen Heirloom), **8 Readable In-World Journals**, **DLC 1 Trial of the Sword (51 stages)** & **Master Mode**, and **DLC 2 Champions' Ballad** (16 shrines + Final Trial + Monk Maz Koshia).
+- **107 Armor Pieces** (all base + DLC1 + DLC2 + Collab + Amiibo sets), 4-star Great Fairy upgrades, 15 Kochi Dye Shop colors, Gerudo Vai entry compatibility, and authentic BotW cooking (`+30s`/ingredient, Dragon Horn `+1800s`, Blood Moon 23:30–0:15 100% critical).
+- **Hyrule Castle**, 15 Sheikah Towers, 136-Shrine Registry, 4 Kinematic Divine Beasts, 9 Architectural Settlements, 15 Circus-Tent Stables, 4 Great Fairy Fountains, 3 Goddess Springs, 3 Lomei Labyrinths, and 33 Korok Puzzle Archetypes.
+- **LevelSensor** hidden enemy scaling, Blight Ganon HP formula (`800 → 1200 → 1600 → 2000`), 3 Sky Dragons (Dinraal, Naydra, Farosh), 24h/Rain autonomous NPC AI, 15 Traveling Merchants, 16 Roadside Disguised Yiga Travelers, and full EventFlow conditional dialogue (naked, fear armors, Gerudo gate, Blood Moon, rain).
+- **Authentic BotW HUD & Sheikah Slate**: Quarter-hearts, circular green stamina wheel, circular minimap, purple sound waveform, thermometer, weather forecast, 3D rotating Link dress-up inventory preview, contour Sheikah Map with 5-color pins, Fast Travel, Hero's Path playback, and 100.00% Completion Tracker.
 
 ---
 
-## 🎮 操作方法
+## Controls
 
-### 📱 iPad / タブレット操作（マルチタッチ完全分離）
-| 操作 | 内容 |
+| Key / Input | Action |
 | --- | --- |
-| **画面左半分ドラッグ** | フローティングスティック移動（カメラ向き基準） |
-| **画面右半分スワイプ** | 360°自由カメラ回転（左手の移動と同時に操作可能） |
-| **⚔ 攻撃**（連打 / 長押し） | 3段コンボ斬撃（ラッシュ中は超高速踏み込み連撃！） |
-| **🎯 注目** | Zターゲットロックオン ON / OFF |
-| **🛡️ 盾パリィ** | 盾ガード構え ／ 敵の攻撃直前でジャストガード（敵BREAK＆弾3倍反射） |
-| **⚡ 回避** | 無敵ステップ回避 ／ 敵の攻撃直前でジャスト回避（ラッシュ発動！） |
-| **⏫ 飛躍** | ジャンプ（段差・床トラップ回避・ジャンプ斬り） |
-| **🔥 魔法 / ↻ 切替** | 選択中の魔法を発動 / 習得魔法をクイック切替 |
-| **★ 必殺** | リミットゲージ100%でジョブ究極必殺技を発動 |
-| **💬 調べる**（タップ / 長押し） | NPC会話・宝箱・祭壇・転移石碑 / **戦闘不能の味方を長押し蘇生** |
-
-### ⌨️ PC キーボード＆マウス操作
-| キー / マウス | 内容 |
-| --- | --- |
-| `W A S D` / 矢印キー | カメラ向き基準で3D移動 |
-| **右クリックドラッグ / ホイール** | 360°カメラ回転 / カメラ距離ズーム |
-| `V` または右上 **「🎥 視点」** | カメラ視点切替（標準TPS ➔ 近距離TPS ➔ FPS一人称） |
-| `Z` / `Tab` / **中クリック** | 🎯 Zターゲット注目ロックオン |
-| `Space` / `J` / **左クリック** | 3段コンボ攻撃（ラッシュ中は超高速連撃） |
-| `C` / `H` | 🛡️ 盾ガード ＆ ジャストガード（パリィ反射） |
-| `Shift` / `K` | ⚡ 無敵ステップ回避（ジャスト回避でラッシュ発動） |
-| `B` / `G` | ⏫ ジャンプ |
-| `E` / `L` | 選択中の魔法を発動（`Q` または `1`〜`5` で切替） |
-| `R` / `U` | ★ リミット必殺技（ゲージMAX時） |
-| `F` / `Enter` | 💬 調べる・会話・宝箱・長押し蘇生 |
-| `M` | 🌀 古代転移石碑ワープ（ファストトラベル） |
-| `T` | チャット入力欄を開く |
-| `Esc` | メニュー開閉 |
+| `W A S D` / Arrow Keys | Camera-relative Movement / Climb / Swim / Ride |
+| `Shift` | Sprint (Hold `V` + `Shift` for Whistle Sprint) |
+| `Space` | Jump / Deploy Paraglider mid-air / Climb Jump |
+| `Right Mouse Drag` / `Wheel` | Orbit 360° Camera / Zoom |
+| `Left Click` / `F` | 4-Hit Sword Combo (or Snap Camera Photo) |
+| `U` | Charged Spin Attack / Urbosa's Fury |
+| `C` | Shield Guard / Perfect Guard (Guardian Beam Parry) |
+| `R` (Hold & Release) | Bow Aim & Shoot (Mid-air enters 1/19 Bullet-Time!) |
+| `Z` | ZL Target Lock-On |
+| `X` | Shield Surfing |
+| `G` | Revali's Gale (Vertical Updraft Launch) |
+| `1` – `7` / `Q` | Select Sheikah Rune / Activate Rune |
+| `[` / `]` | Quick Switch Weapon / Arrow Type Ribbon |
+| `E` | Talk (NPC EventFlow) / Open Chest / Activate Tower / Shrine / Cook / Korok |
+| `Tab` / `Esc` | Open Sheikah Slate Menu (Inventory 3D Preview, Map, Adventure Log, Compendium, Save) |
+| `M` / `H` | Open Sheikah Map / Toggle Pro HUD |
 
 ---
 
-## 📁 ファイル構成
-```text
-lumina-diorama/
-├── index.html          # PWA & iPadフルスクリーン対応エントリHTML
-├── manifest.json       # ホーム画面アプリ化マニフェスト（相対パス設計）
-├── icon.svg            # プロシージャル生成ベクターアプリアイコン
-├── README.md           # 本ドキュメント
-├── css/
-│   └── style.css       # ハイファンタジーグラスUI・iPadマルチタッチ・レスポンシブCSS
-└── js/
-    ├── three.module.min.js # ローカル同梱 Three.js WebGLエンジン
-    ├── main.js         # エントリ・左右独立マルチタッチ（スティック＆360°カメラ）・PC入力
-    ├── game.js         # TPSカメラ制御・Zロックオン・パリィ反射・ラッシュ・戦闘・進行管理
-    ├── renderer.js     # トゥーンシェーダー・ペインタリーテクスチャ・6.5頭身3Dモデル・起伏地形
-    ├── audio.js        # Web Audio APIプロシージャルシンセ（6曲BGM＆18種以上SE）
-    ├── network.js      # PeerJSサーバーレス最大4人P2P通信・体型＆ジャンプ同期・蘇生・チャット
-    ├── map.js          # ハイトマップ地形 getTerrainHeight・王都＋5大エリア＋裏ボス＋無限の塔
-    ├── player.js       # 3大ジョブ・体型・ジャンプ・スタミナ・抜刀納刀・ガード＆パリィ・精霊オーブ
-    ├── enemy.js        # 15種ファンタジーモンスターAI・パリィBREAK・ハクスラドロップ
-    ├── boss.js         # 6大巨像ボス・守護クリスタル・予兆＆レーザー・第2形態・パリィBREAK
-    ├── ui.js           # 体型＆視点選択・HUD・工房・図鑑・実績・設定・セーブ・エンディングUI
-    ├── data.js         # マスターデータ（体型・3ジョブ・武具・魔法・敵・ボス・NPC・実績）
-    └── save.js         # localStorageオート＆3スロットセーブ・体型＆カメラ設定保存・JSONバックアップ
+## Development & Verification
+
+```bash
+npm install
+npm run dev       # Start local Vite dev server
+npm run build     # TypeScript strict check + Vite production build
+npm test          # Run Vitest automated systems test suite
+python3 tests/e2e_verify.py  # Run headless Chrome WebGL E2E & visual inspection capture
 ```
-
----
-
-**製作者：駿 (Created by Shun)**
