@@ -49,6 +49,7 @@ export class Enemy {
       paralyze: 0,
       poison: 0,
     };
+    this.parryBreakTimer = 0; // Staggered & 1.5x damage taken after player Perfect Parry!
     this.dotTimer = 0;
     this.contactCooldown = 0;
   }
@@ -58,23 +59,31 @@ export class Enemy {
     this.statuses[statusName] = Math.max(this.statuses[statusName], duration);
   }
 
+  applyParryBreak(duration = 3.5) {
+    this.parryBreakTimer = Math.max(this.parryBreakTimer, duration);
+    this.chargeWindup = 0;
+    this.charging = 0;
+  }
+
   takeDamage(rawDamage, element, isCrit, knockDirX, knockDirY, game) {
     if (!this.alive) return { dmg: 0, killed: false, weak: false };
     const weak = element && element !== 'none' && element === this.def.weakness;
+    const isBroken = this.parryBreakTimer > 0;
     let dmg = Math.max(2, rawDamage - this.defStat * 0.45);
+    if (isBroken) dmg *= 1.5;
     if (weak) dmg *= 1.55;
     if (isCrit) dmg *= 1.65;
     dmg = Math.max(1, Math.round(dmg * (0.93 + Math.random() * 0.14)));
 
     this.hp = Math.max(0, this.hp - dmg);
-    this.hitFlash = 0.14;
-    this.knockX = (knockDirX || 0) * (isCrit ? 240 : 150);
-    this.knockY = (knockDirY || 0) * (isCrit ? 240 : 150);
+    this.hitFlash = 0.16;
+    this.knockX = (knockDirX || 0) * (isCrit || isBroken ? 250 : 150);
+    this.knockY = (knockDirY || 0) * (isCrit || isBroken ? 250 : 150);
 
-    const color = isCrit ? '#fbbf24' : weak ? '#38f8d4' : '#f8fafc';
-    const tag = isCrit ? `${dmg} CRIT!` : weak ? `${dmg} WEAK!` : `${dmg}`;
-    game.spawnDamageText(this.x, this.y - this.radius - 10, tag, color, isCrit || weak ? 1.25 : 1.0);
-    game.spawnBurst(this.x, this.y, weak ? '#38f8d4' : this.def.color, isCrit ? 14 : 7, isCrit ? 220 : 140);
+    const color = isCrit ? '#fbbf24' : isBroken ? '#fde047' : weak ? '#38bdf8' : '#f8fafc';
+    const tag = isCrit ? `${dmg} CRIT!` : isBroken ? `${dmg} BREAK!` : weak ? `${dmg} WEAK!` : `${dmg}`;
+    game.spawnDamageText(this.x, this.y - this.radius - 10, tag, color, isCrit || weak || isBroken ? 1.28 : 1.0);
+    game.spawnBurst(this.x, this.y, weak ? '#38bdf8' : '#fef08a', isCrit ? 14 : 7, isCrit ? 220 : 140);
 
     let killed = false;
     if (this.hp <= 0) {
@@ -90,6 +99,7 @@ export class Enemy {
     this.animPhase += dt * 4.5;
     if (this.hitFlash > 0) this.hitFlash -= dt;
     if (this.contactCooldown > 0) this.contactCooldown -= dt;
+    if (this.parryBreakTimer > 0) this.parryBreakTimer = Math.max(0, this.parryBreakTimer - dt);
 
     // Status Effects
     for (const k of Object.keys(this.statuses)) {
@@ -114,8 +124,8 @@ export class Enemy {
     this.knockX *= Math.pow(0.02, dt);
     this.knockY *= Math.pow(0.02, dt);
 
-    // Paralyze Stun freezes AI movement
-    if (this.statuses.paralyze > 0) {
+    // Paralyze Stun or Parry Break freezes AI movement
+    if (this.statuses.paralyze > 0 || this.parryBreakTimer > 0) {
       const pos = resolveMapCollision(map, this.x + this.knockX * dt, this.y + this.knockY * dt, this.radius);
       this.x = pos.x;
       this.y = pos.y;
@@ -239,7 +249,7 @@ export class Enemy {
       const pDist = Math.hypot(targetPlayer.x - this.x, targetPlayer.y - this.y);
       if (pDist < this.radius + targetPlayer.radius - 2) {
         this.contactCooldown = 0.72;
-        game.damageLocalPlayer(this.atk, this.def.statusOnHit, this.x, this.y);
+        game.damageLocalPlayer(this.atk, this.def.statusOnHit, this.x, this.y, this);
       }
     }
   }

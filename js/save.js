@@ -16,6 +16,8 @@ export const DEFAULT_SETTINGS = {
   buttonSize: 'standard', // 'standard' | 'large'
   handedness: 'right',    // 'right' | 'left'
   touchMode: 'auto',      // 'auto' | 'always' | 'hide'
+  bodyType: 'male',       // 'male' | 'female' | 'slim'
+  cameraMode: 'tps',      // 'tps' | 'action' | 'fps'
 };
 
 export function loadSettings() {
@@ -44,6 +46,7 @@ export function serializeGameState(game) {
     player: {
       name: p.name,
       jobId: p.jobId,
+      bodyType: p.bodyType || 'male',
       level: p.level,
       exp: p.exp,
       nextExp: p.nextExp,

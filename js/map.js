@@ -84,6 +84,9 @@ function createBaseMap(areaId, width, height) {
     enemySpawns: [], // { enemyId, x, y }
     bossArena: null, // { bossId, triggerRect, center, gateTiles, active, triggered }
     towerFloor: 0,
+    getTerrainHeight(x, z) {
+      return getTerrainHeight(x, z, areaId);
+    },
   };
 }
 
@@ -142,20 +145,29 @@ function buildTown(progress) {
     map.props.push({ type: 'lamp', ...tCenter(px, py), color: '#38f8d4' });
   }
 
-  // Center holographic diorama star monument
-  map.props.push({ type: 'monument', ...tCenter(16.5, 12.5), color: '#38f8d4', scale: 1.5 });
-  map.lights.push({ ...tCenter(16.5, 12.5), radius: 240, color: '#38f8d4' });
+  // Center Star Crystal Monument slightly north in plaza
+  map.props.push({ type: 'monument', ...tCenter(16.5, 11.4), color: '#38bdf8', scale: 1.4 });
+  map.lights.push({ ...tCenter(16.5, 11.4), radius: 240, color: '#38bdf8' });
+
+  // Scenic Hyrule trees framing Luminaria Town corners
+  const townTrees = [
+    [6, 9], [6, 16], [27, 9], [27, 16],
+    [10, 10], [23, 10], [10, 15], [23, 15],
+  ];
+  for (const [tx, ty] of townTrees) {
+    map.props.push({ type: 'tree', ...tCenter(tx, ty), color: '#4c943e', scale: 1.05 });
+  }
 
   // Town NPCs cleanly spaced
   map.npcs.push(
-    { npcId: 'town_guide', ...tCenter(16.5, 9.2), label: '星導師リア' },
-    { npcId: 'town_glamour', ...tCenter(19.5, 12.5), label: '艶姫ベルベット' },
-    { npcId: 'town_warp', ...tCenter(16.5, 15.8), label: '次元ワープ端末' },
-    { npcId: 'town_gear', ...tCenter(11, 7), label: '武器・防具屋' },
-    { npcId: 'town_magic', ...tCenter(22, 7), label: '魔法屋' },
-    { npcId: 'town_forge', ...tCenter(11, 18), label: '鍛冶屋' },
-    { npcId: 'town_drone', ...tCenter(22, 18), label: 'ドローン工房' },
-    { npcId: 'town_inn', ...tCenter(7.5, 12.5), label: '宿屋（全回復）' }
+    { npcId: 'town_guide', ...tCenter(16.5, 9.0), label: '巫女姫リア' },
+    { npcId: 'town_glamour', ...tCenter(19.5, 12.5), label: '吟遊詩人カシム' },
+    { npcId: 'town_warp', ...tCenter(13.8, 12.5), label: '古代シーカー転移石碑' },
+    { npcId: 'town_gear', ...tCenter(11, 7), label: '王都武具店' },
+    { npcId: 'town_magic', ...tCenter(22, 7), label: '古代魔導院' },
+    { npcId: 'town_forge', ...tCenter(11, 18), label: '王立鍛冶工房' },
+    { npcId: 'town_drone', ...tCenter(22, 18), label: '精霊オーブ工房' },
+    { npcId: 'town_inn', ...tCenter(7.5, 12.5), label: '旅人の宿屋（全回復）' }
   );
 
   // Portals
@@ -164,14 +176,14 @@ function buildTown(progress) {
       id: 'pt_town_forest',
       ...tCenter(30, 12.5),
       targetArea: 'forest',
-      label: '1. 翠光のジオラマ樹海へ',
+      label: '1. 風薫るフィローネ樹海へ',
       color: '#34d399',
     },
     {
       id: 'pt_town_tower',
       ...tCenter(16.5, 4.2),
       targetArea: 'tower',
-      label: '🗼 エンドレス試練の塔',
+      label: '🗼 剣の試練・無限の塔',
       color: '#fbbf24',
       requiresClear: true,
     },
@@ -179,7 +191,7 @@ function buildTown(progress) {
       id: 'pt_town_secret',
       ...tCenter(16.5, 21.4),
       targetArea: 'secret',
-      label: '🌌 虚空の星核神殿 (裏ボス)',
+      label: '🌌 封印の星核聖域 (裏ボス)',
       color: '#f472b6',
       requiresSecret: true,
     }
@@ -194,7 +206,8 @@ function buildTown(progress) {
     reward: { gold: 120, ore: { type: 'stardust', count: 2 }, label: '旅立ちの支度金 120G & 星屑鉱石×2' },
   });
 
-  map.spawn = tCenter(16.5, 11.2);
+  // Spawn south of the Star Crystal monument facing North so TPS camera frames hero + crystal + Princess Ria cleanly!
+  map.spawn = tCenter(16.5, 14.5);
   applyPersistentState(map, progress);
   return map;
 }
@@ -1030,3 +1043,40 @@ export function breakCrackedWall(map, cw) {
   cw.hp = 0;
   setTile(map, cw.tx, cw.ty, TILE.FLOOR);
 }
+
+// ============================================================================
+// CONTINUOUS TERRAIN HEIGHTMAP FUNCTION — 100% GROUNDING FOR ALL 3D ENTITIES
+// ============================================================================
+export function getTerrainHeight(x, z, areaId = 'town') {
+  if (areaId === 'town') {
+    // Central castle plaza is gently elevated with smooth stone ramps
+    const dx = (x - 16.5 * TS) / (10 * TS);
+    const dz = (z - 12.5 * TS) / (8 * TS);
+    const dist = Math.hypot(dx, dz);
+    if (dist < 0.7) return 2.5;
+    if (dist < 1.25) return 2.5 * (1 - (dist - 0.7) / 0.55);
+    return Math.sin(x * 0.008) * Math.cos(z * 0.008) * 1.4;
+  }
+  if (areaId === 'forest') {
+    // Rolling Hyrule-style grassy hills & valleys (flattened near boss arena x > 30*TS)
+    const bossFlatten = x > 29 * TS ? Math.max(0, 1 - (x - 29 * TS) / (3 * TS)) : 1.0;
+    const hill =
+      Math.sin(x * 0.0075) * Math.cos(z * 0.0085) * 6.5 +
+      Math.sin(x * 0.018 + z * 0.015) * 2.4;
+    return hill * bossFlatten;
+  }
+  if (areaId === 'cave') {
+    const bossFlatten = x > 29 * TS ? Math.max(0, 1 - (x - 29 * TS) / (3 * TS)) : 1.0;
+    return (Math.sin(x * 0.011) * Math.cos(z * 0.011) * 4.2) * bossFlatten;
+  }
+  if (areaId === 'ruins') {
+    const bossFlatten = x > 31 * TS ? Math.max(0, 1 - (x - 31 * TS) / (3 * TS)) : 1.0;
+    return (Math.sin(x * 0.009) * Math.cos(z * 0.009) * 3.2) * bossFlatten;
+  }
+  if (areaId === 'magma') {
+    const bossFlatten = x > 32 * TS ? Math.max(0, 1 - (x - 32 * TS) / (3 * TS)) : 1.0;
+    return (Math.sin(x * 0.01) * Math.cos(z * 0.008) * 5.2) * bossFlatten;
+  }
+  return Math.sin(x * 0.007) * Math.cos(z * 0.007) * 1.8;
+}
+

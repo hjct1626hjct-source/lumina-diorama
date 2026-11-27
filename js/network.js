@@ -278,10 +278,12 @@ export class NetworkManager {
       isHost: this.role === 'host',
       name: p.name,
       jobId: p.jobId,
+      bodyType: p.bodyType || 'male',
       level: p.level,
       areaId: this.game.currentAreaId,
       x: Math.round(p.x),
       y: Math.round(p.y),
+      zHeight: Math.round(p.zHeight || 0),
       facing: Number(p.facing.toFixed(2)),
       hp: Math.round(p.hp),
       maxHp: st.maxHp,
@@ -334,11 +336,13 @@ export class NetworkManager {
             id: pid,
             name: msg.name || '仲間',
             jobId: msg.jobId || 'knight',
+            bodyType: msg.bodyType || 'male',
             isHost: Boolean(msg.isHost),
             level: msg.level || 1,
             areaId: msg.areaId || 'town',
             x: msg.x || 300,
             y: msg.y || 300,
+            zHeight: msg.zHeight || 0,
             targetX: msg.x || 300,
             targetY: msg.y || 300,
             facing: msg.facing || 0,
@@ -347,7 +351,7 @@ export class NetworkManager {
             maxHp: msg.maxHp ?? 100,
             downed: Boolean(msg.downed),
             downedTimer: msg.downedTimer ?? 30,
-            weaponColor: msg.weaponColor || '#38f8d4',
+            weaponColor: msg.weaponColor || '#38bdf8',
             weaponPlus: msg.weaponPlus || 0,
             droneX: msg.droneX || msg.x || 300,
             droneY: msg.droneY || msg.y || 300,
@@ -373,10 +377,12 @@ export class NetworkManager {
           }
           rp.name = msg.name || rp.name;
           rp.jobId = msg.jobId || rp.jobId;
+          rp.bodyType = msg.bodyType || rp.bodyType || 'male';
           rp.level = msg.level || rp.level;
           rp.areaId = msg.areaId || rp.areaId;
           rp.targetX = msg.x;
           rp.targetY = msg.y;
+          rp.zHeight = msg.zHeight || 0;
           rp.targetFacing = msg.facing;
           rp.hp = msg.hp;
           rp.maxHp = msg.maxHp;

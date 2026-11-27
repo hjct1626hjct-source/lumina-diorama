@@ -52,6 +52,7 @@ export class UIManager {
   constructor(game) {
     this.game = game;
     this.selectedJobId = 'knight';
+    this.selectedBodyType = game.settings?.bodyType || 'male';
     this.introIndex = 0;
     this.dialogueQueue = [];
     this.dialogueCallback = null;
@@ -83,6 +84,7 @@ export class UIManager {
 
       screenJob: $('screen-job'),
       inputPlayerName: $('input-player-name'),
+      bodyTypeSelector: $('body-type-selector'),
       jobCards: $('job-cards'),
       btnJobBack: $('btn-job-back'),
       btnJobStart: $('btn-job-start'),
@@ -139,6 +141,7 @@ export class UIManager {
       comboCount: $('combo-count'),
       comboBonus: $('combo-bonus'),
 
+      btnHudCamera: $('btn-hud-camera'),
       btnHudWarp: $('btn-hud-warp'),
       btnHudMulti: $('btn-hud-multi'),
       btnHudMenu: $('btn-hud-menu'),
@@ -257,7 +260,19 @@ export class UIManager {
     this.el.btnTitleMute.addEventListener('click', onMuteToggle);
     this.el.btnHudMute.addEventListener('click', onMuteToggle);
 
-    // Job Selection
+    // Job & BodyType Selection
+    if (this.el.bodyTypeSelector) {
+      this.el.bodyTypeSelector.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-body-type]');
+        if (!btn) return;
+        g.audio.playSe('uiClick');
+        this.selectedBodyType = btn.dataset.bodyType;
+        this.el.bodyTypeSelector.querySelectorAll('[data-body-type]').forEach((b) => {
+          b.classList.toggle('active', b.dataset.bodyType === this.selectedBodyType);
+        });
+        this._renderJobCards();
+      });
+    }
     this.el.btnJobBack.addEventListener('click', () => {
       g.audio.playSe('uiClick');
       this.el.screenJob.classList.add('hidden');
@@ -268,7 +283,7 @@ export class UIManager {
       g.audio.playSe('levelup');
       const name = (this.el.inputPlayerName.value || 'シュン').trim().slice(0, 12) || 'シュン';
       this.el.screenJob.classList.add('hidden');
-      g.startNewGame(name, this.selectedJobId);
+      g.startNewGame(name, this.selectedJobId, false, this.selectedBodyType);
     });
 
     // Intro Story
@@ -301,7 +316,7 @@ export class UIManager {
       if (g.mode === 'title') {
         const latest = getLatestSave();
         if (latest) g.startFromSave(latest, true);
-        else g.startNewGame('シュン', 'knight', true);
+        else g.startNewGame('シュン', 'knight', true, this.selectedBodyType);
       }
       g.network.hostRoom(this.el.inputHostCode.value);
     });
@@ -311,7 +326,7 @@ export class UIManager {
       if (g.mode === 'title') {
         const latest = getLatestSave();
         if (latest) g.startFromSave(latest, true);
-        else g.startNewGame('シュン', 'knight', true);
+        else g.startNewGame('シュン', 'knight', true, this.selectedBodyType);
       }
       g.network.joinRoom(this.el.inputJoinCode.value);
     });
@@ -332,6 +347,11 @@ export class UIManager {
     });
 
     // HUD Quick Buttons
+    if (this.el.btnHudCamera) {
+      this.el.btnHudCamera.addEventListener('click', () => {
+        g.cycleCameraMode();
+      });
+    }
     this.el.btnHudWarp.addEventListener('click', () => {
       g.audio.playSe('uiClick');
       this.openWarpModal();
@@ -379,7 +399,7 @@ export class UIManager {
       g.audio.playSe('uiClick');
       this.closeModals();
       g.changeArea('town');
-      g.addToast('🌀 拠点ネオンタウンへ帰還しました');
+      g.addToast('🌀 王都ルミナリア城下町へ帰還しました');
     });
     this.el.btnMenuTitle.addEventListener('click', () => {
       g.audio.playSe('uiClick');
@@ -441,7 +461,7 @@ export class UIManager {
         return `
           <div class="job-card ${sel}" data-job="${j.id}">
             <div class="job-card-top">
-              <canvas class="job-avatar-canvas" data-job-avatar="${j.id}" width="64" height="64" style="width:54px;height:54px;border-radius:14px;border:2px solid ${j.color};background:#091326;flex-shrink:0;"></canvas>
+              <canvas class="job-avatar-canvas" data-job-avatar="${j.id}" width="64" height="64" style="width:54px;height:54px;border-radius:14px;border:2px solid ${j.accent};background:#0c172a;flex-shrink:0;"></canvas>
               <div>
                 <div class="job-en">${j.icon} ${j.en}</div>
                 <h3 class="job-title">${j.name}</h3>
@@ -466,7 +486,6 @@ export class UIManager {
       })
       .join('');
 
-    // Paint procedural original character face & outfit preview on each Job card!
     if (this.game && this.game.renderer && this.game.renderer.texBank) {
       const tb = this.game.renderer.texBank;
       this.el.jobCards.querySelectorAll('[data-job-avatar]').forEach((cv) => {
@@ -478,14 +497,12 @@ export class UIManager {
           skinTone: j.skinTone,
           eyeColor: j.eyeColor,
           hairColor: j.hairColor,
-          gender: j.gender,
+          bodyType: this.selectedBodyType,
         });
         const outfitTex = tb.getOutfitTexture({
           id: j.id,
-          style: j.outfitStyle,
-          primary: j.color,
+          tunicColor: j.tunicColor || j.color,
           accent: j.accent,
-          skinTone: j.skinTone,
         });
         ctx.clearRect(0, 0, 64, 64);
         if (faceTex?.image) ctx.drawImage(faceTex.image, 176, 10, 160, 210, 10, 2, 44, 38);
@@ -992,15 +1009,15 @@ export class UIManager {
         this.renderFacility('shop_magic');
       };
     } else if (type === 'blacksmith') {
-      this.el.facilityEyebrow.textContent = 'CYBER FORGE BLACKSMITH';
-      this.el.facilityTitle.textContent = '⚒️ 鍛冶屋（装備強化 +1 〜 +10）';
+      this.el.facilityEyebrow.textContent = 'ROYAL FORGE BLACKSMITH';
+      this.el.facilityTitle.textContent = '⚒️ 王立鍛冶工房（武具錬成 +1 〜 +10）';
       this.el.facilityBody.innerHTML = `
         <div class="stat-summary-grid">
           <div class="stat-box"><div class="stat-box-label">🔹 星屑鉱石 (+1〜+4)</div><div class="stat-box-val">${p.ores.stardust} 個</div></div>
           <div class="stat-box"><div class="stat-box-label">🔸 輝晶インゴット (+5〜+7)</div><div class="stat-box-val">${p.ores.prism} 個</div></div>
           <div class="stat-box"><div class="stat-box-label">💠 虚空クリスタル (+8〜+10)</div><div class="stat-box-val">${p.ores.void} 個</div></div>
         </div>
-        <p class="muted">強化値 +1 / +4 / +7 に達すると武器の発光オーラ＆斬撃エフェクトが段階的に進化します！</p>
+        <p class="muted">強化値 +1 / +4 / +7 に達すると武器の聖光オーラ＆斬撃エフェクトが段階的に進化します！</p>
         <div class="section-heading"><span>⚔ 所持武器を鍛える</span></div>
         <div class="card-grid">
           ${p.weapons.map((item) => {
@@ -1074,12 +1091,12 @@ export class UIManager {
       };
     } else if (type === 'inn') {
       const fee = p.level <= 3 ? 0 : Math.min(120, p.level * 12);
-      this.el.facilityEyebrow.textContent = 'LUMINA REST INN';
-      this.el.facilityTitle.textContent = '🌙 宿屋（HP/MP全回復＆セーブ）';
+      this.el.facilityEyebrow.textContent = 'HYRULE HEARTH INN';
+      this.el.facilityTitle.textContent = '🌙 旅人の宿屋（HP/MP全回復＆セーブ）';
       this.el.facilityBody.innerHTML = `
         <div class="item-card">
-          <p class="muted">ふかふかのネオンベッドでゆっくり休んで、HP・MP・状態異常を完全回復します。（オートセーブも実行されます）</p>
-          <p><strong>宿泊料金：${fee === 0 ? '無料（初心者応援！）' : `${fee} G`}</strong></p>
+          <p class="muted">暖炉の火が灯るふかふかの羽毛ベッドでゆっくり休んで、HP・MP・状態異常を完全回復します。（オートセーブも実行されます）</p>
+          <p><strong>宿泊料金：${fee === 0 ? '無料（駆け出し勇者応援！）' : `${fee} G`}</strong></p>
           <button id="btn-inn-rest" class="btn-neon btn-primary" type="button">🌙 休んで完全回復する</button>
         </div>
       `;
@@ -1096,23 +1113,23 @@ export class UIManager {
       const ds = p.getDroneStats();
       const cost = getDroneUpgradeCost(p.droneLevel);
       const oreMeta = ORES[cost.oreType];
-      this.el.facilityEyebrow.textContent = 'AUTONOMOUS BUDDY LAB';
-      this.el.facilityTitle.textContent = '🤖 ドローン工房（相棒強化）';
+      this.el.facilityEyebrow.textContent = 'SPIRIT GUARDIAN ORB SANCTUARY';
+      this.el.facilityTitle.textContent = '🧚 精霊オーブ工房（守護精霊強化）';
       this.el.facilityBody.innerHTML = `
         <div class="stat-summary-grid">
           <div class="stat-box"><div class="stat-box-label">現在レベル</div><div class="stat-box-val">Lv.${ds.level} / 5</div></div>
-          <div class="stat-box"><div class="stat-box-label">援護レーザー威力</div><div class="stat-box-val">${ds.damage}</div></div>
-          <div class="stat-box"><div class="stat-box-label">射撃間隔</div><div class="stat-box-val">${ds.cooldown.toFixed(2)}秒</div></div>
+          <div class="stat-box"><div class="stat-box-label">援護光弾威力</div><div class="stat-box-val">${ds.damage}</div></div>
+          <div class="stat-box"><div class="stat-box-label">詠唱間隔</div><div class="stat-box-val">${ds.cooldown.toFixed(2)}秒</div></div>
           <div class="stat-box"><div class="stat-box-label">アイテム自動吸引範囲</div><div class="stat-box-val">${ds.magnetRadius}px</div></div>
         </div>
         <div class="item-card">
           <div class="item-meta">
-            Lv.4以上で<strong>ツインレーザー砲</strong>が解放され、Lv.5で黄金の究極ドローンへ進化します！<br/>
+            Lv.4以上で<strong>双連聖光砲</strong>が解放され、Lv.5で黄金の大精霊オーブへ覚醒します！<br/>
             所持鉱石：🔹${p.ores.stardust} / 🔸${p.ores.prism} / 💠${p.ores.void}
           </div>
           <div class="item-actions">
             ${cost.maxReached
-              ? `<button class="btn-ghost" disabled>★ ドローン性能 MAX！</button>`
+              ? `<button class="btn-ghost" disabled>★ 守護精霊オーブ性能 MAX！</button>`
               : `<button id="btn-drone-up" class="btn-neon btn-primary" type="button">Lv.${p.droneLevel + 1} へ強化 (${cost.gold}G / ${oreMeta.icon}${cost.oreCount})</button>`}
           </div>
         </div>
@@ -1128,7 +1145,7 @@ export class UIManager {
           p.ores[cost.oreType] -= cost.oreCount;
           p.droneLevel += 1;
           g.audio.playSe('levelup');
-          g.addToast(`🤖 相棒ドローンが Lv.${p.droneLevel} に進化しました！`);
+          g.addToast(`🧚 守護精霊オーブが Lv.${p.droneLevel} に進化しました！`);
           if (p.droneLevel >= 5) g.unlockAchievement('drone_max');
           g.autoSave();
           this.renderFacility('drone');
@@ -1143,8 +1160,8 @@ export class UIManager {
   openWarpModal() {
     this.isModalOpen = true;
     this.el.modalFacility.classList.remove('hidden');
-    this.el.facilityEyebrow.textContent = 'FAST TRAVEL GATE';
-    this.el.facilityTitle.textContent = '🌀 次元ワープ（ファストトラベル）';
+    this.el.facilityEyebrow.textContent = 'SHEIKAH FAST TRAVEL SLATE';
+    this.el.facilityTitle.textContent = '🌀 古代転移石碑（ファストトラベル）';
     this.el.facilityGold.textContent = 'FREE WARP';
 
     const g = this.game;
@@ -1196,48 +1213,47 @@ export class UIManager {
   openControlsGuide() {
     this.isModalOpen = true;
     this.el.modalFacility.classList.remove('hidden');
-    this.el.facilityEyebrow.textContent = 'HOW TO PLAY — LUMINA DIORAMA';
-    this.el.facilityTitle.textContent = '🎮 操作ガイド ＆ 冒険のヒント';
+    this.el.facilityEyebrow.textContent = 'HOW TO PLAY — LUMINA CHRONICLES 3D';
+    this.el.facilityTitle.textContent = '🎮 ゼルダ式3Dアクション操作ガイド ＆ 冒険の秘訣';
     this.el.facilityGold.textContent = '製作者：駿';
     this.el.facilityBody.innerHTML = `
       <div class="card-grid">
         <div class="item-card">
-          <div class="item-head"><span class="item-name">📱 iPad / タッチ操作</span></div>
+          <div class="item-head"><span class="item-name">📱 iPad / マルチタッチ操作</span></div>
           <div class="item-meta">
-            ・画面左側（左利き設定時は右側）のどこでも触ると<strong>フローティングスティック</strong>が出現！<br/>
-            ・<strong>攻撃</strong>：連打で3連コンボ！<br/>
-            ・<strong>回避</strong>：無敵フレーム付き高速ダッシュ<br/>
-            ・<strong>魔法 / 切替</strong>：5種の属性・補助魔法を自在に発動<br/>
-            ・<strong>必殺</strong>：ゲージ100%でジョブ究極奥義！<br/>
-            ・<strong>調べる</strong>：NPC会話 / 宝箱 / 祭壇 / 味方の長押し蘇生！
+            ・<strong>左画面ドラッグ</strong>：フローティングスティック移動（カメラ向き基準）<br/>
+            ・<strong>右画面スワイプ</strong>：360°自由カメラ回転（左指と完全独立）<br/>
+            ・<strong>🎯 注目</strong>：Zターゲットロックオン（敵を中心に並行移動）<br/>
+            ・<strong>🛡️ 盾パリィ</strong>：ガード＆直前ジャストガードで敵をBREAK＆弾反射！<br/>
+            ・<strong>⚡ 回避</strong>：敵の攻撃直前に回避するとスロー演出＆<strong>ラッシュ（Flurry Rush）</strong>発動！<br/>
+            ・<strong>⏫ 飛躍</strong>：ジャンプで段差や床トラップを飛び越える！
           </div>
         </div>
         <div class="item-card">
           <div class="item-head"><span class="item-name">⌨️ PC キーボード＆マウス</span></div>
           <div class="item-meta">
-            ・<strong>WASD / 矢印</strong>：移動<br/>
-            ・<strong>Space / J / 左クリック</strong>：攻撃コンボ<br/>
-            ・<strong>Shift / K / 右クリック</strong>：無敵ダッシュ回避<br/>
-            ・<strong>E / L</strong>：魔法発動（<strong>Q / 1〜5</strong>で切替）<br/>
-            ・<strong>R / U</strong>：リミット必殺技<br/>
-            ・<strong>F / Enter</strong>：調べる・会話・長押し蘇生<br/>
-            ・<strong>M</strong>：ワープ / <strong>Esc</strong>：メニュー
+            ・<strong>WASD / 矢印</strong>：カメラ方向基準で3D移動<br/>
+            ・<strong>右ドラッグ / ホイール</strong>：360°カメラ回転 ＆ ズーム<br/>
+            ・<strong>V または「🎥 視点」</strong>：標準TPS ➔ 近距離TPS ➔ FPS一人称 切替<br/>
+            ・<strong>Z / Tab / 中クリック</strong>：🎯 Zターゲット注目ロックオン<br/>
+            ・<strong>Space / J / 左クリック</strong>：3段コンボ斬撃（ラッシュ中は高速連撃！）<br/>
+            ・<strong>C / H</strong>：🛡️ 盾構え＆ジャストガード（パリィ反射）<br/>
+            ・<strong>Shift / K</strong>：⚡ ステップ回避（ジャスト回避でラッシュ発動）<br/>
+            ・<strong>B / G</strong>：⏫ ジャンプ / <strong>E / L</strong>：魔法 / <strong>R / U</strong>：必殺技
           </div>
         </div>
         <div class="item-card">
-          <div class="item-head"><span class="item-name">🌐 4人オンライン協力プレイ</span></div>
+          <div class="item-head"><span class="item-name">⚔️ パリィ＆ラッシュ（極意）</span></div>
           <div class="item-meta">
-            ・「🌐 協力」から合言葉（4〜6文字）を発行または入力するだけで最大4人リアルタイム協力！<br/>
-            ・敵の強さはソロ基準のまま無双バランス！<br/>
-            ・回復・バフは味方全員に効果あり。戦闘不能の味方は近づいて<strong>長押し蘇生（レスキュー）</strong>！
+            ・<strong>ジャストガード（盾パリィ）</strong>：敵の攻撃が当たる瞬間（0.28秒以内）に盾を構えると黄金衝撃波が発生！敵が体勢を崩し<strong>ダメージ1.5倍のBREAK状態</strong>になり、敵の魔弾は<strong>3倍威力で跳ね返し</strong>ます！<br/>
+            ・<strong>ジャスト回避（ラッシュ）</strong>：敵の突進・弾・ボスの赤予兆の直前に回避すると世界がスローになり、攻撃連打で<strong>超高速ラッシュ斬撃</strong>を叩き込めます！
           </div>
         </div>
         <div class="item-card">
-          <div class="item-head"><span class="item-name">💎 探索＆ボス攻略のコツ</span></div>
+          <div class="item-head"><span class="item-name">🌐 4人オンライン協力 ＆ 体型変更</span></div>
           <div class="item-meta">
-            ・光るヒビが入った壁は3回攻撃で壊せる<strong>隠し部屋</strong>！<br/>
-            ・ボス戦は周囲の<strong>守護クリスタル</strong>を全て壊すと無敵シールドが崩壊します。<br/>
-            ・HP50%以下でボスが<strong>第2形態</strong>へ覚醒！赤い予兆円＆レーザーを回避しよう！
+            ・「🌐 協力」から合言葉（4〜6文字）で最大4人リアルタイム協力冒険！<br/>
+            ・キャラクターの体型（<strong>男性型[標準] / 女性型 / スリム・中性型</strong>）は開始時だけでなくゲーム中の「設定」タブからもいつでも変更＆マルチ同期可能です！
           </div>
         </div>
       </div>
@@ -1492,7 +1508,27 @@ export class UIManager {
       out.onclick = null;
     } else if (this.activeMenuTab === 'settings') {
       const s = g.settings;
+      const curBody = g.player?.bodyType || s.bodyType || 'male';
+      const curCam = g.camera?.mode || s.cameraMode || 'tps';
       out.innerHTML = `
+        <div class="section-heading"><span>🦸 勇者キャラクター＆3Dカメラ設定</span></div>
+        <div class="setting-row">
+          <div><div class="setting-label">体型スタイル（3Dモデル＆マルチプレイ同期）</div><div class="setting-sub">6.5頭身スタイライズド体型のシルエットをリアルタイム変更</div></div>
+          <div class="seg-group">
+            <button type="button" class="seg-btn ${curBody === 'male' ? 'active' : ''}" data-set-body="male">男性型（標準）</button>
+            <button type="button" class="seg-btn ${curBody === 'female' ? 'active' : ''}" data-set-body="female">女性型</button>
+            <button type="button" class="seg-btn ${curBody === 'slim' ? 'active' : ''}" data-set-body="slim">スリム/中性型</button>
+          </div>
+        </div>
+        <div class="setting-row">
+          <div><div class="setting-label">3Dカメラ視点モード (キーボード: V)</div><div class="setting-sub">ゼルダ式背中越しTPS・近距離アクション・FPS一人称視点を切替</div></div>
+          <div class="seg-group">
+            <button type="button" class="seg-btn ${curCam === 'tps' ? 'active' : ''}" data-set-cam="tps">標準TPS</button>
+            <button type="button" class="seg-btn ${curCam === 'action' ? 'active' : ''}" data-set-cam="action">近距離TPS</button>
+            <button type="button" class="seg-btn ${curCam === 'fps' ? 'active' : ''}" data-set-cam="fps">FPS一人称</button>
+          </div>
+        </div>
+
         <div class="section-heading"><span>🎛️ iPad タッチUI カスタマイズ</span></div>
         <div class="setting-row">
           <div><div class="setting-label">ボタンサイズ</div><div class="setting-sub">iPadや大画面に合わせてタッチボタンの大きさを変更</div></div>
@@ -1537,10 +1573,23 @@ export class UIManager {
       `;
 
       out.onclick = (e) => {
+        const bd = e.target.closest('[data-set-body]');
+        const cm = e.target.closest('[data-set-cam]');
         const sz = e.target.closest('[data-set-size]');
         const hd = e.target.closest('[data-set-hand]');
         const tm = e.target.closest('[data-set-touch]');
-        if (sz) {
+        if (bd) {
+          g.player.bodyType = bd.dataset.setBody;
+          g.settings.bodyType = bd.dataset.setBody;
+          g.persistSettings();
+          g.autoSave();
+          this.renderMenuTab();
+        } else if (cm) {
+          g.camera.mode = cm.dataset.setCam;
+          g.settings.cameraMode = cm.dataset.setCam;
+          g.persistSettings();
+          this.renderMenuTab();
+        } else if (sz) {
           g.settings.buttonSize = sz.dataset.setSize;
           g.persistSettings();
           this.applySettingsToDOM(g.settings);

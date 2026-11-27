@@ -1,5 +1,6 @@
 // ============================================================================
-// LUMINA DIORAMA — Main Entry, iPad Multi-Touch Floating Stick & PC Input Loop
+// LUMINA CHRONICLES — Main Entry, iPad Multi-Touch Stick + Right Camera Orbit,
+// Zelda-Style Z-Targeting, Guard/Parry, Jump & 60FPS Game Loop
 // 製作者：駿 (Created by Shun)
 // ============================================================================
 
@@ -12,13 +13,13 @@ function generateAppleTouchIcon() {
     c.height = 180;
     const ctx = c.getContext('2d');
     const bg = ctx.createLinearGradient(0, 0, 180, 180);
-    bg.addColorStop(0, '#071429');
-    bg.addColorStop(1, '#141133');
+    bg.addColorStop(0, '#1e3a8a');
+    bg.addColorStop(1, '#14532d');
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, 180, 180);
 
-    // Isometric Diorama Slab
-    ctx.fillStyle = '#0e7490';
+    // Golden Hylian Crest Shield & Star Crystal
+    ctx.fillStyle = '#4c943e';
     ctx.beginPath();
     ctx.moveTo(90, 74);
     ctx.lineTo(148, 102);
@@ -26,17 +27,16 @@ function generateAppleTouchIcon() {
     ctx.lineTo(32, 102);
     ctx.closePath();
     ctx.fill();
-    ctx.strokeStyle = '#38f8d4';
-    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = '#f59e0b';
+    ctx.lineWidth = 3;
     ctx.stroke();
 
-    // Glowing Star Crystal
-    ctx.shadowColor = '#38f8d4';
+    ctx.shadowColor = '#fbbf24';
     ctx.shadowBlur = 14;
     const cg = ctx.createLinearGradient(90, 26, 90, 102);
     cg.addColorStop(0, '#fef08a');
-    cg.addColorStop(0.5, '#67e8f9');
-    cg.addColorStop(1, '#f472b6');
+    cg.addColorStop(0.5, '#38bdf8');
+    cg.addColorStop(1, '#2563eb');
     ctx.fillStyle = cg;
     ctx.beginPath();
     ctx.moveTo(90, 24);
@@ -80,7 +80,6 @@ window.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('touchstart', unlockAudioOnce, { passive: true });
   window.addEventListener('keydown', unlockAudioOnce, { passive: true });
 
-  // Block iPad pinch zoom, double-tap zoom & long-press context menus
   document.addEventListener('gesturestart', (e) => e.preventDefault(), { passive: false });
   document.addEventListener('gesturechange', (e) => e.preventDefault(), { passive: false });
   document.addEventListener('gestureend', (e) => e.preventDefault(), { passive: false });
@@ -92,7 +91,6 @@ window.addEventListener('DOMContentLoaded', () => {
     if (e.cancelable) e.preventDefault();
   }, { passive: false });
 
-  // Responsive Resize & Orientation Change
   const handleResize = () => {
     game.renderer.resize();
   };
@@ -100,11 +98,10 @@ window.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('orientationchange', () => setTimeout(handleResize, 120));
 
   // ==========================================================================
-  // KEYBOARD & MOUSE INPUT STATE
+  // KEYBOARD & MOUSE INPUT STATE (CAMERA-RELATIVE ZELDA CONTROLS)
   // ==========================================================================
   const keys = new Set();
   let attackHeld = false;
-  let mouseAimAngle = null;
 
   window.addEventListener('keydown', (e) => {
     if (isTypingTarget(document.activeElement)) {
@@ -117,7 +114,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
     if (game.mode !== 'playing') return;
 
-    if (code === 'Escape' || code === 'Tab') {
+    if (code === 'Escape') {
       e.preventDefault();
       if (game.ui.isModalOpen) game.ui.closeModals();
       else game.ui.openMenu('equip');
@@ -134,13 +131,30 @@ window.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    if (code === 'Space' || code === 'KeyJ') {
+    if (code === 'Tab' || code === 'KeyZ') {
+      // Z-Target Lock-On!
+      e.preventDefault();
+      game.toggleLockOn();
+    } else if (code === 'KeyV') {
+      // Cycle Camera Mode (TPS -> Action TPS -> FPS)
+      e.preventDefault();
+      game.cycleCameraMode();
+    } else if (code === 'Space' || code === 'KeyJ') {
       e.preventDefault();
       attackHeld = true;
       game.performAttack();
     } else if (code === 'ShiftLeft' || code === 'ShiftRight' || code === 'KeyK') {
       e.preventDefault();
-      game.player.tryDash(getMoveVector(), game);
+      const worldMove = game.inputToWorldMoveVector(getMoveVector());
+      game.player.tryDash(worldMove, game);
+    } else if (code === 'KeyC' || code === 'KeyH') {
+      // Shield Guard & Perfect Parry!
+      e.preventDefault();
+      game.player.startGuard(game);
+    } else if (code === 'KeyB' || code === 'KeyG') {
+      // Jump!
+      e.preventDefault();
+      game.player.tryJump(game);
     } else if (code === 'KeyE' || code === 'KeyL') {
       e.preventDefault();
       game.performMagic();
@@ -175,61 +189,74 @@ window.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('keyup', (e) => {
     keys.delete(e.code);
     if (e.code === 'Space' || e.code === 'KeyJ') attackHeld = false;
+    if (e.code === 'KeyC' || e.code === 'KeyH') game.player.stopGuard();
     if (e.code === 'KeyF' || e.code === 'Enter') game.interactHolding = false;
   });
 
   window.addEventListener('blur', () => {
     keys.clear();
     attackHeld = false;
+    game.player.stopGuard();
     game.interactHolding = false;
   });
 
-  // Mouse Click Attack / Right-Click Dash on Canvas (PC Comfort)
+  // PC Mouse Controls: Left-Click Attack, Middle-Click Lock-On, Right-Drag Orbit Camera, Wheel Zoom
+  let mouseOrbitDragging = false;
+  let lastMouseX = 0;
+  let lastMouseY = 0;
+
   canvas.addEventListener('pointerdown', (e) => {
     if (e.pointerType !== 'mouse') return;
     if (game.mode !== 'playing' || game.ui.isModalOpen) return;
 
-    const rect = canvas.getBoundingClientRect();
-    const mx = e.clientX - rect.left;
-    const my = e.clientY - rect.top;
-    const worldX = mx - game.renderer.width * 0.5 + game.camera.x;
-    const worldY = my - game.renderer.height * 0.5 + game.camera.y;
-    mouseAimAngle = Math.atan2(worldY - game.player.y, worldX - game.player.x);
-
     if (e.button === 0) {
       attackHeld = true;
-      game.performAttack(mouseAimAngle);
+      game.performAttack();
+    } else if (e.button === 1) {
+      e.preventDefault();
+      game.toggleLockOn();
     } else if (e.button === 2) {
-      game.player.facing = mouseAimAngle;
-      game.player.tryDash({ x: Math.cos(mouseAimAngle), y: Math.sin(mouseAimAngle) }, game);
+      mouseOrbitDragging = true;
+      lastMouseX = e.clientX;
+      lastMouseY = e.clientY;
     }
   });
 
-  canvas.addEventListener('pointermove', (e) => {
-    if (e.pointerType !== 'mouse' || !attackHeld) return;
-    const rect = canvas.getBoundingClientRect();
-    const worldX = (e.clientX - rect.left) - game.renderer.width * 0.5 + game.camera.x;
-    const worldY = (e.clientY - rect.top) - game.renderer.height * 0.5 + game.camera.y;
-    mouseAimAngle = Math.atan2(worldY - game.player.y, worldX - game.player.x);
+  window.addEventListener('pointermove', (e) => {
+    if (e.pointerType !== 'mouse' || !mouseOrbitDragging) return;
+    const dx = e.clientX - lastMouseX;
+    const dy = e.clientY - lastMouseY;
+    lastMouseX = e.clientX;
+    lastMouseY = e.clientY;
+    game.rotateCamera(dx * 0.0065, dy * 0.0045);
   });
 
   window.addEventListener('pointerup', (e) => {
-    if (e.pointerType === 'mouse' && e.button === 0) {
-      attackHeld = false;
-      mouseAimAngle = null;
+    if (e.pointerType === 'mouse') {
+      if (e.button === 0) attackHeld = false;
+      if (e.button === 2) mouseOrbitDragging = false;
     }
   });
 
+  window.addEventListener('wheel', (e) => {
+    if (game.mode !== 'playing' || game.ui.isModalOpen) return;
+    game.zoomCamera(e.deltaY * 0.14);
+  }, { passive: true });
+
   // ==========================================================================
-  // PRO IPAD FLOATING VIRTUAL JOYSTICK & MULTI-TOUCH ACTION BUTTONS
+  // PRO IPAD MULTI-TOUCH: LEFT FLOATING STICK + RIGHT 360 CAMERA ORBIT DRAG
   // ==========================================================================
   const joyZone = document.getElementById('joystick-zone');
   const joyBase = document.getElementById('joystick-base');
   const joyKnob = document.getElementById('joystick-knob');
+  const camZone = document.getElementById('camera-touch-zone');
 
   let joyPointerId = null;
   let joyOrigin = { x: 0, y: 0 };
   const joyVec = { x: 0, y: 0 };
+
+  let camPointerId = null;
+  let camLastPos = { x: 0, y: 0 };
 
   function getJoyMaxRadius() {
     return game.settings.buttonSize === 'large' ? 56 : 46;
@@ -283,6 +310,35 @@ window.addEventListener('DOMContentLoaded', () => {
   joyZone.addEventListener('pointerup', endJoystick);
   joyZone.addEventListener('pointercancel', endJoystick);
 
+  // Right-Half Screen Touch Drag for 360 TPS Camera Orbit (Strictly isolated by pointerId!)
+  if (camZone) {
+    camZone.addEventListener('pointerdown', (e) => {
+      if (camPointerId !== null || e.pointerId === joyPointerId) return;
+      e.preventDefault();
+      camPointerId = e.pointerId;
+      camLastPos.x = e.clientX;
+      camLastPos.y = e.clientY;
+      try { camZone.setPointerCapture(e.pointerId); } catch (_) {}
+    });
+
+    camZone.addEventListener('pointermove', (e) => {
+      if (e.pointerId !== camPointerId) return;
+      e.preventDefault();
+      const dx = e.clientX - camLastPos.x;
+      const dy = e.clientY - camLastPos.y;
+      camLastPos.x = e.clientX;
+      camLastPos.y = e.clientY;
+      game.rotateCamera(dx * 0.007, dy * 0.005);
+    });
+
+    const endCamDrag = (e) => {
+      if (e.pointerId !== camPointerId) return;
+      camPointerId = null;
+    };
+    camZone.addEventListener('pointerup', endCamDrag);
+    camZone.addEventListener('pointercancel', endCamDrag);
+  }
+
   // Bind Multi-Touch Action Buttons cleanly without click lag
   function bindTouchBtn(id, onDown, onUp = null) {
     const btn = document.getElementById(id);
@@ -318,7 +374,22 @@ window.addEventListener('DOMContentLoaded', () => {
   });
 
   bindTouchBtn('tbtn-dash', () => {
-    game.player.tryDash(getMoveVector(), game);
+    const worldMove = game.inputToWorldMoveVector(getMoveVector());
+    game.player.tryDash(worldMove, game);
+  });
+
+  bindTouchBtn('tbtn-guard', () => {
+    game.player.startGuard(game);
+  }, () => {
+    game.player.stopGuard();
+  });
+
+  bindTouchBtn('tbtn-jump', () => {
+    game.player.tryJump(game);
+  });
+
+  bindTouchBtn('tbtn-lock', () => {
+    game.toggleLockOn();
   });
 
   bindTouchBtn('tbtn-magic', () => {
@@ -368,7 +439,7 @@ window.addEventListener('DOMContentLoaded', () => {
     lastTime = now;
 
     if ((attackHeld || touchAttackHeld) && game.mode === 'playing' && !game.ui.isModalOpen) {
-      game.performAttack(attackHeld ? mouseAimAngle : null);
+      game.performAttack();
     }
 
     game.update(dt, getMoveVector());

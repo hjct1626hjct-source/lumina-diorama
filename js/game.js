@@ -45,7 +45,7 @@ export class Game {
     this.audio.setMuted(this.settings.muted);
 
     this.renderer = new Renderer(canvas, minimapCanvas);
-    this.player = new Player('シュン', 'knight');
+    this.player = new Player('シュン', 'knight', this.settings.bodyType || 'male');
     this.progress = this._createFreshProgress();
 
     this.currentAreaId = 'town';
@@ -63,14 +63,24 @@ export class Game {
     this.afterimages = [];
     this.damageTexts = [];
 
-    this.camera = { x: this.map.spawn.x, y: this.map.spawn.y };
+    // Zelda-Style TPS Orbit Camera & Z-Targeting Lock-On State
+    this.camera = {
+      x: this.map.spawn.x,
+      y: this.map.spawn.y,
+      yaw: -Math.PI * 0.5, // Default looking North (-Y in 2D map, -Z in 3D)
+      pitch: 0.34,         // Slightly elevated over-the-shoulder angle
+      distance: 195,       // Standard TPS distance
+      mode: this.settings.cameraMode || 'tps', // 'tps' | 'action' | 'fps'
+    };
+    this.lockTarget = null; // Active Z-Targeted enemy/boss/crystal
+
     this.shakePower = 0;
     this.shakeOffset = { x: 0, y: 0 };
     this.hitstopTimer = 0;
     this.slowMoTimer = 0;
     this.slowMoScale = 1.0;
     this.screenFlash = 0;
-    this.screenFlashColor = '#38f8d4';
+    this.screenFlashColor = '#38bdf8';
 
     this.hudSyncTimer = 0;
     this.portalCooldown = 0;
@@ -133,10 +143,99 @@ export class Game {
   }
 
   // ==========================================================================
+  // CAMERA CONTROLS, CAMERA-RELATIVE MOVEMENT & Z-TARGETING LOCK-ON
+  // ==========================================================================
+  cycleCameraMode() {
+    const order = ['tps', 'action', 'fps'];
+    const idx = order.indexOf(this.camera.mode);
+    this.camera.mode = order[(idx + 1) % order.length];
+    this.settings.cameraMode = this.camera.mode;
+    this.persistSettings();
+    const labels = {
+      tps: '🎥 標準TPS視点（背中越し）',
+      action: '🎥 近距離アクションTPS視点',
+      fps: '🎥 一人称視点（FPSモード）',
+    };
+    this.audio.playSe('uiClick');
+    this.addToast(labels[this.camera.mode] || labels.tps);
+    return this.camera.mode;
+  }
+
+  rotateCamera(deltaYaw, deltaPitch) {
+    this.camera.yaw += deltaYaw;
+    const minPitch = this.camera.mode === 'fps' ? -0.55 : 0.12;
+    const maxPitch = this.camera.mode === 'fps' ? 0.65 : 1.05;
+    this.camera.pitch = Math.max(minPitch, Math.min(maxPitch, this.camera.pitch + deltaPitch));
+  }
+
+  zoomCamera(deltaDist) {
+    this.camera.distance = Math.max(105, Math.min(340, this.camera.distance + deltaDist));
+  }
+
+  // Convert local stick/WASD vector (x: right, y: down/back, -y: forward) into world (X, Y) using Camera Yaw!
+  inputToWorldMoveVector(inputVec) {
+    const mag = Math.hypot(inputVec.x, inputVec.y);
+    if (mag < 0.05) return { x: 0, y: 0 };
+    // Camera looks along direction (cos(yaw), sin(yaw)) in world X/Y(Z) plane
+    const fwdX = Math.cos(this.camera.yaw);
+    const fwdY = Math.sin(this.camera.yaw);
+    // Right vector is 90 degrees clockwise in screen/ground plane: (-fwdY, fwdX)
+    const rightX = -fwdY;
+    const rightY = fwdX;
+
+    const forwardAmount = -inputVec.y; // W or Stick Up is negative y
+    const rightAmount = inputVec.x;    // D or Stick Right is positive x
+
+    return {
+      x: fwdX * forwardAmount + rightX * rightAmount,
+      y: fwdY * forwardAmount + rightY * rightAmount,
+    };
+  }
+
+  toggleLockOn() {
+    if (this.lockTarget && this.lockTarget.alive && (this.lockTarget.hp === undefined || this.lockTarget.hp > 0)) {
+      this.lockTarget = null;
+      this.audio.playSe('uiClick');
+      this.addToast('🎯 ロックオン解除');
+      return null;
+    }
+    const candidates = this._findNearestHostiles(this.player.x, this.player.y, 440, 1);
+    if (candidates.length > 0) {
+      this.lockTarget = candidates[0];
+      this.player.facing = Math.atan2(this.lockTarget.y - this.player.y, this.lockTarget.x - this.player.x);
+      this.audio.playSe('switch');
+      this.addToast(`🎯 Z注目ロックオン：【${this.lockTarget.name || '守護結界石'}】`);
+      return this.lockTarget;
+    } else {
+      // Snap camera behind player facing direction (classic Zelda Z-target camera reset!)
+      this.camera.yaw = this.player.facing;
+      this.audio.playSe('uiClick');
+      return null;
+    }
+  }
+
+  spawnFootDust(x, y) {
+    this.particles.push({
+      x: x + (Math.random() - 0.5) * 10,
+      y: y + (Math.random() - 0.5) * 10,
+      vx: (Math.random() - 0.5) * 24,
+      vy: (Math.random() - 0.5) * 24,
+      size: 4.5,
+      color: 'rgba(214, 211, 196, 0.65)',
+      life: 0.28,
+      maxLife: 0.28,
+    });
+  }
+
+  // ==========================================================================
   // GAME LIFECYCLE: NEW GAME, LOAD, NG+, TOWER, TITLE
   // ==========================================================================
-  startNewGame(name, jobId, skipIntro = false) {
-    this.player = new Player(name, jobId);
+  startNewGame(name, jobId, skipIntro = false, bodyType = null) {
+    const chosenBody = bodyType || this.settings.bodyType || 'male';
+    this.settings.bodyType = chosenBody;
+    this.persistSettings();
+
+    this.player = new Player(name, jobId, chosenBody);
     this.progress = this._createFreshProgress();
     this._syncDiscoveryFromPlayer();
 
@@ -153,7 +252,8 @@ export class Game {
   }
 
   loadDataOnly(saved) {
-    this.player = new Player(saved.player.name, saved.player.jobId);
+    const bType = saved.player?.bodyType || this.settings.bodyType || 'male';
+    this.player = new Player(saved.player.name, saved.player.jobId, bType);
     this.player.loadFromSave(saved.player);
     this._applySavedProgress(saved.progress);
     this._syncDiscoveryFromPlayer();
@@ -213,13 +313,14 @@ export class Game {
     if (floor === 1) this.towerScore = 0;
     this.towerFloorCleared = false;
     this.changeArea('tower', false);
-    this.addToast(`🗼 エンドレス試練の塔 第${floor}階層 スタート！`);
+    this.addToast(`🗼 勇者の試練の古塔 第${floor}階層 スタート！`);
   }
 
   returnToTitle() {
     this.network.disconnect(true);
     this.mode = 'title';
     this.boss = null;
+    this.lockTarget = null;
     this.audio.playBgm('title');
     this.ui.refreshTitleScreen();
   }
@@ -235,10 +336,15 @@ export class Game {
     this.map = buildAreaMap(areaId, this.progress, this.towerFloor);
     this.player.x = this.map.spawn.x;
     this.player.y = this.map.spawn.y;
+    this.player.zHeight = 0;
+    this.player.vz = 0;
+    this.player.facing = areaId === 'town' ? -Math.PI * 0.5 : 0;
     this.player.drone.x = this.player.x - 28;
     this.player.drone.y = this.player.y - 20;
     this.camera.x = this.player.x;
     this.camera.y = this.player.y;
+    this.camera.yaw = this.player.facing;
+    this.lockTarget = null;
 
     this.enemies = [];
     this.boss = null;
@@ -250,7 +356,6 @@ export class Game {
     this.portalCooldown = 0.85;
     this.towerFloorCleared = false;
 
-    // NG+ scaling ONLY (Multiplayer stays strictly solo-baseline for Casual Musou!)
     const ngScale = 1 + ((this.progress.ngPlus || 1) - 1) * 0.6;
     for (const sp of this.map.enemySpawns) {
       const mult = (sp.towerScale || 1.0) * ngScale;
@@ -378,29 +483,115 @@ export class Game {
   }
 
   // ==========================================================================
-  // COMBAT ACTIONS: ATTACK, MAGIC, LIMIT BREAK, INTERACT / REVIVE
+  // COMBAT ACTIONS: ATTACK, FLURRY RUSH, PARRY, MAGIC, LIMIT BREAK, INTERACT
   // ==========================================================================
+  checkPerfectDodgeFlurryRush() {
+    const p = this.player;
+    let triggerEnemy = null;
+
+    // 1. Check Boss active telegraphs (near charge completion) or Boss dash
+    if (this.boss && this.boss.alive) {
+      if (this.boss.dashTimer > 0 && Math.hypot(this.boss.x - p.x, this.boss.y - p.y) < this.boss.radius + 115) {
+        triggerEnemy = this.boss;
+      }
+      if (!triggerEnemy) {
+        for (const tg of this.boss.telegraphs) {
+          const prog = tg.timer / tg.chargeTime;
+          if (prog >= 0.45 && prog <= 1.15) {
+            if (tg.type === 'circle' && Math.hypot(p.x - tg.x, p.y - tg.y) < tg.radius + 55) {
+              triggerEnemy = this.boss;
+              break;
+            } else if (tg.type === 'laser') {
+              triggerEnemy = this.boss;
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    // 2. Check Elite / Charger Enemies during windup or charge or incoming projectiles
+    if (!triggerEnemy) {
+      for (const e of this.enemies) {
+        if (!e.alive) continue;
+        const d = Math.hypot(e.x - p.x, e.y - p.y);
+        if ((e.chargeWindup > 0 || e.charging > 0) && d < e.radius + 125) {
+          triggerEnemy = e;
+          break;
+        }
+      }
+    }
+    if (!triggerEnemy) {
+      for (const pr of this.projectiles) {
+        if (pr.owner === 'enemy' && Math.hypot(pr.x - p.x, pr.y - p.y) < pr.radius + 68) {
+          const nearest = this._findNearestHostiles(p.x, p.y, 320, 1);
+          if (nearest.length > 0) triggerEnemy = nearest[0];
+          break;
+        }
+      }
+    }
+
+    if (triggerEnemy) {
+      p.flurryRushTimer = 2.6;
+      p.flurryTarget = triggerEnemy;
+      this.lockTarget = triggerEnemy;
+      this.triggerSlowMo(1.1, 0.28);
+      this.triggerFlash('#38bdf8', 0.38);
+      this.audio.playSe('limit');
+      this.spawnRing(p.x, p.y, '#38bdf8', 16, 140, 0.45);
+      this.spawnDamageText(p.x, p.y - 38, '⚡ JUST DODGE! ラッシュ発動!! ⚡', '#67e8f9', 1.38);
+      this.addToast('⚡ ジャスト回避成功！【ラッシュ（攻撃連打で超高速連撃）】発動！');
+    }
+  }
+
   performAttack(aimAngle = null) {
     if (this.mode !== 'playing' || this.ui.isModalOpen) return;
     const p = this.player;
     if (p.downed || p.attackCooldown > 0 || p.statuses.paralyze > 0) return;
 
-    if (aimAngle !== null) p.facing = aimAngle;
+    p.weaponDrawnTimer = 5.5;
+    p.attackAnimTimer = 0.28;
+
+    // Auto-face Z-Targeted enemy or Flurry Rush target
+    if (p.flurryRushTimer > 0 && p.flurryTarget && (p.flurryTarget.alive || p.flurryTarget.hp > 0)) {
+      const t = p.flurryTarget;
+      const dist = Math.hypot(t.x - p.x, t.y - p.y);
+      const ang = Math.atan2(t.y - p.y, t.x - p.x);
+      p.facing = ang;
+      if (dist > (t.radius || 22) + 36) {
+        // High-speed dash-step right up to the target with pale blue afterimages!
+        this.spawnAfterimage(p.x, p.y, p.facing, '#38bdf8', p.jobId);
+        p.x = t.x - Math.cos(ang) * ((t.radius || 22) + 28);
+        p.y = t.y - Math.sin(ang) * ((t.radius || 22) + 28);
+        this.spawnAfterimage(p.x, p.y, p.facing, '#67e8f9', p.jobId);
+      }
+    } else if (this.lockTarget && (this.lockTarget.alive || this.lockTarget.hp > 0)) {
+      p.facing = Math.atan2(this.lockTarget.y - p.y, this.lockTarget.x - p.x);
+    } else if (aimAngle !== null) {
+      p.facing = aimAngle;
+    }
+
     const job = p.getJob();
     const st = p.getStats();
+    const isFlurry = p.flurryRushTimer > 0;
 
     p.comboStep = (p.comboStep % 3) + 1;
-    p.comboResetTimer = 0.72;
-    p.attackCooldown = job.attackCooldown * (p.statuses.overclock > 0 ? 0.8 : 1.0);
+    p.comboResetTimer = 0.85;
+    p.attackCooldown = job.attackCooldown * (isFlurry ? 0.45 : p.statuses.overclock > 0 ? 0.8 : 1.0);
 
     const isFinisher = p.comboStep === 3;
-    const comboMult = isFinisher ? 1.42 : 1.0;
+    const comboMult = (isFinisher ? 1.45 : p.comboStep === 2 ? 1.15 : 1.0) * (isFlurry ? 1.35 : 1.0);
 
-    if (p.jobId === 'mage' || p.jobId === 'seraphina') {
-      // Arc Mage / Cyber Succubus fires homing arcane bolts or piercing heart lasers
-      const isSuccubus = p.jobId === 'seraphina';
+    // Subtle forward lunge on melee swing
+    if (p.jobId !== 'mage') {
+      const lunge = isFinisher ? 12 : 6;
+      p.vx += Math.cos(p.facing) * lunge * 14;
+      p.vy += Math.sin(p.facing) * lunge * 14;
+    }
+
+    if (p.jobId === 'mage') {
       this.audio.playSe(isFinisher ? 'slashHeavy' : 'slash');
-      const count = isFinisher ? 3 : (isSuccubus ? 2 : 1);
+      const count = isFinisher ? 3 : isFlurry ? 2 : 1;
       for (let i = 0; i < count; i++) {
         const spread = count === 1 ? 0 : (i - (count - 1) * 0.5) * 0.22;
         this.spawnProjectile({
@@ -408,61 +599,63 @@ export class Game {
           x: p.x + Math.cos(p.facing) * 18,
           y: p.y + Math.sin(p.facing) * 18,
           angle: p.facing + spread,
-          speed: isSuccubus ? 520 : 470,
+          speed: 490,
           radius: isFinisher ? 10 : 7.5,
-          damage: Math.round((isSuccubus ? (st.mag * 0.72 + st.atk * 0.45) : st.mag * 0.92) * comboMult),
-          element: st.element === 'none' ? (isSuccubus ? 'lightning' : 'ice') : st.element,
-          color: isSuccubus ? '#ff49db' : st.weaponColor,
+          damage: Math.round(st.mag * 0.95 * comboMult),
+          element: st.element === 'none' ? 'ice' : st.element,
+          color: st.weaponColor,
           homing: true,
-          piercing: isSuccubus && isFinisher,
           life: 1.05,
         });
       }
       this._checkCrackedWallHits(p.x + Math.cos(p.facing) * 56, p.y + Math.sin(p.facing) * 56, 48);
     } else {
-      // Melee Neon Slash (Blade Knight / Shadow Rogue / Sexy Neon Valkyrie)
-      const range = job.attackRange + (isFinisher ? 18 : 0) + Math.min(18, st.weaponPlus * 2);
-      const arc = job.attackArc + (isFinisher ? 0.35 : 0);
+      // Wide Musou Sword Slash Trail (1: Right Sweep -> 2: Left Upward Slash -> 3: 360 Spin / Smash!)
+      const range = job.attackRange + (isFinisher ? 22 : 0) + Math.min(20, st.weaponPlus * 2);
+      const arc = isFinisher ? Math.PI * 1.85 : job.attackArc;
       this.audio.playSe(isFinisher ? 'slashHeavy' : 'slash');
 
       this.slashes.push({
         x: p.x,
         y: p.y,
         angle: p.facing,
-        radius: range * 0.78,
+        radius: range * 0.84,
         arc,
-        color: isFinisher ? '#fef08a' : st.weaponColor,
+        comboStep: p.comboStep,
+        swingDir: p.comboStep === 2 ? -1 : 1,
+        spinAttack: isFinisher,
+        color: isFlurry ? '#38bdf8' : isFinisher ? '#fbbf24' : st.weaponColor,
         weaponPlus: st.weaponPlus,
-        life: 0.19,
-        maxLife: 0.19,
+        life: isFinisher ? 0.25 : 0.19,
+        maxLife: isFinisher ? 0.25 : 0.19,
       });
 
       this.network.broadcast({
         type: 'vfx',
         kind: 'slash',
         areaId: this.currentAreaId,
-        x: p.x, y: p.y, angle: p.facing, radius: range * 0.78, arc, color: st.weaponColor,
+        x: p.x, y: p.y, angle: p.facing, radius: range * 0.84, arc, color: st.weaponColor,
       });
 
-      // Blade Knight / Valkyrie 3rd hit emits piercing neon shockwave!
-      if ((p.jobId === 'knight' || p.jobId === 'valkyrie') && isFinisher) {
+      // Blade Knight 3rd hit emits piercing sword beam shockwave!
+      if (p.jobId === 'knight' && isFinisher) {
         this.spawnProjectile({
           owner: 'player',
           x: p.x + Math.cos(p.facing) * 24,
           y: p.y + Math.sin(p.facing) * 24,
           angle: p.facing,
-          speed: 460,
-          radius: p.jobId === 'valkyrie' ? 16 : 13,
+          speed: 480,
+          radius: 14,
           damage: Math.round(st.atk * 1.25),
           element: st.element,
-          color: p.jobId === 'valkyrie' ? '#ff2e93' : st.weaponColor,
+          color: '#fbbf24',
           piercing: true,
           life: 0.65,
         });
       }
 
       const dmgBase = Math.round(st.atk * comboMult);
-      this._applyMeleeHits(p.x, p.y, p.facing, range, arc, dmgBase, st.element, st.crit);
+      this._applyMeleeHits(p.x, p.y, p.facing, range, arc, dmgBase, st.element, st.crit || (isFlurry ? 0.65 : 0.15));
     }
   }
 
@@ -1015,13 +1208,59 @@ export class Game {
   }
 
   // ==========================================================================
-  // PLAYER DAMAGE, DOWNED RESCUE & DEATH PENALTY
+  // PLAYER DAMAGE, GUARD / PERFECT PARRY, DOWNED RESCUE & DEATH PENALTY
   // ==========================================================================
-  damageLocalPlayer(rawAtk, statusOnHit, srcX, srcY) {
+  damageLocalPlayer(rawAtk, statusOnHit, srcX, srcY, sourceEntity = null) {
     const p = this.player;
     if (p.downed || p.invulnTimer > 0) return;
 
+    // 1. Check Perfect Parry (Zelda-style Just Guard within 280ms window!)
+    if (p.parryWindow > 0) {
+      p.parryWindow = 0;
+      p.parryFlashTimer = 0.45;
+      p.invulnTimer = 0.85;
+      p.addLimit(18);
+      this.triggerHitstop(0.06);
+      this.triggerSlowMo(0.42, 0.3);
+      this.addShake(11);
+      this.triggerFlash('#fbbf24', 0.42);
+      this.audio.playSe('forge');
+      this.spawnRing(p.x, p.y, '#fbbf24', 18, 130, 0.4);
+      this.spawnBurst(p.x, p.y, '#fef08a', 24, 240);
+      this.spawnDamageText(p.x, p.y - 36, '🛡 PARRY!! (ジャストガード!)', '#fde047', 1.38);
+      this.addToast('🛡 パリィ成功！敵の体勢を崩した（被ダメージ1.5倍ブレイク状態）！');
+
+      if (sourceEntity && typeof sourceEntity.applyParryBreak === 'function') {
+        sourceEntity.applyParryBreak(3.5);
+        this.spawnDamageText(sourceEntity.x, sourceEntity.y - 30, '⚡ BREAK!! (被ダメ1.5倍)', '#fde047', 1.25);
+      } else {
+        // Stagger any nearby enemies within 130px
+        for (const e of this.enemies) {
+          if (e.alive && Math.hypot(e.x - p.x, e.y - p.y) < 140) {
+            e.applyParryBreak(3.5);
+          }
+        }
+        if (this.boss && this.boss.alive && Math.hypot(this.boss.x - p.x, this.boss.y - p.y) < 170) {
+          this.boss.applyParryBreak(2.4);
+        }
+      }
+      return;
+    }
+
+    // 2. Check Standard Shield / Magic Barrier Guard
     const st = p.getStats();
+    if (p.guarding && p.stamina >= 12) {
+      p.stamina = Math.max(0, p.stamina - 16);
+      p.staminaDisplayAlpha = 1;
+      const blockedDmg = Math.max(1, Math.round((rawAtk - st.def * 0.65) * 0.22));
+      p.hp = Math.max(1, p.hp - blockedDmg);
+      p.invulnTimer = 0.38;
+      this.audio.playSe('hit');
+      this.spawnRing(p.x, p.y, '#38bdf8', 12, 46, 0.22);
+      this.spawnDamageText(p.x, p.y - 26, `🛡 GUARD -${blockedDmg}`, '#93c5fd', 0.98);
+      return;
+    }
+
     const dmg = Math.max(2, Math.round(rawAtk - st.def * 0.55));
     p.hp = Math.max(0, p.hp - dmg);
     p.invulnTimer = 0.62;
@@ -1040,7 +1279,6 @@ export class Game {
 
     if (p.hp <= 0) {
       if (this.network.isMultiplayer() && this._hasLivingTeammateInArea()) {
-        // Co-op Downed State: Teammates can rescue you!
         p.downed = true;
         p.downedTimer = 30;
         this.addToast('🆘 戦闘不能！味方が近づいて長押しすると蘇生できます！');
@@ -1298,8 +1536,20 @@ export class Game {
       this.progress.stats.playTime = (this.progress.stats.playTime || 0) + clampedDt;
       if (this.portalCooldown > 0) this.portalCooldown -= dt;
 
-      // Update Player & Drone
-      this.player.update(dt, inputVec, this.map, this);
+      // Validate Z-Target Lock-On target still alive and in range
+      if (this.lockTarget) {
+        const isDead = (this.lockTarget.alive === false) || (this.lockTarget.hp !== undefined && this.lockTarget.hp <= 0);
+        const dist = Math.hypot(this.lockTarget.x - this.player.x, this.lockTarget.y - this.player.y);
+        if (isDead || dist > 560) {
+          this.lockTarget = null;
+        }
+      }
+
+      // Convert stick/WASD input into Camera-Relative World Move Vector!
+      const worldMoveVec = this.inputToWorldMoveVector(inputVec);
+
+      // Update Player & Spirit Orb Drone
+      this.player.update(dt, worldMoveVec, this.map, this);
 
       // Co-op Downed Timeout Check
       if (this.player.downed && this.player.downedTimer <= 0) {
@@ -1374,10 +1624,10 @@ export class Game {
     const p = this.player;
     const TS = GAME_META.tileSize;
 
-    // 1. Damage Floors (Magma Vents / Shock Tiles)
+    // 1. Damage Floors (Magma Vents / Shock Tiles — can be jumped over!)
     const ptx = Math.floor(p.x / TS);
     const pty = Math.floor(p.y / TS);
-    if (getTile(this.map, ptx, pty) === TILE.DAMAGE && p.hazardCooldown <= 0 && !p.downed && p.invulnTimer <= 0) {
+    if (p.zHeight < 4 && getTile(this.map, ptx, pty) === TILE.DAMAGE && p.hazardCooldown <= 0 && !p.downed && p.invulnTimer <= 0) {
       p.hazardCooldown = 0.7;
       const hazDmg = Math.max(8, Math.round(p.getStats().maxHp * 0.07));
       this.damageLocalPlayer(hazDmg, this.currentAreaId === 'magma' ? 'burn' : 'paralyze', p.x, p.y);
@@ -1396,7 +1646,7 @@ export class Game {
       const t = (Math.sin(tr.phase) + 1) * 0.5;
       tr.x = tr.x1 + (tr.x2 - tr.x1) * t;
       tr.y = tr.y1 + (tr.y2 - tr.y1) * t;
-      if (!p.downed && Math.hypot(tr.x - p.x, tr.y - p.y) < tr.radius + p.radius - 2) {
+      if (!p.downed && p.zHeight < 12 && Math.hypot(tr.x - p.x, tr.y - p.y) < tr.radius + p.radius - 2) {
         this.damageLocalPlayer(tr.dmg, null, tr.x, tr.y);
       }
     }
@@ -1433,6 +1683,7 @@ export class Game {
 
       this.ui.showBossWarning(boss.name, () => {
         this.boss = boss;
+        this.lockTarget = boss;
         if (boss.def.introDialogue && boss.def.introDialogue.length) {
           this.ui.openDialogue(boss.name, '⚠️', boss.def.introDialogue);
         }
@@ -1455,7 +1706,6 @@ export class Game {
       }
       if (this.towerFloor >= 5) this.unlockAchievement('tower_5');
 
-      // Spawn Next Floor Golden Portal + Bonus Chest!
       const cx = this.map.pixelWidth * 0.5;
       const cy = this.map.pixelHeight * 0.36;
       this.map.portals.push({
@@ -1494,7 +1744,6 @@ export class Game {
         continue;
       }
 
-      // Gentle Homing Steering for Mage bolts & Drone lasers
       if (pr.homing && pr.owner === 'player') {
         const targets = this._findNearestHostiles(pr.x, pr.y, 260, 1);
         if (targets.length) {
@@ -1513,7 +1762,6 @@ export class Game {
       pr.x += pr.vx * dt;
       pr.y += pr.vy * dt;
 
-      // Wall Collision
       const tx = Math.floor(pr.x / TS);
       const ty = Math.floor(pr.y / TS);
       const tile = getTile(this.map, tx, ty);
@@ -1530,7 +1778,6 @@ export class Game {
         let consumed = false;
         const st = this.player.getStats();
 
-        // Hit Enemies
         for (const e of this.enemies) {
           if (!e.alive || pr.hitIds.has(e.uid)) continue;
           if (Math.hypot(e.x - pr.x, e.y - pr.y) < e.radius + pr.radius) {
@@ -1549,7 +1796,6 @@ export class Game {
           }
         }
 
-        // Hit Boss & Guardian Crystals
         if (!consumed && this.boss && this.boss.alive) {
           for (const c of this.boss.crystals) {
             if (c.hp <= 0 || pr.hitIds.has(c.id)) continue;
@@ -1574,8 +1820,28 @@ export class Game {
 
         if (consumed) this.projectiles.splice(i, 1);
       } else {
-        // Enemy Projectile hitting local player
+        // Enemy Projectile hitting local player (or Perfect Parried back at the enemy!)
         if (!this.player.downed && Math.hypot(this.player.x - pr.x, this.player.y - pr.y) < this.player.radius + pr.radius) {
+          if (this.player.parryWindow > 0) {
+            // Reflect projectile back at high speed with 3x damage (Zelda Guardian beam parry!)
+            this.player.parryWindow = 0;
+            this.player.parryFlashTimer = 0.45;
+            pr.owner = 'player';
+            pr.vx = -pr.vx * 2.1;
+            pr.vy = -pr.vy * 2.1;
+            pr.speed *= 2.1;
+            pr.damage = Math.max(45, pr.damage * 3);
+            pr.color = '#fbbf24';
+            pr.homing = true;
+            pr.life = 1.5;
+            this.triggerHitstop(0.06);
+            this.addShake(10);
+            this.audio.playSe('forge');
+            this.spawnRing(this.player.x, this.player.y, '#fbbf24', 16, 110, 0.35);
+            this.spawnDamageText(this.player.x, this.player.y - 36, '🛡 BEAM PARRY!!', '#fde047', 1.38);
+            this.addToast('🛡 ジャストガード成功！敵の魔弾を跳ね返した！');
+            continue;
+          }
           this.damageLocalPlayer(pr.damage, pr.statusOnHit, pr.x, pr.y);
           this.spawnBurst(pr.x, pr.y, pr.color, 6, 120);
           this.projectiles.splice(i, 1);
@@ -1679,9 +1945,18 @@ export class Game {
   }
 
   _updateCamera(dt) {
-    const smooth = Math.min(1, dt * 8.5);
+    const smooth = Math.min(1, dt * 10);
     this.camera.x += (this.player.x - this.camera.x) * smooth;
     this.camera.y += (this.player.y - this.camera.y) * smooth;
+
+    // When Z-Targeting (locked onto enemy/boss), smoothly steer camera yaw to frame both player and target!
+    if (this.lockTarget && (this.lockTarget.alive || this.lockTarget.hp > 0)) {
+      const desiredYaw = Math.atan2(this.lockTarget.y - this.player.y, this.lockTarget.x - this.player.x);
+      let diff = desiredYaw - this.camera.yaw;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      this.camera.yaw += diff * Math.min(1, dt * 7.5);
+    }
 
     if (this.shakePower > 0.2) {
       this.shakeOffset.x = (Math.random() - 0.5) * 2 * this.shakePower;

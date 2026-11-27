@@ -112,6 +112,11 @@ export class Boss {
     this.statuses[statusName] = Math.max(this.statuses[statusName], statusName === 'paralyze' ? 1.1 : duration);
   }
 
+  applyParryBreak(duration = 2.4) {
+    this.stunTimer = Math.max(this.stunTimer, duration);
+    this.dashTimer = 0;
+  }
+
   takeDamage(rawDamage, element, isCrit, game) {
     if (!this.alive) return { dmg: 0, killed: false, shielded: false };
     if (this.isShielded()) {
@@ -121,19 +126,20 @@ export class Boss {
     }
 
     const weak = element && element !== 'none' && element === this.def.weakness;
+    const isBroken = this.stunTimer > 0;
     let dmg = Math.max(4, rawDamage - this.defStat * 0.4);
-    if (this.stunTimer > 0) dmg *= 1.3; // Bonus punish damage during shield break!
+    if (isBroken) dmg *= 1.5; // Bonus 1.5x punish damage during shield break / parry break!
     if (weak) dmg *= 1.5;
     if (isCrit) dmg *= 1.65;
     dmg = Math.max(2, Math.round(dmg * (0.94 + Math.random() * 0.12)));
 
     this.hp = Math.max(0, this.hp - dmg);
-    this.hitFlash = 0.12;
+    this.hitFlash = 0.14;
 
-    const color = isCrit ? '#fbbf24' : weak ? '#38f8d4' : '#ffffff';
-    const text = isCrit ? `${dmg} CRIT!` : weak ? `${dmg} WEAK!` : `${dmg}`;
-    game.spawnDamageText(this.x + (Math.random() - 0.5) * 28, this.y - this.radius - 14, text, color, isCrit || weak ? 1.3 : 1.05);
-    game.spawnBurst(this.x, this.y, weak ? '#38f8d4' : this.def.color, isCrit ? 16 : 8, 220);
+    const color = isCrit ? '#fbbf24' : isBroken ? '#fde047' : weak ? '#38bdf8' : '#ffffff';
+    const text = isCrit ? `${dmg} CRIT!` : isBroken ? `${dmg} BREAK!` : weak ? `${dmg} WEAK!` : `${dmg}`;
+    game.spawnDamageText(this.x + (Math.random() - 0.5) * 28, this.y - this.radius - 14, text, color, isCrit || weak || isBroken ? 1.32 : 1.05);
+    game.spawnBurst(this.x, this.y, weak ? '#38bdf8' : this.def.color, isCrit ? 16 : 8, 220);
 
     // Phase 2 Awakening Check (<= 50% HP! Prevents accidental one-shot phase skip)
     if (!this.phase2Triggered && this.hp <= this.maxHp * 0.5) {
@@ -247,7 +253,7 @@ export class Boss {
       const pDist = Math.hypot(targetPlayer.x - this.x, targetPlayer.y - this.y);
       if (pDist < this.radius + targetPlayer.radius - 4) {
         this.contactCooldown = 0.8;
-        game.damageLocalPlayer(this.atk, null, this.x, this.y);
+        game.damageLocalPlayer(this.atk, null, this.x, this.y, this);
       }
     }
 
@@ -334,7 +340,7 @@ export class Boss {
             speed: 310,
             radius: 6,
             damage: Math.round(this.atk * 0.9),
-            color: '#38f8d4',
+            color: '#38bdf8',
             life: 2.2,
           });
         }
@@ -401,7 +407,7 @@ export class Boss {
         }
         if (hit) {
           tg.hitApplied = true;
-          game.damageLocalPlayer(tg.damage, null, tg.x, tg.y);
+          game.damageLocalPlayer(tg.damage, null, tg.x, tg.y, this);
         }
       }
 
