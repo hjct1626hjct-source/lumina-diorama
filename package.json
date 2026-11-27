@@ -1,0 +1,24 @@
+{
+  "name": "lumina-diorama-botw",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The Legend of Zelda: Breath of the Wild (Base + DLC 1 & 2) — Painterly Cel-Shaded 3D Open-Air Web Game",
+  "scripts": {
+    "dev": "vite",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "simplex-noise": "^4.0.3",
+    "three": "^0.172.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.172.0",
+    "typescript": "^5.7.3",
+    "vite": "^6.0.7",
+    "vitest": "^3.0.4"
+  }
+}

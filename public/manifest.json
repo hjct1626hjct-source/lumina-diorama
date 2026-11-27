@@ -1,0 +1,20 @@
+{
+  "name": "LUMINA CHRONICLES — Breath of the Star Realm",
+  "short_name": "LuminaChronicles",
+  "description": "ハイラル風ハイファンタジー3DアクションRPG（最大4人オンライン協力＆ソロ両対応）— 製作者：駿 (Created by Shun)",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0d1b2a",
+  "theme_color": "#112238",
+  "lang": "ja",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
