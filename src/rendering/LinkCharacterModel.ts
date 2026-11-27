@@ -65,10 +65,14 @@ export class LinkCharacterModel {
   private collarMesh!: THREE.Mesh;
   private leftSleeveMesh!: THREE.Mesh;
   private rightSleeveMesh!: THREE.Mesh;
+  private leftShoulderMesh!: THREE.Mesh;
+  private rightShoulderMesh!: THREE.Mesh;
   private leftThighMesh!: THREE.Mesh;
   private rightThighMesh!: THREE.Mesh;
   private leftBootMesh!: THREE.Mesh;
   private rightBootMesh!: THREE.Mesh;
+  private leftFootMesh!: THREE.Mesh;
+  private rightFootMesh!: THREE.Mesh;
   private headArmorGroup = new THREE.Group();
   private capeMesh!: THREE.Mesh;
   private sheikahSlateMesh!: THREE.Mesh;
@@ -273,11 +277,15 @@ export class LinkCharacterModel {
       hand.position.y = -0.22;
       forearmGrp.add(hand);
 
-      return upperArm;
+      return { upperArm, shoulder };
     };
 
-    this.leftSleeveMesh = buildArm(-1, this.leftArm, this.leftForearm);
-    this.rightSleeveMesh = buildArm(1, this.rightArm, this.rightForearm);
+    const lArmParts = buildArm(-1, this.leftArm, this.leftForearm);
+    const rArmParts = buildArm(1, this.rightArm, this.rightForearm);
+    this.leftSleeveMesh = lArmParts.upperArm;
+    this.rightSleeveMesh = rArmParts.upperArm;
+    this.leftShoulderMesh = lArmParts.shoulder;
+    this.rightShoulderMesh = rArmParts.shoulder;
 
     // Seamless Legs (Hip -> Thigh -> Knee overlap -> Cuffed Leather Boot grounded at y = 0!)
     const buildLeg = (side: -1 | 1, legGrp: THREE.Group, shinGrp: THREE.Group) => {
@@ -309,7 +317,7 @@ export class LinkCharacterModel {
       foot.position.set(0, -0.405, 0.058);
       shinGrp.add(foot);
 
-      return { thigh, boot };
+      return { thigh, boot, foot };
     };
 
     const lLegParts = buildLeg(-1, this.leftLeg, this.leftShin);
@@ -318,6 +326,8 @@ export class LinkCharacterModel {
     this.rightThighMesh = rLegParts.thigh;
     this.leftBootMesh = lLegParts.boot;
     this.rightBootMesh = rLegParts.boot;
+    this.leftFootMesh = lLegParts.foot;
+    this.rightFootMesh = rLegParts.foot;
   }
 
   private buildHeadAndHair(): void {
@@ -365,14 +375,14 @@ export class LinkCharacterModel {
 
     // Full rounded top & back hair volume hugging the skull cleanly
     const hairCrown = new THREE.Mesh(
-      new THREE.SphereGeometry(0.140, 20, 16, 0, Math.PI * 2, 0, Math.PI * 0.56),
+      new THREE.SphereGeometry(0.142, 22, 16, 0, Math.PI * 2, 0, Math.PI * 0.56),
       this.hairMat
     );
-    hairCrown.position.set(0, 0.016, -0.014);
-    hairCrown.rotation.x = -0.22; // Leaves forehead/eyes brightly uncovered while wrapping back of skull!
+    hairCrown.position.set(0, 0.018, -0.012);
+    hairCrown.rotation.x = -0.18;
     this.hairGroup.add(hairCrown);
 
-    // Smooth capsule side-parted bangs curving gracefully down the sides of the forehead (ZERO upward spikes!)
+    // Smooth side-parted bangs nested cleanly inside the hairline (smooth rounded silhouette!)
     const makeLock = (x: number, y: number, z: number, rx: number, ry: number, rz: number, r: number, len: number) => {
       const m = new THREE.Mesh(new THREE.CapsuleGeometry(r, len, 6, 8), this.hairMat);
       m.position.set(x, y, z);
@@ -380,11 +390,10 @@ export class LinkCharacterModel {
       this.hairGroup.add(m);
     };
 
-    // Left & right side-swept bangs parting cleanly above brows
-    makeLock(-0.072, 0.075, 0.086, 0.18, -0.25, 0.58, 0.024, 0.095);
-    makeLock(-0.032, 0.098, 0.100, 0.28, -0.10, 0.42, 0.022, 0.072);
-    makeLock(0.036, 0.098, 0.100, 0.28, 0.12, -0.45, 0.022, 0.075);
-    makeLock(0.076, 0.074, 0.086, 0.18, 0.25, -0.58, 0.024, 0.095);
+    makeLock(-0.078, 0.056, 0.086, 0.14, -0.22, 0.45, 0.022, 0.075);
+    makeLock(-0.036, 0.074, 0.098, 0.22, -0.08, 0.72, 0.020, 0.055);
+    makeLock(0.038, 0.074, 0.098, 0.22, 0.10, -0.72, 0.020, 0.055);
+    makeLock(0.080, 0.056, 0.086, 0.14, 0.22, -0.45, 0.022, 0.075);
     // Iconic BotW long sideburns draping cleanly in front of Hylian ears!
     makeLock(-0.114, -0.018, 0.042, 0.06, 0, 0.10, 0.022, 0.145);
     makeLock(0.114, -0.018, 0.042, 0.06, 0, -0.10, 0.022, 0.145);
@@ -626,11 +635,13 @@ export class LinkCharacterModel {
   }
 
   private rebuildArmorAppearance(vis: HeroEquipmentVisuals): void {
-    // 1. BODY ARMOR (or bare torso if unequipped!)
+    // 1. BODY ARMOR (or bare torso + bare shoulders if unequipped!)
     if (!vis.bodyPiece) {
       this.torsoMesh.material = this.skinMat;
       this.leftSleeveMesh.material = this.skinMat;
       this.rightSleeveMesh.material = this.skinMat;
+      this.leftShoulderMesh.material = this.skinMat;
+      this.rightShoulderMesh.material = this.skinMat;
       this.skirtMesh.visible = false;
       this.collarMesh.visible = false;
       this.capeMesh.visible = false;
@@ -655,6 +666,8 @@ export class LinkCharacterModel {
       this.torsoMesh.material = this.tunicMat;
       this.leftSleeveMesh.material = this.tunicMat;
       this.rightSleeveMesh.material = this.tunicMat;
+      this.leftShoulderMesh.material = this.tunicMat;
+      this.rightShoulderMesh.material = this.tunicMat;
       this.skirtMesh.visible = true;
       this.collarMesh.visible = true;
 
@@ -669,7 +682,7 @@ export class LinkCharacterModel {
       }
     }
 
-    // 2. LEGS ARMOR (or authentic BotW blue boxer shorts if unequipped!)
+    // 2. LEGS ARMOR (or authentic BotW blue boxer shorts + bare feet if unequipped!)
     if (!vis.legsPiece) {
       const shortsFab = textureBank.getFabricTexture('#3a618f', '#89b4e2', 'weave');
       this.pantsMat.map = shortsFab.map;
@@ -678,6 +691,8 @@ export class LinkCharacterModel {
       this.rightThighMesh.material = this.skinMat;
       this.leftBootMesh.material = this.skinMat;
       this.rightBootMesh.material = this.skinMat;
+      this.leftFootMesh.material = this.skinMat;
+      this.rightFootMesh.material = this.skinMat;
     } else {
       const legHex = vis.legsDyeHex ?? vis.legsPiece.baseColor;
       const fab = textureBank.getFabricTexture(legHex, vis.legsPiece.accentColor, 'weave');
@@ -687,6 +702,8 @@ export class LinkCharacterModel {
       this.rightThighMesh.material = this.pantsMat;
       this.leftBootMesh.material = this.bootMat;
       this.rightBootMesh.material = this.bootMat;
+      this.leftFootMesh.material = this.bootMat;
+      this.rightFootMesh.material = this.bootMat;
       this.bootMat.color.set(vis.legsPiece.accentColor || '#5c3c24');
     }
 

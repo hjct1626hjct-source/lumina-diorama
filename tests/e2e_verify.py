@@ -69,11 +69,11 @@ def run_e2e():
             page.screenshot(path=os.path.join(OUT_DIR, "01_great_plateau_vista.png"))
             print("   Captured 01_great_plateau_vista.png")
 
-            # SHOT 2: Link Sunlit Front 3/4 Close-up (facing sunlit direction so face, eyes, ears, hair, Champion's Tunic & Sheikah Slate shine crisply!)
+            # SHOT 2: Link Sunlit Front 3/4 Close-up on flat Temple of Time lawn (zero hillside camera clip!)
             page.evaluate("""() => {
-                window.__BOTW__.teleport(-278, 464, 0.55);
+                window.__BOTW__.teleport(-245, 474, 0.35);
                 const p = window.__BOTW__.engine.player.position;
-                window.__BOTW__.setCameraOverride([p.x + 1.15, p.y + 1.18, p.z + 1.85], [p.x, p.y + 0.96, p.z]);
+                window.__BOTW__.setCameraOverride([p.x + 0.72, p.y + 1.15, p.z + 2.05], [p.x, p.y + 0.96, p.z]);
             }""")
             time.sleep(0.7)
             page.screenshot(path=os.path.join(OUT_DIR, "02_link_closeup.png"))
