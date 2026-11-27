@@ -149,6 +149,7 @@ function buildTown(progress) {
   // Town NPCs cleanly spaced
   map.npcs.push(
     { npcId: 'town_guide', ...tCenter(16.5, 9.2), label: '星導師リア' },
+    { npcId: 'town_glamour', ...tCenter(19.5, 12.5), label: '艶姫ベルベット' },
     { npcId: 'town_warp', ...tCenter(16.5, 15.8), label: '次元ワープ端末' },
     { npcId: 'town_gear', ...tCenter(11, 7), label: '武器・防具屋' },
     { npcId: 'town_magic', ...tCenter(22, 7), label: '魔法屋' },

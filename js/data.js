@@ -36,6 +36,11 @@ export const JOBS = {
     icon: '⚔️',
     color: '#22d3ee',
     accent: '#38f8d4',
+    gender: 'male',
+    hairColor: '#38bdf8',
+    eyeColor: '#22d3ee',
+    skinTone: '#ffe0bd',
+    outfitStyle: 'cyber_knight',
     desc: '高いHPと堅牢な装甲を誇る近接の覇者。広範囲の3連ネオンスラッシュと3撃目の衝撃波で敵を一掃する。',
     starterWeapon: 'wp_neon_blade',
     starterArmor: 'ar_aegis_plate',
@@ -56,7 +61,12 @@ export const JOBS = {
     icon: '🔮',
     color: '#e879f9',
     accent: '#7dd3fc',
-    desc: '膨大なMPと誘導魔弾を操る星結晶の魔導士。初期から範囲氷結と味方回復の魔法を使いこなす。',
+    gender: 'female',
+    hairColor: '#f5d0fe',
+    eyeColor: '#38bdf8',
+    skinTone: '#fff0e5',
+    outfitStyle: 'astral_witch',
+    desc: '膨大なMPと誘導魔弾を操る星結晶の美少女魔導士。初期から範囲氷結と味方回復の魔法を使いこなす。',
     starterWeapon: 'wp_prism_wand',
     starterArmor: 'ar_astral_robe',
     starterSpells: ['ice', 'heal'],
@@ -76,7 +86,12 @@ export const JOBS = {
     icon: '🗡️',
     color: '#34d399',
     accent: '#a3e635',
-    desc: '圧倒的な機動力と高会心率を誇る双剣の影。さらに獲得ゴールド+35%のトレジャーハンター特性を持つ。',
+    gender: 'female',
+    hairColor: '#34d399',
+    eyeColor: '#fbbf24',
+    skinTone: '#ffe4c8',
+    outfitStyle: 'kunoichi_suit',
+    desc: '圧倒的な機動力と高会心率を誇る双剣のサイバーくノ一。獲得ゴールド+35%のトレジャーハンター特性を持つ。',
     starterWeapon: 'wp_plasma_daggers',
     starterArmor: 'ar_stealth_cloak',
     starterSpells: ['lightning'],
@@ -88,6 +103,56 @@ export const JOBS = {
     limitName: 'ファントム・オーバーロード',
     limitDesc: '時間を切り裂く超高速ミラージュ連撃で敵を8回連続の確定クリティカル斬撃！',
   },
+  valkyrie: {
+    id: 'valkyrie',
+    name: '魅惑のネオンヴァルキリー',
+    en: 'SEXY NEON VALKYRIE',
+    badge: 'VALKYRIE',
+    icon: '💋',
+    color: '#ff2e93',
+    accent: '#fbbf24',
+    gender: 'female_glamour',
+    hairColor: '#fde047',
+    eyeColor: '#ff2e93',
+    skinTone: '#ffe8d6',
+    outfitStyle: 'sexy_bikini_armor',
+    desc: '大胆なネオンビキニアーマーと光翼を纏う魅惑の戦乙女。超広範囲の大鎌スラッシュと攻撃時のHP吸収（魅了ドレイン）で艶やかに無双する！',
+    starterWeapon: 'wp_rose_scythe',
+    starterArmor: 'ar_valkyrie_bikini',
+    starterSpells: ['fire', 'overclock'],
+    baseStats: { maxHp: 142, maxMp: 95, atk: 23, mag: 18, def: 8, spd: 238, crit: 0.24, goldMult: 1.2 },
+    growth: { maxHp: 22, maxMp: 11, atk: 4.8, mag: 3.4, def: 1.8, crit: 0.008 },
+    attackRange: 102,
+    attackArc: Math.PI * 1.15,
+    attackCooldown: 0.26,
+    limitName: 'ヴァルキリー・エクスタシー',
+    limitDesc: '極彩色のハート衝撃波と薔薇の閃光で画面内の敵を魅了爆発＆自身のHPを大回復！',
+  },
+  seraphina: {
+    id: 'seraphina',
+    name: '妖艶のサイバーサキュバス',
+    en: 'CYBER SUCCUBUS QUEEN',
+    badge: 'SUCCUBUS',
+    icon: '😈',
+    color: '#c084fc',
+    accent: '#ff49db',
+    gender: 'female_glamour',
+    hairColor: '#f472b6',
+    eyeColor: '#e879f9',
+    skinTone: '#fff0f5',
+    outfitStyle: 'succubus_bondage',
+    desc: '悪魔の角とネオンガーター・網タイツを纏う妖艶な魔銃姫。貫通ハートレーザー連射と高威力魔力を併せ持ち、全属性の魔法を初期から操る！',
+    starterWeapon: 'wp_succubus_whip',
+    starterArmor: 'ar_succubus_corset',
+    starterSpells: ['fire', 'ice', 'lightning', 'heal'],
+    baseStats: { maxHp: 128, maxMp: 145, atk: 19, mag: 27, def: 7, spd: 242, crit: 0.26, goldMult: 1.25 },
+    growth: { maxHp: 19, maxMp: 18, atk: 3.6, mag: 5.8, def: 1.6, crit: 0.009 },
+    attackRange: 300,
+    attackArc: Math.PI * 0.65,
+    attackCooldown: 0.27,
+    limitName: 'ミッドナイト・テンプテーション',
+    limitDesc: '禁断の紫薔薇レーザーと魅惑の全方位電撃ノヴァで敵を麻痺＆超クリティカル殲滅！',
+  },
 };
 
 export const WEAPONS = [
@@ -95,6 +160,8 @@ export const WEAPONS = [
   { id: 'wp_neon_blade', name: 'ネオンブレード', type: 'blade', rarity: 'common', atk: 12, mag: 4, crit: 0.02, element: 'none', price: 80, shopTier: 0, color: '#38f8d4', desc: '拠点の標準規格で作られた蒼光のネオン剣。' },
   { id: 'wp_prism_wand', name: 'プリズムワンド', type: 'wand', rarity: 'common', atk: 8, mag: 14, crit: 0.03, element: 'ice', price: 80, shopTier: 0, color: '#e879f9', desc: '星結晶の欠片を宿す魔導杖。誘導魔弾を放つ。' },
   { id: 'wp_plasma_daggers', name: 'ツインプラズマダガー', type: 'dagger', rarity: 'common', atk: 11, mag: 6, crit: 0.08, element: 'lightning', price: 80, shopTier: 0, color: '#4ade80', desc: '超高速連撃と会心に特化した双プラズマ短剣。' },
+  { id: 'wp_rose_scythe', name: 'ローズ・ネオンサイス', type: 'blade', rarity: 'rare', atk: 16, mag: 10, crit: 0.07, element: 'fire', price: 140, shopTier: 0, color: '#ff2e93', desc: '戦乙女が愛用する艶やかな薔薇色の光学大鎌。' },
+  { id: 'wp_succubus_whip', name: 'テンプテーション・ビュート', type: 'wand', rarity: 'rare', atk: 13, mag: 18, crit: 0.08, element: 'lightning', price: 140, shopTier: 0, color: '#e879f9', desc: 'ハート型の魔弾と紫電を放つサキュバスの魔銃鞭。' },
 
   // Shop / Mid Tier Weapons
   { id: 'wp_verdant_saber', name: '翠光のフォレストセイバー', type: 'blade', rarity: 'rare', atk: 24, mag: 10, crit: 0.05, element: 'fire', price: 320, shopTier: 1, color: '#34d399', desc: '樹海の光胞子エネルギーを結晶化させた鋭利な光剣。' },
@@ -104,6 +171,7 @@ export const WEAPONS = [
   { id: 'wp_magma_katana', name: '紅蓮のマグマブレイザー', type: 'blade', rarity: 'epic', atk: 54, mag: 26, crit: 0.12, element: 'fire', price: 1650, shopTier: 3, color: '#fb7185', desc: 'マグマリアクターの炉心熱を封じた灼熱の大光剣。' },
   { id: 'wp_seraph_staff', name: 'セラフィム・アークスタッフ', type: 'wand', rarity: 'epic', atk: 30, mag: 56, crit: 0.12, element: 'holy', price: 1600, shopTier: 3, color: '#fde047', desc: '聖光と星力を極限まで増幅する大魔導士の秘杖。' },
   { id: 'wp_phantom_fangs', name: 'ファントム・ゼロファング', type: 'dagger', rarity: 'epic', atk: 46, mag: 28, crit: 0.22, element: 'ice', price: 1550, shopTier: 3, color: '#c084fc', desc: '残像すら斬り裂く光学迷彩ブレード。' },
+  { id: 'wp_aphrodite_lance', name: '女神の艶槍・アフロディーテ', type: 'blade', rarity: 'epic', atk: 60, mag: 42, crit: 0.20, element: 'holy', price: 1850, shopTier: 3, color: '#ff2e93', desc: '見る者を虜にする極彩色のネオンハルバード。' },
 
   // Hack & Slash Boss / Secret Legendary Weapons
   { id: 'wp_sylva_relic', name: '星樹の聖剣・エメラルディア', type: 'blade', rarity: 'epic', atk: 36, mag: 20, crit: 0.12, element: 'holy', price: 900, shopTier: 99, color: '#6ee7b7', desc: '樹海の守護機獣が護っていた古代ジオラマの聖剣。' },
@@ -117,6 +185,8 @@ export const ARMORS = [
   { id: 'ar_aegis_plate', name: 'イージス装甲', rarity: 'common', def: 10, maxHp: 30, maxMp: 5, spd: 0, price: 70, shopTier: 0, color: '#38bdf8', desc: '軽量ネオン合金製の高耐久チェストプレート。' },
   { id: 'ar_astral_robe', name: 'アストラルローブ', rarity: 'common', def: 6, maxHp: 12, maxMp: 35, spd: 6, price: 70, shopTier: 0, color: '#e879f9', desc: '星結晶繊維を織り込んだ魔力循環ローブ。' },
   { id: 'ar_stealth_cloak', name: 'ステルス外套', rarity: 'common', def: 7, maxHp: 18, maxMp: 14, spd: 18, price: 70, shopTier: 0, color: '#34d399', desc: '空気抵抗を極限まで減らす光学迷彩クローク。' },
+  { id: 'ar_valkyrie_bikini', name: 'ヴァルキリー・ネオンビキニ', rarity: 'rare', def: 9, maxHp: 32, maxMp: 24, spd: 20, price: 130, shopTier: 0, color: '#ff2e93', desc: '露出度と光学バリア防御を両立した戦乙女専用ビキニアーマー。' },
+  { id: 'ar_succubus_corset', name: 'サキュバス・ボンデージドレス', rarity: 'rare', def: 8, maxHp: 26, maxMp: 45, spd: 22, price: 130, shopTier: 0, color: '#c084fc', desc: '艶やかな黒紫のコルセットとネオンガーター。魔力と速度を高める。' },
 
   // Shop / Mid Tier Armors
   { id: 'ar_lumina_mail', name: '翠光ルミナメイル', rarity: 'rare', def: 18, maxHp: 65, maxMp: 20, spd: 6, price: 300, shopTier: 1, color: '#34d399', desc: '樹海の光エネルギーで自動修復する中装鎧。' },
@@ -124,6 +194,7 @@ export const ARMORS = [
   { id: 'ar_cyber_exosuit', name: '機工エグゾフレーム', rarity: 'epic', def: 36, maxHp: 130, maxMp: 40, spd: 16, price: 1100, shopTier: 2, color: '#22d3ee', desc: '古代遺跡のサーボ機構を搭載した次世代強化外骨格。' },
   { id: 'ar_magma_aegis', name: '熔核ドラグーンアーマー', rarity: 'epic', def: 46, maxHp: 180, maxMp: 45, spd: 12, price: 1750, shopTier: 3, color: '#fb7185', desc: '超高温リアクターにも耐え抜く紅蓮の竜装甲。' },
   { id: 'ar_prism_mantle', name: '星穹プリズムマント', rarity: 'epic', def: 34, maxHp: 110, maxMp: 110, spd: 26, price: 1680, shopTier: 3, color: '#f472b6', desc: '魔力回復と移動速度を飛躍的に高める星織マント。' },
+  { id: 'ar_venus_bustier', name: '極彩の女神ビスチェ・ヴィーナス', rarity: 'epic', def: 42, maxHp: 165, maxMp: 120, spd: 30, price: 1900, shopTier: 3, color: '#ff2e93', desc: '曲線美を際立たせるホログラム羽衣と黄金ビキニ装甲。' },
 
   // Legendary Armors
   { id: 'ar_celestial_aegis', name: '天空神装・セラフィムギア', rarity: 'legendary', def: 64, maxHp: 260, maxMp: 95, spd: 22, price: 4000, shopTier: 99, color: '#fbbf24', desc: '天空城の秘宝。圧倒的な防御と星光の加護を授ける。' },
@@ -695,41 +766,58 @@ export const BOSSES = {
 export const NPCS = {
   town_guide: {
     id: 'town_guide', name: '星導師リア', role: 'guide', icon: '🌟', color: '#38f8d4',
+    gender: 'female_glamour', hairColor: '#67e8f9', outfitColor: '#ff2e93',
     lines: [
-      'ようこそ『拠点ネオンタウン』へ！私は星導師リアよ。',
+      'ようこそ『拠点ネオンタウン』へ！私は星導師リアよ♡',
+      'この世界はThree.jsによるフル3D立体ジオラマに進化したわ！全キャラクターに完全オリジナルの3Dテクスチャ姿がついているの♪',
       '機械魔王オメガノヴァに奪われた5つの星結晶を取り戻すため、まずは東のゲートから【1. 翠光のジオラマ樹海】へ向かって！',
       'ダンジョンの壁に【光るヒビ】があったら攻撃で壊せるわ。レア宝箱が隠されているから探してみてね！',
-      '強敵に挑むときは、右上の「🌐 協力」から合言葉ルームを作って最大4人で無双するのも最高よ！',
+    ],
+  },
+  town_glamour: {
+    id: 'town_glamour', name: '艶姫ベルベット', role: 'talk', icon: '💋', color: '#ff2e93',
+    gender: 'female_glamour', hairColor: '#f472b6', outfitColor: '#c084fc',
+    lines: [
+      'ふふっ、いらっしゃい素敵な冒険者さん♡ 私はネオンラウンジの艶姫ベルベットよ♪',
+      '新しく追加された【魅惑のネオンヴァルキリー】と【妖艶のサイバーサキュバス】はもう試した？',
+      'セクシーな衣装だけじゃなくて、HP吸収ドレインやハート貫通レーザーで戦場でも超無双できるのよ♡ ぜひ楽しんでいってね！',
     ],
   },
   town_gear: {
     id: 'town_gear', name: '武装商人ゼクス', role: 'shop_gear', icon: '🛡️', color: '#38bdf8',
-    lines: ['いらっしゃい！最強のネオン武装を取り揃えてるぜ！'],
+    gender: 'male', hairColor: '#38bdf8', outfitColor: '#0284c7',
+    lines: ['いらっしゃい！セクシーな戦乙女装備から最強のネオン武装まで取り揃えてるぜ！'],
   },
   town_magic: {
     id: 'town_magic', name: '魔導研究員ルナ', role: 'shop_magic', icon: '🔮', color: '#e879f9',
-    lines: ['属性魔法の習得とレベルアップなら任せて！弱点を突くとダメージが大跳ね上がりするよ！'],
+    gender: 'female_glamour', hairColor: '#e879f9', outfitColor: '#a855f7',
+    lines: ['属性魔法の習得とレベルアップなら任せて♡ 弱点を突くとダメージが大跳ね上がりするよ！'],
   },
   town_forge: {
     id: 'town_forge', name: '鍛冶師バルカン', role: 'blacksmith', icon: '⚒️', color: '#fb923c',
-    lines: ['おう！鉱石とゴールドがあれば装備を +10 まで叩き上げてやる！強化するほど武器のオーラがド派手になるぜ！'],
+    gender: 'male', hairColor: '#fb923c', outfitColor: '#ea580c',
+    lines: ['おう！鉱石とゴールドがあれば装備を +10 まで叩き上げてやる！強化するほど武器の3Dオーラがド派手になるぜ！'],
   },
   town_inn: {
     id: 'town_inn', name: '宿屋オーナー・ミア', role: 'inn', icon: '🌙', color: '#fde047',
-    lines: ['お疲れさま！ここで休めばHPもMPも全回復＆自動セーブされるわよ♪'],
+    gender: 'female_glamour', hairColor: '#fde047', outfitColor: '#f43f5e',
+    lines: ['お疲れさまぁ♡ 私の宿屋でゆっくり休めば、HPもMPも全回復＆自動セーブしてあげるわよ♪'],
   },
   town_drone: {
     id: 'town_drone', name: 'ドローン技師チップ', role: 'drone', icon: '🤖', color: '#34d399',
-    lines: ['キミの後ろを飛んでる相棒ドローンを強化できるよ！レーザー連射やアイテム自動吸引をパワーアップしよう！'],
+    gender: 'female', hairColor: '#34d399', outfitColor: '#10b981',
+    lines: ['キミの後ろを飛んでる3D相棒ドローンを強化できるよ！レーザー連射やアイテム自動吸引をパワーアップしよう！'],
   },
   town_warp: {
     id: 'town_warp', name: '次元ワープ端末', role: 'warp', icon: '🌀', color: '#22d3ee',
+    gender: 'device', hairColor: '#22d3ee', outfitColor: '#06b6d4',
     lines: ['到達済みのエリアへ瞬時にファストトラベルできます。'],
   },
 
   // Field NPCs with tips & lore!
   forest_scout: {
     id: 'forest_scout', name: '偵察員カイト', role: 'talk', icon: '🌿', color: '#6ee7b7',
+    gender: 'male', hairColor: '#34d399', outfitColor: '#059669',
     lines: [
       'やあ冒険者！この先のボス【シルヴァリオン】は【炎属性】が弱点だぞ！',
       'それと重要情報！ボスが【守護クリスタル】を出している間はバリアでダメージが通らない。まず周囲のクリスタルを全部壊すんだ！',
@@ -738,6 +826,7 @@ export const NPCS = {
   },
   cave_miner: {
     id: 'cave_miner', name: '鉱夫ドイル', role: 'talk', icon: '⛏️', color: '#7dd3fc',
+    gender: 'male', hairColor: '#7dd3fc', outfitColor: '#0284c7',
     lines: [
       'うわっ、暗い洞窟だな！プレイヤーや光るクリスタルの周りしか見えないぜ。',
       '奥の【クリスタリオン】は【炎属性】に弱い。床に赤い警告サークルやレーザー線が出たら、すぐ回避ダッシュで避けるんだ！',
@@ -746,14 +835,16 @@ export const NPCS = {
   },
   ruins_scholar: {
     id: 'ruins_scholar', name: '遺跡博士エリス', role: 'talk', icon: '📡', color: '#fbbf24',
+    gender: 'female_glamour', hairColor: '#fbbf24', outfitColor: '#ec4899',
     lines: [
-      '素晴らしい古代サイバー遺跡ね！動くプラズマ回転刃には気をつけて。',
+      '素晴らしい古代サイバー遺跡ね♡ 動くプラズマ回転刃には気をつけて。',
       'この遺跡の番人【クロノセンチネル】は機械系だから【雷属性（サンダーチェイン）】が超有効よ！',
       'そうそう、どこかに【虚空の星核神殿（裏ボス部屋）】へ繋がる伝説の隠しワープもあるって文献に書いてあったわ……！',
     ],
   },
   magma_engineer: {
     id: 'magma_engineer', name: '炉心技師ゴウ', role: 'talk', icon: '🔥', color: '#fb923c',
+    gender: 'male', hairColor: '#fb923c', outfitColor: '#dc2626',
     lines: [
       'アチチッ！光る溶岩パネルは踏むと延焼ダメージを受けるからダッシュで駆け抜けろ！',
       '最奥の覇龍【イグニスレックス】は【氷属性（アイシクルノヴァ）】が弱点だ。鍛冶屋で武器を+4以上に強化しておくと楽勝だぜ！',
@@ -761,6 +852,7 @@ export const NPCS = {
   },
   citadel_knight: {
     id: 'citadel_knight', name: '反乱騎士アレン', role: 'talk', icon: '⚔️', color: '#f472b6',
+    gender: 'female_glamour', hairColor: '#f472b6', outfitColor: '#db2777',
     lines: [
       'ついにここまで来たか……この先が【機械魔王オメガノヴァ】の玉座だ。',
       '魔王はHPが半分を切ると第2形態に覚醒し、弾幕とレーザーが激化する。リミット必殺技と【聖光武器】【オーバークロック】を駆使して決着をつけてくれ！',

@@ -65,6 +65,7 @@ window.addEventListener('DOMContentLoaded', () => {
   const canvas = document.getElementById('game-canvas');
   const minimapCanvas = document.getElementById('minimap-canvas');
   const game = new Game(canvas, minimapCanvas);
+  window.__game = game;
 
   // ==========================================================================
   // IPAD SAFARI / TOUCH GESTURE & AUDIO UNLOCK PROTECTION

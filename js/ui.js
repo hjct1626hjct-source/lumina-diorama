@@ -441,9 +441,9 @@ export class UIManager {
         return `
           <div class="job-card ${sel}" data-job="${j.id}">
             <div class="job-card-top">
-              <div class="job-emblem" style="background:${j.color}28;border:1.5px solid ${j.color}">${j.icon}</div>
+              <canvas class="job-avatar-canvas" data-job-avatar="${j.id}" width="64" height="64" style="width:54px;height:54px;border-radius:14px;border:2px solid ${j.color};background:#091326;flex-shrink:0;"></canvas>
               <div>
-                <div class="job-en">${j.en}</div>
+                <div class="job-en">${j.icon} ${j.en}</div>
                 <h3 class="job-title">${j.name}</h3>
               </div>
             </div>
@@ -465,6 +465,33 @@ export class UIManager {
         `;
       })
       .join('');
+
+    // Paint procedural original character face & outfit preview on each Job card!
+    if (this.game && this.game.renderer && this.game.renderer.texBank) {
+      const tb = this.game.renderer.texBank;
+      this.el.jobCards.querySelectorAll('[data-job-avatar]').forEach((cv) => {
+        const j = JOBS[cv.dataset.jobAvatar];
+        if (!j) return;
+        const ctx = cv.getContext('2d');
+        const faceTex = tb.getFaceTexture({
+          id: j.id,
+          skinTone: j.skinTone,
+          eyeColor: j.eyeColor,
+          hairColor: j.hairColor,
+          gender: j.gender,
+        });
+        const outfitTex = tb.getOutfitTexture({
+          id: j.id,
+          style: j.outfitStyle,
+          primary: j.color,
+          accent: j.accent,
+          skinTone: j.skinTone,
+        });
+        ctx.clearRect(0, 0, 64, 64);
+        if (faceTex?.image) ctx.drawImage(faceTex.image, 176, 10, 160, 210, 10, 2, 44, 38);
+        if (outfitTex?.image) ctx.drawImage(outfitTex.image, 14, 38, 36, 24);
+      });
+    }
 
     this.el.jobCards.onclick = (e) => {
       const card = e.target.closest('.job-card');

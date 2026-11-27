@@ -396,30 +396,32 @@ export class Game {
     const isFinisher = p.comboStep === 3;
     const comboMult = isFinisher ? 1.42 : 1.0;
 
-    if (p.jobId === 'mage') {
-      // Arc Mage fires homing arcane star bolts (triple burst on 3rd hit!)
+    if (p.jobId === 'mage' || p.jobId === 'seraphina') {
+      // Arc Mage / Cyber Succubus fires homing arcane bolts or piercing heart lasers
+      const isSuccubus = p.jobId === 'seraphina';
       this.audio.playSe(isFinisher ? 'slashHeavy' : 'slash');
-      const count = isFinisher ? 3 : 1;
+      const count = isFinisher ? 3 : (isSuccubus ? 2 : 1);
       for (let i = 0; i < count; i++) {
-        const spread = count === 1 ? 0 : (i - 1) * 0.24;
+        const spread = count === 1 ? 0 : (i - (count - 1) * 0.5) * 0.22;
         this.spawnProjectile({
           owner: 'player',
           x: p.x + Math.cos(p.facing) * 18,
           y: p.y + Math.sin(p.facing) * 18,
           angle: p.facing + spread,
-          speed: 470,
-          radius: isFinisher ? 9 : 7,
-          damage: Math.round(st.mag * 0.92 * comboMult),
-          element: st.element === 'none' ? 'ice' : st.element,
-          color: st.weaponColor,
+          speed: isSuccubus ? 520 : 470,
+          radius: isFinisher ? 10 : 7.5,
+          damage: Math.round((isSuccubus ? (st.mag * 0.72 + st.atk * 0.45) : st.mag * 0.92) * comboMult),
+          element: st.element === 'none' ? (isSuccubus ? 'lightning' : 'ice') : st.element,
+          color: isSuccubus ? '#ff49db' : st.weaponColor,
           homing: true,
+          piercing: isSuccubus && isFinisher,
           life: 1.05,
         });
       }
       this._checkCrackedWallHits(p.x + Math.cos(p.facing) * 56, p.y + Math.sin(p.facing) * 56, 48);
     } else {
-      // Melee Neon Slash (Blade Knight / Shadow Rogue)
-      const range = job.attackRange + (isFinisher ? 16 : 0) + Math.min(18, st.weaponPlus * 2);
+      // Melee Neon Slash (Blade Knight / Shadow Rogue / Sexy Neon Valkyrie)
+      const range = job.attackRange + (isFinisher ? 18 : 0) + Math.min(18, st.weaponPlus * 2);
       const arc = job.attackArc + (isFinisher ? 0.35 : 0);
       this.audio.playSe(isFinisher ? 'slashHeavy' : 'slash');
 
@@ -442,20 +444,20 @@ export class Game {
         x: p.x, y: p.y, angle: p.facing, radius: range * 0.78, arc, color: st.weaponColor,
       });
 
-      // Blade Knight 3rd hit emits piercing neon shockwave!
-      if (p.jobId === 'knight' && isFinisher) {
+      // Blade Knight / Valkyrie 3rd hit emits piercing neon shockwave!
+      if ((p.jobId === 'knight' || p.jobId === 'valkyrie') && isFinisher) {
         this.spawnProjectile({
           owner: 'player',
           x: p.x + Math.cos(p.facing) * 24,
           y: p.y + Math.sin(p.facing) * 24,
           angle: p.facing,
-          speed: 440,
-          radius: 13,
-          damage: Math.round(st.atk * 1.15),
+          speed: 460,
+          radius: p.jobId === 'valkyrie' ? 16 : 13,
+          damage: Math.round(st.atk * 1.25),
           element: st.element,
-          color: st.weaponColor,
+          color: p.jobId === 'valkyrie' ? '#ff2e93' : st.weaponColor,
           piercing: true,
-          life: 0.62,
+          life: 0.65,
         });
       }
 
@@ -532,6 +534,12 @@ export class Game {
     if (combo >= 30) this.unlockAchievement('combo_30');
     if (combo >= 80) this.unlockAchievement('combo_80');
     this.player.addLimit(isCrit ? 6.5 : 3.5);
+    // Sexy Neon Valkyrie Charm Drain: restores HP on hit!
+    if (this.player.jobId === 'valkyrie' && !this.player.downed) {
+      const st = this.player.getStats();
+      const drain = isCrit ? 6 : 3;
+      this.player.hp = Math.min(st.maxHp, this.player.hp + drain);
+    }
     if (isCrit) {
       this.triggerHitstop(0.05);
       this.addShake(6.5);
@@ -726,6 +734,31 @@ export class Game {
         this.spawnBurst(tx, ty, '#7dd3fc', 18, 240);
         this._damageEnemiesInRadius(tx, ty, 125, Math.round(ultDmg * 0.62), 'ice', 'freeze', 1.0);
       }
+    } else if (p.jobId === 'valkyrie') {
+      // Valkyrie Ecstasy: Rose-gold charm shockwaves + massive self heal!
+      for (let i = 0; i < 5; i++) {
+        this.spawnRing(p.x, p.y, i % 2 === 0 ? '#ff2e93' : '#fbbf24', 22 + i * 16, 300, 0.55 + i * 0.07);
+      }
+      this.spawnBurst(p.x, p.y, '#ff2e93', 50, 360);
+      const healAmt = Math.round(st.maxHp * 0.55);
+      p.hp = Math.min(st.maxHp, p.hp + healAmt);
+      this.spawnDamageText(p.x, p.y - 60, `💋 CHARM HEAL +${healAmt}!`, '#ff2e93', 1.3);
+      this._damageEnemiesInRadius(p.x, p.y, 310, Math.round(ultDmg * 1.18), 'holy', 'burn', 1.0);
+    } else if (p.jobId === 'seraphina') {
+      // Midnight Temptation: 9 purple-rose lightning chains + paralysis nova!
+      const targets = this._findNearestHostiles(p.x, p.y, 400, 9);
+      let prevX = p.x;
+      let prevY = p.y;
+      for (let i = 0; i < 9; i++) {
+        const tx = targets[i] ? targets[i].x : p.x + Math.cos((i / 9) * Math.PI * 2) * 160;
+        const ty = targets[i] ? targets[i].y : p.y + Math.sin((i / 9) * Math.PI * 2) * 160;
+        this.spawnLightningArc(prevX, prevY, tx, ty, '#ff49db');
+        this.spawnRing(tx, ty, '#c084fc', 14, 130, 0.48);
+        prevX = tx;
+        prevY = ty;
+      }
+      this.spawnBurst(p.x, p.y, '#ff49db', 48, 350);
+      this._damageEnemiesInRadius(p.x, p.y, 340, Math.round(ultDmg * 1.22), 'lightning', 'paralyze', 1.0);
     } else {
       // Phantom Overload: 8 guaranteed critical blitz slashes!
       const targets = this._findNearestHostiles(p.x, p.y, 340, 8);
