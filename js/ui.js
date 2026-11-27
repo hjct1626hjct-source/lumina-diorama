@@ -803,18 +803,41 @@ export class UIManager {
   }
 
   addToast(text) {
+    // Prevent duplicate message stacking — extend existing matching toast instead!
+    const existing = Array.from(this.el.toastStack.children).find((el) => el.dataset.msg === text);
+    if (existing) {
+      clearTimeout(existing._fadeTimer);
+      clearTimeout(existing._removeTimer);
+      existing.style.opacity = '1';
+      existing.style.transform = 'scale(1.04)';
+      setTimeout(() => { existing.style.transform = 'scale(1)'; }, 120);
+      existing._fadeTimer = setTimeout(() => {
+        existing.style.opacity = '0';
+        existing.style.transition = 'opacity 0.28s ease';
+        existing._removeTimer = setTimeout(() => existing.remove(), 300);
+      }, 2400);
+      return;
+    }
+
     const div = document.createElement('div');
     div.className = 'toast-item';
+    div.dataset.msg = text;
     div.textContent = text;
     this.el.toastStack.appendChild(div);
-    while (this.el.toastStack.children.length > 4) {
-      this.el.toastStack.removeChild(this.el.toastStack.firstChild);
+
+    // Strictly cap simultaneous visible toasts to 2 so upper view stays clear!
+    while (this.el.toastStack.children.length > 2) {
+      const oldest = this.el.toastStack.firstChild;
+      clearTimeout(oldest._fadeTimer);
+      clearTimeout(oldest._removeTimer);
+      this.el.toastStack.removeChild(oldest);
     }
-    setTimeout(() => {
+
+    div._fadeTimer = setTimeout(() => {
       div.style.opacity = '0';
-      div.style.transition = 'opacity 0.3s ease';
-      setTimeout(() => div.remove(), 320);
-    }, 2900);
+      div.style.transition = 'opacity 0.28s ease';
+      div._removeTimer = setTimeout(() => div.remove(), 300);
+    }, 2500);
   }
 
   showTrophyToast(ach) {
@@ -830,7 +853,7 @@ export class UIManager {
     const div = document.createElement('div');
     div.className = `chat-msg ${isSystem ? 'system' : ''}`;
     div.innerHTML = isSystem
-      ? `[SYSTEM] ${escHtml(text)}`
+      ? `[お知らせ] ${escHtml(text)}`
       : `<span class="sender">${escHtml(sender)}:</span>${escHtml(text)}`;
     this.el.chatMessages.appendChild(div);
     while (this.el.chatMessages.children.length > 40) {
@@ -874,7 +897,7 @@ export class UIManager {
   }
 
   // ==========================================================================
-  // TOWN FACILITIES: GEAR SHOP, MAGIC LAB, BLACKSMITH, INN, DRONE, WARP
+  // TOWN FACILITIES: GEAR SHOP, MAGIC LAB, BLACKSMITH, INN, SPIRIT ORB, WARP
   // ==========================================================================
   openFacility(type) {
     this.isModalOpen = true;
@@ -889,8 +912,8 @@ export class UIManager {
     this.el.facilityGold.textContent = `${p.gold.toLocaleString()} G`;
 
     if (type === 'shop_gear') {
-      this.el.facilityEyebrow.textContent = 'NEON TOWN ARMORY';
-      this.el.facilityTitle.textContent = '🛡️ 武器・防具屋（購入 ＆ 売却）';
+      this.el.facilityEyebrow.textContent = 'ROYAL CAPITAL ARMORY';
+      this.el.facilityTitle.textContent = '🛡️ 王都武具店（購入 ＆ 売却）';
       const shopWeapons = WEAPONS.filter((w) => w.shopTier <= 3);
       const shopArmors = ARMORS.filter((a) => a.shopTier <= 3);
 
@@ -1409,10 +1432,10 @@ export class UIManager {
             `;
           }).join('')}
         </div>
-        <div class="section-heading"><span>🤖 自律型サポートドローン</span></div>
+        <div class="section-heading"><span>🧚 守護精霊オーブ（自律援護）</span></div>
         <div class="item-card">
-          <div class="item-head"><span class="item-name">相棒ドローン Lv.${ds.level} / 5</span><span class="rarity-tag epic">${ds.twinBeam ? 'TWIN LASER' : 'PULSE LASER'}</span></div>
-          <div class="item-meta">自動で周囲の敵にレーザー援護射撃（威力 ${ds.damage}）を行い、半径 ${ds.magnetRadius}px 以内のゴールド・鉱石・装備ドロップを自動吸引回収します。拠点の「ドローン工房」でさらに強化可能！</div>
+          <div class="item-head"><span class="item-name">古代精霊オーブ Lv.${ds.level} / 5</span><span class="rarity-tag epic">${ds.twinBeam ? '双連聖光砲' : '聖光魔弾'}</span></div>
+          <div class="item-meta">自動で周囲の敵に聖光弾の援護射撃（威力 ${ds.damage}）を行い、半径 ${ds.magnetRadius}px 以内のゴールド・鉱石・武具ドロップを自動吸引回収します。王都の「精霊オーブ工房」でさらに強化可能！</div>
         </div>
       `;
       out.onclick = (e) => {
@@ -1545,7 +1568,7 @@ export class UIManager {
           </div>
         </div>
         <div class="setting-row">
-          <div><div class="setting-label">バーチャルタッチUI表示</div><div class="setting-sub">PCプレイ時に非表示、または常に表示を選択</div></div>
+          <div><div class="setting-label">タッチ操作UI表示</div><div class="setting-sub">PCプレイ時に非表示、または常に表示を選択</div></div>
           <div class="seg-group">
             <button type="button" class="seg-btn ${s.touchMode === 'auto' ? 'active' : ''}" data-set-touch="auto">自動</button>
             <button type="button" class="seg-btn ${s.touchMode === 'always' ? 'active' : ''}" data-set-touch="always">常に表示</button>

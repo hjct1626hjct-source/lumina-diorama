@@ -312,7 +312,7 @@ export class Boss {
       }
       this.attackTimer = p2 ? 2.2 : 2.8;
     } else if (pat === 2) {
-      // Pattern 3: Neon Spiral Bullet Nova
+      // Pattern 3: Arcane Spiral Bullet Nova
       const count = p2 ? 14 : 9;
       for (let i = 0; i < count; i++) {
         const ang = this.animPhase + (i / count) * Math.PI * 2;

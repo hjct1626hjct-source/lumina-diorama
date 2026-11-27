@@ -1,13 +1,13 @@
 {
-  "name": "LUMINA DIORAMA — Cyber Neon Chronicles",
-  "short_name": "LuminaDiorama",
-  "description": "立体ジオラマ×サイバーネオンファンタジー 最大4人オンライン協力＆ソロ対応2Dアクション箱庭探索RPG — 製作者：駿 (Created by Shun)",
+  "name": "LUMINA CHRONICLES — Breath of the Star Realm",
+  "short_name": "LuminaChronicles",
+  "description": "ハイラル風ハイファンタジー3DアクションRPG（最大4人オンライン協力＆ソロ両対応）— 製作者：駿 (Created by Shun)",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#060d1a",
-  "theme_color": "#091529",
+  "background_color": "#0d1b2a",
+  "theme_color": "#112238",
   "lang": "ja",
   "icons": [
     {

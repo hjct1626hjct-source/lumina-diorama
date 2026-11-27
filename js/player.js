@@ -98,6 +98,7 @@ export class Player {
     this.dashDirX = 1;
     this.dashDirY = 0;
     this.invulnTimer = 0;
+    this.damageBlinkTimer = 0;
     this.perfectDodgeWindow = 0; // Window during start of dash to trigger Flurry Rush
 
     this.spellCooldown = 0;
@@ -370,6 +371,7 @@ export class Player {
     }
     if (this.dashCooldown > 0) this.dashCooldown -= dt;
     if (this.invulnTimer > 0) this.invulnTimer -= dt;
+    if (this.damageBlinkTimer > 0) this.damageBlinkTimer -= dt;
     if (this.spellCooldown > 0) this.spellCooldown -= dt;
     if (this.hitFlash > 0) this.hitFlash -= dt;
     if (this.hazardCooldown > 0) this.hazardCooldown -= dt;

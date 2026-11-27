@@ -8,7 +8,7 @@
 
 import * as THREE from './three.module.min.js';
 import { GAME_META, AREAS, JOBS, BODY_TYPES, NPCS, RARITY_INFO } from './data.js';
-import { TILE, getTile, getTerrainHeight } from './map.js';
+import { TILE, getTile, getTerrainHeight, sampleTileWeight } from './map.js';
 
 const TS = GAME_META.tileSize;
 
@@ -326,20 +326,22 @@ export class ProceduralTextureBank {
           }
         }
       } else if (kind === 'boss') {
-        // Ancient Temple Arena Stone with Faint Blue-Gold Runes
-        ctx.fillStyle = '#4a453d';
+        // Weathered Ancient Temple Flagstone (ZERO cyber grid lines!)
+        ctx.fillStyle = '#5c5549';
         ctx.fillRect(0, 0, w, h);
-        ctx.strokeStyle = 'rgba(56, 189, 248, 0.32)';
-        ctx.lineWidth = 4;
-        ctx.strokeRect(10, 10, w - 20, h - 20);
-        ctx.beginPath();
-        ctx.arc(w * 0.5, h * 0.5, 68, 0, Math.PI * 2);
-        ctx.stroke();
+        for (let i = 0; i < 90; i++) {
+          const rx = (i * 67) % w;
+          const ry = (i * 53) % h;
+          ctx.fillStyle = i % 2 === 0 ? 'rgba(255, 248, 220, 0.06)' : 'rgba(25, 22, 18, 0.09)';
+          ctx.beginPath();
+          ctx.ellipse(rx, ry, 24, 14, (i % 6) * 0.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
       } else if (kind === 'damage') {
-        // Molten Lava / Ancient Shock Hazard Tile
-        ctx.fillStyle = areaId === 'magma' ? '#7f1d1d' : '#1e3a8a';
+        // Molten Lava / Ancient Frost Crust Hazard
+        ctx.fillStyle = areaId === 'magma' ? '#6b1812' : '#1e3a5f';
         ctx.fillRect(0, 0, w, h);
-        ctx.strokeStyle = areaId === 'magma' ? '#fb923c' : '#38bdf8';
+        ctx.strokeStyle = areaId === 'magma' ? '#f97316' : '#7dd3fc';
         ctx.lineWidth = 6;
         ctx.beginPath();
         ctx.moveTo(20, 40);
@@ -355,7 +357,7 @@ export class ProceduralTextureBank {
         ctx.fillStyle = g;
         ctx.fillRect(0, 0, w, h);
 
-        ctx.strokeStyle = 'rgba(30, 25, 20, 0.48)';
+        ctx.strokeStyle = 'rgba(30, 25, 20, 0.42)';
         ctx.lineWidth = 4;
         for (let y = 0; y < h; y += 64) {
           ctx.beginPath();
@@ -370,8 +372,7 @@ export class ProceduralTextureBank {
             ctx.stroke();
           }
         }
-        // Subtle green moss near base
-        ctx.fillStyle = 'rgba(74, 124, 60, 0.35)';
+        ctx.fillStyle = 'rgba(74, 124, 60, 0.32)';
         ctx.fillRect(0, h - 28, w, 28);
       } else if (kind === 'cracked') {
         // Bombable / Breakable Cracked Rock Wall with Golden Light Seeping Through
@@ -390,6 +391,144 @@ export class ProceduralTextureBank {
         ctx.lineTo(222, 68);
         ctx.stroke();
         ctx.shadowBlur = 0;
+      }
+    });
+  }
+
+  // Seamless Painterly Detail Texture multiplied over Vertex-Colored Continuous Terrain (NO GRID!)
+  getOrganicDetailTexture(areaId) {
+    const tex = this.get(`organic_terrain_detail_${areaId}`, 256, 256, (ctx, w, h) => {
+      ctx.fillStyle = '#e8e8e2';
+      ctx.fillRect(0, 0, w, h);
+
+      // Soft painterly mottled brushstrokes (wraps cleanly without square borders)
+      for (let i = 0; i < 160; i++) {
+        const x = (i * 97 + 13) % w;
+        const y = (i * 61 + 29) % h;
+        const rx = 18 + (i % 22);
+        const ry = 8 + (i % 12);
+        const ang = (i % 7) * 0.45;
+        ctx.fillStyle = i % 3 === 0 ? 'rgba(255, 255, 245, 0.065)' : 'rgba(20, 28, 18, 0.036)';
+        for (const ox of [-w, 0, w]) {
+          for (const oy of [-h, 0, h]) {
+            if (x + ox < -45 || x + ox > w + 45 || y + oy < -45 || y + oy > h + 45) continue;
+            ctx.beginPath();
+            ctx.ellipse(x + ox, y + oy, rx, ry, ang, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+      }
+
+      // Subtle grass tufts or stone flecks depending on biome
+      if (areaId === 'town' || areaId === 'forest') {
+        ctx.strokeStyle = 'rgba(255, 255, 215, 0.11)';
+        ctx.lineWidth = 1.6;
+        for (let i = 0; i < 65; i++) {
+          const bx = (i * 53 + 17) % w;
+          const by = (i * 89 + 11) % h;
+          ctx.beginPath();
+          ctx.moveTo(bx, by);
+          ctx.lineTo(bx - 3, by - 8);
+          ctx.moveTo(bx, by);
+          ctx.lineTo(bx + 3, by - 7);
+          ctx.stroke();
+        }
+      } else {
+        // Pebbles & natural rock strata grain
+        for (let i = 0; i < 64; i++) {
+          const px = (i * 71 + 7) % w;
+          const py = (i * 43 + 19) % h;
+          ctx.fillStyle = i % 2 === 0 ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.055)';
+          ctx.beginPath();
+          ctx.arc(px, py, 2 + (i % 3), 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    });
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(16, 12);
+    return tex;
+  }
+
+  // Circular Ancient Carved Stone Sanctuary Medallion Texture for Boss Arenas
+  getStoneMedallionTexture(areaId) {
+    return this.get(`sanctuary_medallion_${areaId}`, 512, 512, (ctx, w, h) => {
+      const cx = w * 0.5;
+      const cy = h * 0.5;
+      ctx.clearRect(0, 0, w, h);
+
+      const baseCol = areaId === 'cave' ? '#4f6d8c' : areaId === 'magma' ? '#57362c' : areaId === 'citadel' ? '#cbd5e1' : areaId === 'secret' ? '#4c3f6e' : '#857a66';
+      const darkCol = areaId === 'cave' ? '#2c4159' : areaId === 'magma' ? '#331c16' : areaId === 'citadel' ? '#64748b' : '#4a4336';
+      const runeCol = areaId === 'cave' ? 'rgba(125,211,252,0.45)' : areaId === 'magma' ? 'rgba(251,146,60,0.48)' : 'rgba(245,208,118,0.45)';
+
+      const grad = ctx.createRadialGradient(cx, cy, 24, cx, cy, 248);
+      grad.addColorStop(0, baseCol);
+      grad.addColorStop(0.82, darkCol);
+      grad.addColorStop(1, 'rgba(40,35,30,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 248, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Concentric carved stone masonry rings & radial flagstone seams
+      ctx.strokeStyle = 'rgba(20, 18, 15, 0.45)';
+      ctx.lineWidth = 4;
+      for (const r of [90, 165, 228]) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      for (let i = 0; i < 16; i++) {
+        const a = (i / 16) * Math.PI * 2;
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(a) * 90, cy + Math.sin(a) * 90);
+        ctx.lineTo(cx + Math.cos(a) * 228, cy + Math.sin(a) * 228);
+        ctx.stroke();
+      }
+
+      // Subtle ancient gold/crystal carved sacred emblem (NOT cyber grid!)
+      ctx.strokeStyle = runeCol;
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 130, 0, Math.PI * 2);
+      ctx.stroke();
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(a) * 40, cy + Math.sin(a) * 40);
+        ctx.lineTo(cx + Math.cos(a) * 85, cy + Math.sin(a) * 85);
+        ctx.stroke();
+      }
+    });
+  }
+
+  // Delicate Ancient Arcane Magic Circle Texture (replaces thick yellow boss torus!)
+  getMagicCircleTexture(color = '#f5d076') {
+    return this.get(`ancient_magic_circle_${color}`, 256, 256, (ctx, w, h) => {
+      const cx = w * 0.5;
+      const cy = h * 0.5;
+      ctx.clearRect(0, 0, w, h);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 114, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 98, 0, Math.PI * 2);
+      ctx.stroke();
+      // Inscribed ancient 8-point star crest
+      for (let s = 0; s < 2; s++) {
+        ctx.beginPath();
+        for (let i = 0; i <= 4; i++) {
+          const a = (i / 4) * Math.PI * 2 + s * (Math.PI / 4);
+          const px = cx + Math.cos(a) * 98;
+          const py = cy + Math.sin(a) * 98;
+          if (i === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        }
+        ctx.stroke();
       }
     });
   }
@@ -593,50 +732,87 @@ export class CharacterRigFactory {
       hairGroup.add(brim, hatCone);
     }
 
-    // 4. Articulated Legs with Folded Fantasy Boots
+    // 4. Articulated Legs (Thigh + Knee Joint + Calf + Folded Fantasy Boot)
+    const kneeGeo = new THREE.SphereGeometry(2.0, 8, 8);
+    const shinGeo = new THREE.CylinderGeometry(1.9, 1.5, 6.2, 8);
+    const thighGeo = new THREE.CylinderGeometry(2.3, 1.9, 6.2, 8);
+
     const leftLeg = new THREE.Group();
-    leftLeg.position.set(-3.4, -7.2, 0);
+    leftLeg.position.set(-3.3, -6.8, 0);
     body.add(leftLeg);
-    const lThigh = new THREE.Mesh(this.sharedGeos.lowerLimb, leatherMat);
-    lThigh.position.y = -5.5;
+    const lThigh = new THREE.Mesh(thighGeo, leatherMat);
+    lThigh.position.y = -3.0;
+    const lKnee = new THREE.Mesh(kneeGeo, leatherMat);
+    lKnee.position.y = -6.0;
+    const lShin = new THREE.Group();
+    lShin.position.y = -6.0;
+    const lShinMesh = new THREE.Mesh(shinGeo, bootMat);
+    lShinMesh.position.y = -3.0;
     const lBoot = new THREE.Mesh(this.sharedGeos.bootCuff, bootMat);
-    lBoot.position.y = -9.5;
-    leftLeg.add(lThigh, lBoot);
+    lBoot.position.set(0, -5.6, 0.7);
+    lShin.add(lShinMesh, lBoot);
+    leftLeg.add(lThigh, lKnee, lShin);
 
     const rightLeg = new THREE.Group();
-    rightLeg.position.set(3.4, -7.2, 0);
+    rightLeg.position.set(3.3, -6.8, 0);
     body.add(rightLeg);
-    const rThigh = new THREE.Mesh(this.sharedGeos.lowerLimb, leatherMat);
-    rThigh.position.y = -5.5;
+    const rThigh = new THREE.Mesh(thighGeo, leatherMat);
+    rThigh.position.y = -3.0;
+    const rKnee = new THREE.Mesh(kneeGeo, leatherMat);
+    rKnee.position.y = -6.0;
+    const rShin = new THREE.Group();
+    rShin.position.y = -6.0;
+    const rShinMesh = new THREE.Mesh(shinGeo, bootMat);
+    rShinMesh.position.y = -3.0;
     const rBoot = new THREE.Mesh(this.sharedGeos.bootCuff, bootMat);
-    rBoot.position.y = -9.5;
-    rightLeg.add(rThigh, rBoot);
+    rBoot.position.set(0, -5.6, 0.7);
+    rShin.add(rShinMesh, rBoot);
+    rightLeg.add(rThigh, rKnee, rShin);
 
-    // 5. Left Arm + Heraldic Shield (or Arcane Barrier Emitter)
+    // 5. Articulated Left Arm (Upper Arm + Elbow + Gauntlet Forearm + Heraldic Shield)
+    const upperArmGeo = new THREE.CylinderGeometry(2.1, 1.75, 5.8, 8);
+    const elbowGeo = new THREE.SphereGeometry(1.75, 8, 8);
+    const foreArmGeo = new THREE.CylinderGeometry(1.7, 1.45, 5.6, 8);
+
     const leftArm = new THREE.Group();
-    leftArm.position.set(-8.2 * bSpec.shoulderScale, 11.0, 0.5);
+    leftArm.position.set(-8.0 * bSpec.shoulderScale, 11.2, 0.4);
     body.add(leftArm);
-    const lArmMesh = new THREE.Mesh(this.sharedGeos.upperLimb, tunicMat);
-    lArmMesh.position.y = -4.5;
-    leftArm.add(lArmMesh);
+    const lUpArm = new THREE.Mesh(upperArmGeo, tunicMat);
+    lUpArm.position.y = -2.8;
+    const lElbow = new THREE.Mesh(elbowGeo, tunicMat);
+    lElbow.position.y = -5.6;
+    const lForeArm = new THREE.Group();
+    lForeArm.position.y = -5.6;
+    lForeArm.rotation.x = -0.32;
+    const lForeMesh = new THREE.Mesh(foreArmGeo, leatherMat);
+    lForeMesh.position.y = -2.7;
+    lForeArm.add(lForeMesh);
+    leftArm.add(lUpArm, lElbow, lForeArm);
 
     const shieldHand = this._createHylianShieldMesh(color, accent);
-    shieldHand.position.set(-2.2, -6.5, 3.5);
+    shieldHand.position.set(-1.6, -3.5, 2.8);
     shieldHand.rotation.y = -0.35;
-    leftArm.add(shieldHand);
+    lForeArm.add(shieldHand);
 
-    // 6. Right Arm + Drawn Weapon in Hand + Sheathed Weapon & Shield on Back!
+    // 6. Articulated Right Arm (Upper Arm + Elbow + Gauntlet Forearm + Drawn Weapon)
     const rightArm = new THREE.Group();
-    rightArm.position.set(8.2 * bSpec.shoulderScale, 11.0, 1.0);
+    rightArm.position.set(8.0 * bSpec.shoulderScale, 11.2, 0.4);
     body.add(rightArm);
-    const rArmMesh = new THREE.Mesh(this.sharedGeos.upperLimb, tunicMat);
-    rArmMesh.position.y = -4.5;
-    rArmMesh.rotation.x = Math.PI * 0.25;
-    rightArm.add(rArmMesh);
+    const rUpArm = new THREE.Mesh(upperArmGeo, tunicMat);
+    rUpArm.position.y = -2.8;
+    const rElbow = new THREE.Mesh(elbowGeo, tunicMat);
+    rElbow.position.y = -5.6;
+    const rForeArm = new THREE.Group();
+    rForeArm.position.y = -5.6;
+    rForeArm.rotation.x = -0.45;
+    const rForeMesh = new THREE.Mesh(foreArmGeo, leatherMat);
+    rForeMesh.position.y = -2.7;
+    rForeArm.add(rForeMesh);
+    rightArm.add(rUpArm, rElbow, rForeArm);
 
     const weaponHand = this._createWeaponMesh(weaponType, weaponColor, accent);
-    weaponHand.position.set(0, -6.5, 7.5);
-    rightArm.add(weaponHand);
+    weaponHand.position.set(0, -4.6, 3.6);
+    rForeArm.add(weaponHand);
 
     // Sheathed weapon & shield on back (visible when not actively attacking/guarding!)
     const backGear = new THREE.Group();
@@ -664,8 +840,12 @@ export class CharacterRigFactory {
       capeMesh,
       leftLeg,
       rightLeg,
+      lShin,
+      rShin,
       leftArm,
       rightArm,
+      lForeArm,
+      rForeArm,
       weaponHand,
       shieldHand,
       backGear,
@@ -727,6 +907,32 @@ export class CharacterRigFactory {
     return group;
   }
 
+  // Sculpted Floating Ancient Arcane Crystal Spire (replaces clunky guardian crystal boxes!)
+  createArcaneCrystalSpire(color = '#38bdf8') {
+    const g = new THREE.Group();
+    const cryMat = this.texBank.createToonMaterial({
+      color,
+      emissive: new THREE.Color(color),
+      emissiveIntensity: 0.55,
+    }, '#fffbeb');
+    const goldMat = this.texBank.createToonMaterial({ color: 0xd4af37 }, '#fef08a');
+
+    const topSpire = new THREE.Mesh(new THREE.ConeGeometry(7.5, 22, 6), cryMat);
+    topSpire.position.y = 11;
+    const botSpire = new THREE.Mesh(new THREE.ConeGeometry(7.5, 16, 6), cryMat);
+    botSpire.rotation.x = Math.PI;
+    botSpire.position.y = -8;
+    const ring1 = new THREE.Mesh(new THREE.TorusGeometry(11.5, 0.8, 6, 20), goldMat);
+    ring1.rotation.x = Math.PI * 0.35;
+    const ring2 = new THREE.Mesh(new THREE.TorusGeometry(13.5, 0.65, 6, 20), goldMat);
+    ring2.rotation.y = Math.PI * 0.35;
+    ring2.rotation.x = -Math.PI * 0.25;
+
+    g.add(topSpire, botSpire, ring1, ring2);
+    g.userData = { ring1, ring2 };
+    return g;
+  }
+
   // Distinct High-Fantasy Monster Silhouettes (Goblin Warrior, Stone Golem, Winged Beast, Ancient Construct)
   createEnemyRig(enemy) {
     const def = enemy.def;
@@ -749,63 +955,60 @@ export class CharacterRigFactory {
     root.add(body);
 
     if (def.shape === 'goblin' || def.shape === 'knight_mob') {
-      // Bokoblin / Darknut Armored Fantasy Warrior with Horns, Club/Spear & Shield
-      const torso = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.55, r * 0.42, r * 1.1, 8), mat);
+      const torso = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.52, r * 0.4, r * 1.05, 10), mat);
       torso.position.y = r * 0.95;
-      torso.rotation.y = -Math.PI / 2;
-      const head = new THREE.Mesh(new THREE.BoxGeometry(r * 0.72, r * 0.65, r * 0.72), mat);
-      head.position.y = r * 1.78;
-      // Horns
+      torso.rotation.y = Math.PI;
+      const head = new THREE.Mesh(new THREE.SphereGeometry(r * 0.45, 10, 10), mat);
+      head.position.y = r * 1.72;
       for (const dir of [-1, 1]) {
         const horn = new THREE.Mesh(new THREE.ConeGeometry(2.2, 8, 5), accentMat);
-        horn.position.set(dir * r * 0.36, r * 2.15, 0);
-        horn.rotation.z = dir * -0.4;
+        horn.position.set(dir * r * 0.34, r * 2.1, 0);
+        horn.rotation.z = dir * -0.45;
         body.add(horn);
       }
-      // Weapon in right hand
-      const weapon = new THREE.Mesh(new THREE.BoxGeometry(2.8, 3.2, r * 1.45), accentMat);
-      weapon.position.set(r * 0.68, r * 0.95, r * 0.55);
+      const weapon = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 2.4, r * 1.4, 6), accentMat);
+      weapon.rotation.x = Math.PI * 0.5;
+      weapon.position.set(r * 0.65, r * 0.95, r * 0.55);
       body.add(torso, head, weapon);
     } else if (def.shape === 'golem' || def.shape === 'turret') {
-      // Stone Talus / Ancient Guardian Golem with angular rock slabs & glowing rune core
       const torso = new THREE.Mesh(new THREE.DodecahedronGeometry(r * 0.85, 0), mat);
       torso.position.y = r * 1.15;
-      torso.rotation.y = -Math.PI / 2;
-      const lArm = new THREE.Mesh(new THREE.BoxGeometry(r * 0.55, r * 1.1, r * 0.55), mat);
+      const lArm = new THREE.Mesh(new THREE.DodecahedronGeometry(r * 0.48, 0), mat);
       lArm.position.set(-r * 0.95, r * 1.0, 2);
-      const rArm = new THREE.Mesh(new THREE.BoxGeometry(r * 0.55, r * 1.1, r * 0.55), mat);
+      const rArm = new THREE.Mesh(new THREE.DodecahedronGeometry(r * 0.48, 0), mat);
       rArm.position.set(r * 0.95, r * 1.0, 2);
-      const WeakOre = new THREE.Mesh(new THREE.OctahedronGeometry(r * 0.35, 0), accentMat);
-      WeakOre.position.set(0, r * 1.95, -2);
-      body.add(torso, lArm, rArm, WeakOre);
+      const weakOre = new THREE.Mesh(new THREE.OctahedronGeometry(r * 0.35, 0), accentMat);
+      weakOre.position.set(0, r * 1.95, -2);
+      body.add(torso, lArm, rArm, weakOre);
     } else if (def.shape === 'bat' || def.shape === 'beast') {
-      // Winged Keese / Flame Wolf Beast
-      const core = new THREE.Mesh(new THREE.ConeGeometry(r * 0.75, r * 1.5, 6), mat);
-      core.rotation.x = Math.PI * 0.5;
-      core.position.y = r * 0.9;
+      const core = new THREE.Mesh(new THREE.SphereGeometry(r * 0.55, 10, 8), mat);
+      core.scale.set(0.85, 0.8, 1.35);
+      core.position.y = r * 1.0;
       for (const dir of [-1, 1]) {
-        const wing = new THREE.Mesh(new THREE.BoxGeometry(r * 1.1, 2.0, r * 0.65), accentMat);
-        wing.position.set(dir * r * 0.8, r * 1.05, 0);
-        wing.rotation.z = dir * 0.25;
+        const wing = new THREE.Mesh(new THREE.ConeGeometry(r * 0.55, r * 1.3, 4), accentMat);
+        wing.position.set(dir * r * 0.9, r * 1.1, 0);
+        wing.rotation.z = dir * -1.35;
+        wing.scale.set(0.25, 1, 0.85);
         body.add(wing);
       }
       body.add(core);
     } else {
-      // Chuchu / Wizzrobe / Construct with Orbiting Rune Ring
-      const core = new THREE.Mesh(new THREE.OctahedronGeometry(r * 0.85, 1), mat);
-      core.position.y = r * 0.95;
-      core.rotation.y = -Math.PI / 2;
-      const ring = new THREE.Mesh(new THREE.TorusGeometry(r * 1.05, 1.4, 6, 18), accentMat);
-      ring.rotation.x = Math.PI / 2;
-      ring.position.y = r * 0.95;
-      body.add(core, ring);
+      // Jelly Chuchu / Spirit Wizzrobe (Organic droplet + floating crystal shard, NO thick torus!)
+      const core = new THREE.Mesh(new THREE.SphereGeometry(r * 0.72, 12, 10), mat);
+      core.scale.set(1.05, 0.92, 1.05);
+      core.position.y = r * 0.78;
+      const topSpike = new THREE.Mesh(new THREE.ConeGeometry(r * 0.35, r * 0.65, 7), accentMat);
+      topSpike.position.y = r * 1.55;
+      body.add(core, topSpike);
     }
 
     root.userData = { mainMesh: body, mat };
     return root;
   }
 
-  // Grand Ancient Colossus / Calamity Dragon Sovereign Boss Rig
+  // ==========================================================================
+  // 6 BESPOKE SCULPTED 3D HIGH-FANTASY BOSS RIGS (ZERO CYLINDER/BLOCK ROBOTS!)
+  // ==========================================================================
   createBossRig(boss) {
     const def = boss.def;
     const r = boss.radius;
@@ -813,46 +1016,346 @@ export class CharacterRigFactory {
 
     const tex = this.texBank.getMonsterTexture(def.id, def.color, def.accent);
     const coreMat = this.texBank.createToonMaterial({ map: tex }, def.accent);
-    const goldMat = this.texBank.createToonMaterial({ color: def.accent });
+    const accentMat = this.texBank.createToonMaterial({ color: def.accent }, '#fffbeb');
+    const eyeMat = new THREE.MeshBasicMaterial({ color: 0xfef08a });
 
     const body = new THREE.Group();
     root.add(body);
 
-    // Towering Armored Torso + Crowned Head + Giant Pauldrons + Floating Ancient Halo
-    const torso = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.75, r * 0.52, r * 1.35, 8), coreMat);
-    torso.position.y = r * 0.95;
-    torso.rotation.y = -Math.PI / 2;
-    body.add(torso);
+    const animParts = { wings: [], arms: [], tailSegs: [], neck: null, weaponArm: null };
 
-    const head = new THREE.Mesh(new THREE.OctahedronGeometry(r * 0.48, 0), coreMat);
-    head.position.y = r * 1.85;
-    body.add(head);
+    if (def.id === 'boss_sylvarion') {
+      // AREA 01: 聖樹の守護巨獣・シルヴァリオン (Massive Ancient Mossy Treant & Forest Beast!)
+      const barkMat = this.texBank.createToonMaterial({ color: 0x4b3621 }, '#a3e635');
+      const mossMat = this.texBank.createToonMaterial({ color: 0x3b7a2c }, '#bef264');
+      const rockMat = this.texBank.createToonMaterial({ color: 0x6b705c }, '#d9f99d');
+      const gemMat = this.texBank.createToonMaterial({
+        color: 0x34d399,
+        emissive: new THREE.Color('#10b981'),
+        emissiveIntensity: 0.75,
+      });
 
-    for (const dir of [-1, 1]) {
-      const horn = new THREE.Mesh(new THREE.ConeGeometry(r * 0.18, r * 0.85, 5), goldMat);
-      horn.position.set(dir * r * 0.45, r * 2.25, 0);
-      horn.rotation.z = dir * -0.45;
-      const shoulder = new THREE.Mesh(new THREE.BoxGeometry(r * 0.55, r * 0.45, r * 0.65), goldMat);
-      shoulder.position.set(dir * r * 0.92, r * 1.35, 0);
-      body.add(horn, shoulder);
+      // 4 Splayed Gnarled Root Legs
+      for (const [lx, lz, rx, rz] of [[-26, 20, 0.2, 0.2], [26, 20, 0.2, -0.2], [-28, -22, -0.22, 0.18], [28, -22, -0.22, -0.18]]) {
+        const leg = new THREE.Mesh(new THREE.CylinderGeometry(6.5, 11.5, 32, 7), barkMat);
+        leg.position.set(lx, 15, lz);
+        leg.rotation.set(rx, 0, rz);
+        leg.castShadow = true;
+        body.add(leg);
+      }
+
+      // Broad Hunched Mossy Rock & Timber Carapace Back
+      const mainHunch = new THREE.Mesh(new THREE.DodecahedronGeometry(r * 0.88, 1), barkMat);
+      mainHunch.scale.set(1.15, 0.92, 1.3);
+      mainHunch.position.set(0, 44, -2);
+      mainHunch.castShadow = true;
+      body.add(mainHunch);
+
+      const carapace = new THREE.Mesh(new THREE.DodecahedronGeometry(r * 0.76, 0), rockMat);
+      carapace.scale.set(1.2, 0.65, 1.15);
+      carapace.position.set(0, 62, -10);
+      body.add(carapace);
+
+      // Lush Ancient Tree Canopy growing right off the beast's back!
+      for (const [fx, fy, fz, fr] of [[0, 82, -14, 24], [-22, 74, -10, 17], [22, 74, -10, 17], [0, 76, -32, 18]]) {
+        const leaf = new THREE.Mesh(new THREE.IcosahedronGeometry(fr, 1), mossMat);
+        leaf.scale.set(1.15, 0.72, 1.05);
+        leaf.position.set(fx, fy, fz);
+        leaf.castShadow = true;
+        body.add(leaf);
+      }
+
+      // Glowing Emerald Forest Heart Crystal embedded in chest
+      const chestGem = new THREE.Mesh(new THREE.OctahedronGeometry(12, 0), gemMat);
+      chestGem.position.set(0, 42, 34);
+      body.add(chestGem);
+
+      // Fierce Horned Stag/Treant Guardian Head with Branching Antlers!
+      const headGroup = new THREE.Group();
+      headGroup.position.set(0, 56, 36);
+      const skull = new THREE.Mesh(new THREE.DodecahedronGeometry(17, 0), barkMat);
+      skull.scale.set(1.0, 0.9, 1.25);
+      headGroup.add(skull);
+      for (const dir of [-1, 1]) {
+        const eye = new THREE.Mesh(new THREE.SphereGeometry(3.2, 8, 8), eyeMat);
+        eye.position.set(dir * 7.5, 2.5, 15.5);
+        const antler1 = new THREE.Mesh(new THREE.ConeGeometry(3.2, 32, 5), accentMat);
+        antler1.position.set(dir * 16, 20, -2);
+        antler1.rotation.z = dir * -0.52;
+        const antler2 = new THREE.Mesh(new THREE.ConeGeometry(2.2, 18, 5), accentMat);
+        antler2.position.set(dir * 26, 26, 4);
+        antler2.rotation.z = dir * -0.95;
+        headGroup.add(eye, antler1, antler2);
+      }
+      body.add(headGroup);
+
+      // 2 Massive Articulated Woody Slam Arms with Mossy Boulder Fists
+      for (const dir of [-1, 1]) {
+        const arm = new THREE.Group();
+        arm.position.set(dir * 38, 48, 12);
+        const upper = new THREE.Mesh(new THREE.CylinderGeometry(7.5, 6.2, 34, 7), barkMat);
+        upper.position.y = -15;
+        upper.rotation.z = dir * 0.22;
+        const fist = new THREE.Mesh(new THREE.DodecahedronGeometry(14, 0), rockMat);
+        fist.position.set(dir * 4, -34, 6);
+        fist.castShadow = true;
+        arm.add(upper, fist);
+        body.add(arm);
+        animParts.arms.push({ mesh: arm, dir });
+      }
+    } else if (def.id === 'boss_crystalion' || def.id === 'boss_ignis') {
+      // AREA 02 (白銀の水晶古竜・クリスタリオン) & AREA 04 (紅蓮の火竜王・イグニスレックス)
+      // TRUE SCULPTED 3D ANCIENT DRAGON (Curved Neck, Horned Head, Huge Flapping Wings, 4 Claws & Sweeping Tail!)
+      const isIce = def.id === 'boss_crystalion';
+      const scaleMat = this.texBank.createToonMaterial({ color: isIce ? 0x1e5c8a : 0x7f1d1d }, isIce ? '#bae6fd' : '#fb923c');
+      const bellyMat = this.texBank.createToonMaterial({ color: isIce ? 0xcbe9ff : 0xf97316 });
+      const wingMat = this.texBank.createToonMaterial({
+        color: isIce ? 0x7dd3fc : 0xfb923c,
+        emissive: new THREE.Color(isIce ? '#0284c7' : '#ea580c'),
+        emissiveIntensity: 0.42,
+        transparent: true,
+        opacity: isIce ? 0.82 : 0.92,
+        side: THREE.DoubleSide,
+      });
+
+      // Horizontal Sinuous Dragon Chest & Hindquarters
+      const chest = new THREE.Mesh(new THREE.SphereGeometry(26, 12, 10), scaleMat);
+      chest.scale.set(1.05, 0.92, 1.45);
+      chest.position.set(0, 42, 8);
+      chest.castShadow = true;
+      const belly = new THREE.Mesh(new THREE.SphereGeometry(21, 10, 8), bellyMat);
+      belly.scale.set(0.95, 0.72, 1.3);
+      belly.position.set(0, 34, 10);
+      const hind = new THREE.Mesh(new THREE.SphereGeometry(21, 10, 8), scaleMat);
+      hind.scale.set(0.95, 0.85, 1.3);
+      hind.position.set(0, 36, -24);
+      body.add(chest, belly, hind);
+
+      // 4 Clawed Dragon Legs
+      for (const [lx, lz] of [[-22, 16], [22, 16], [-20, -24], [20, -24]]) {
+        const thigh = new THREE.Mesh(new THREE.CylinderGeometry(6.5, 4.5, 28, 7), scaleMat);
+        thigh.position.set(lx, 18, lz);
+        const claw = new THREE.Mesh(new THREE.ConeGeometry(7.5, 10, 5), accentMat);
+        claw.position.set(lx, 5, lz + 4);
+        body.add(thigh, claw);
+      }
+
+      // Curved Multi-Segment Dragon Neck + Horned Dragon Head & Jaw!
+      const neckGroup = new THREE.Group();
+      neckGroup.position.set(0, 52, 28);
+      const neck1 = new THREE.Mesh(new THREE.CylinderGeometry(11, 14, 24, 8), scaleMat);
+      neck1.position.set(0, 10, 8);
+      neck1.rotation.x = 0.42;
+      const neck2 = new THREE.Mesh(new THREE.CylinderGeometry(8.5, 11, 22, 8), scaleMat);
+      neck2.position.set(0, 26, 16);
+      neck2.rotation.x = 0.25;
+
+      const dHead = new THREE.Group();
+      dHead.position.set(0, 38, 22);
+      const cranium = new THREE.Mesh(new THREE.DodecahedronGeometry(13.5, 0), scaleMat);
+      cranium.scale.set(1.0, 0.85, 1.25);
+      const snout = new THREE.Mesh(new THREE.ConeGeometry(8.5, 22, 6), scaleMat);
+      snout.rotation.x = Math.PI * 0.5;
+      snout.position.set(0, -1, 17);
+      const jaw = new THREE.Mesh(new THREE.BoxGeometry(10, 4, 16), bellyMat);
+      jaw.position.set(0, -6.5, 13);
+      dHead.add(cranium, snout, jaw);
+
+      for (const dir of [-1, 1]) {
+        const eye = new THREE.Mesh(new THREE.SphereGeometry(2.6, 8, 8), eyeMat);
+        eye.position.set(dir * 6.5, 3, 10);
+        const horn = new THREE.Mesh(new THREE.ConeGeometry(3.2, 26, 5), accentMat);
+        horn.position.set(dir * 8, 12, -8);
+        horn.rotation.set(-0.85, 0, dir * -0.25);
+        dHead.add(eye, horn);
+      }
+      neckGroup.add(neck1, neck2, dHead);
+      body.add(neckGroup);
+      animParts.neck = neckGroup;
+
+      // HUGE Swept Articulated Crystal / Flame Dragon Wings (Flap gracefully!)
+      for (const dir of [-1, 1]) {
+        const wingPivot = new THREE.Group();
+        wingPivot.position.set(dir * 18, 54, 6);
+        const spar = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 3.8, 72, 6), scaleMat);
+        spar.rotation.z = dir * -1.15;
+        spar.position.set(dir * 32, 16, -6);
+        // Sculpted swept triangular wing membrane facets
+        const web1 = new THREE.Mesh(new THREE.ConeGeometry(28, 66, 3), wingMat);
+        web1.rotation.z = dir * -1.3;
+        web1.rotation.y = dir * 0.2;
+        web1.scale.set(1.0, 1.0, 0.14);
+        web1.position.set(dir * 38, 12, -16);
+        const web2 = new THREE.Mesh(new THREE.ConeGeometry(22, 46, 3), wingMat);
+        web2.rotation.z = dir * -1.55;
+        web2.scale.set(1.0, 1.0, 0.12);
+        web2.position.set(dir * 62, 14, -22);
+        wingPivot.add(spar, web1, web2);
+        body.add(wingPivot);
+        animParts.wings.push({ mesh: wingPivot, dir });
+      }
+
+      // Multi-Segment Sweeping Dragon Tail with Crystal/Flame Tip
+      for (let t = 0; t < 4; t++) {
+        const seg = new THREE.Mesh(new THREE.CylinderGeometry(11 - t * 2.2, 13 - t * 2.2, 20, 7), scaleMat);
+        seg.rotation.x = Math.PI * 0.48;
+        seg.position.set(0, 30 - t * 3, -40 - t * 17);
+        body.add(seg);
+        animParts.tailSegs.push({ mesh: seg, idx: t });
+      }
+      const tailSpire = new THREE.Mesh(new THREE.OctahedronGeometry(9.5, 0), wingMat);
+      tailSpire.position.set(0, 20, -108);
+      body.add(tailSpire);
+      animParts.tailSegs.push({ mesh: tailSpire, idx: 4 });
+    } else if (def.id === 'boss_chronos') {
+      // AREA 03: 古代神殿の巨神兵・クロノガーディアン (Ancient Carved Stone Sentinel Colossus!)
+      const sandStone = this.texBank.createToonMaterial({ color: 0x8c7b60 }, '#fde68a');
+      const bronzeMat = this.texBank.createToonMaterial({ color: 0xb45309 }, '#fef08a');
+      const runeMat = this.texBank.createToonMaterial({ color: 0x38bdf8, emissive: new THREE.Color('#0284c7'), emissiveIntensity: 0.7 });
+
+      // Tapered Carved Temple Pedestal Torso & Hovering Stone Pillars
+      const chest = new THREE.Mesh(new THREE.CylinderGeometry(28, 14, 48, 6), sandStone);
+      chest.position.y = 48;
+      chest.castShadow = true;
+      const coreGem = new THREE.Mesh(new THREE.OctahedronGeometry(13, 0), runeMat);
+      coreGem.position.set(0, 50, 18);
+      const maskHead = new THREE.Mesh(new THREE.ConeGeometry(16, 26, 6), bronzeMat);
+      maskHead.position.y = 82;
+      const eyeVisor = new THREE.Mesh(new THREE.BoxGeometry(16, 4.5, 6), eyeMat);
+      eyeVisor.position.set(0, 79, 12);
+      body.add(chest, coreGem, maskHead, eyeVisor);
+
+      // Massive Floating Stone Gauntlets
+      for (const dir of [-1, 1]) {
+        const arm = new THREE.Group();
+        arm.position.set(dir * 42, 54, 8);
+        const shoulder = new THREE.Mesh(new THREE.DodecahedronGeometry(14, 0), bronzeMat);
+        const fist = new THREE.Mesh(new THREE.CylinderGeometry(11, 9, 28, 6), sandStone);
+        fist.position.set(0, -24, 12);
+        fist.rotation.x = Math.PI * 0.35;
+        arm.add(shoulder, fist);
+        body.add(arm);
+        animParts.arms.push({ mesh: arm, dir });
+      }
+    } else {
+      // AREA 05 FINAL BOSS (厄災の古代魔導王・オメガノヴァ) & SECRET VAULT (星穹の創世神将・アストラルゼロ)
+      // MAJESTIC ARMORED HUMANOID SOVEREIGN / CELESTIAL GENERAL (Armor, Cape, Crowned Helm, 6 Blade Wings, Colossal Greatsword!)
+      const isAstral = def.id === 'boss_astral_zero';
+      const plateMat = this.texBank.createToonMaterial({ color: isAstral ? 0xe5e7eb : 0x2e1065 }, isAstral ? '#fde047' : '#c084fc');
+      const goldTrim = this.texBank.createToonMaterial({ color: isAstral ? 0xf59e0b : 0xd97706 }, '#fef08a');
+      const capeMat = this.texBank.createToonMaterial({ color: isAstral ? 0x1d4ed8 : 0x7f1d1d, side: THREE.DoubleSide });
+      const bladeWingMat = new THREE.MeshBasicMaterial({
+        color: isAstral ? 0x38bdf8 : 0xf43f5e,
+        transparent: true,
+        opacity: 0.85,
+        side: THREE.DoubleSide,
+      });
+
+      // Armored Legs & Royal Tassets
+      for (const dir of [-1, 1]) {
+        const leg = new THREE.Mesh(new THREE.CylinderGeometry(7.2, 5.2, 34, 8), plateMat);
+        leg.position.set(dir * 12, 18, 0);
+        const greave = new THREE.Mesh(new THREE.ConeGeometry(7.5, 16, 6), goldTrim);
+        greave.position.set(dir * 12, 8, 2);
+        body.add(leg, greave);
+      }
+
+      // Regal V-Tapered Breastplate & Sweeping Royal Cape
+      const cuirass = new THREE.Mesh(new THREE.CylinderGeometry(23, 14, 34, 10), plateMat);
+      cuirass.position.y = 52;
+      cuirass.castShadow = true;
+      const tasset = new THREE.Mesh(new THREE.CylinderGeometry(15, 24, 18, 10), goldTrim);
+      tasset.position.y = 32;
+      const cape = new THREE.Mesh(new THREE.PlaneGeometry(42, 62), capeMat);
+      cape.position.set(0, 42, -16);
+      cape.rotation.x = 0.24;
+      body.add(cuirass, tasset, cape);
+
+      // Crowned Demon / Winged Celestial Helm
+      const helmGroup = new THREE.Group();
+      helmGroup.position.set(0, 79, 0);
+      const helm = new THREE.Mesh(new THREE.SphereGeometry(12.5, 12, 10), plateMat);
+      helm.scale.set(0.95, 1.15, 1.0);
+      const visor = new THREE.Mesh(new THREE.BoxGeometry(14, 3.8, 6), eyeMat);
+      visor.position.set(0, 1, 10);
+      helmGroup.add(helm, visor);
+      for (const dir of [-1, 1]) {
+        const crest = new THREE.Mesh(new THREE.ConeGeometry(3.8, 26, 5), goldTrim);
+        crest.position.set(dir * 11, 14, -2);
+        crest.rotation.z = dir * -0.45;
+        helmGroup.add(crest);
+      }
+      body.add(helmGroup);
+
+      // 6 Fanned Radiant Energy Blade Wings!
+      for (const dir of [-1, 1]) {
+        for (let w = 0; w < 3; w++) {
+          const wingPivot = new THREE.Group();
+          wingPivot.position.set(dir * 18, 64 - w * 7, -14);
+          const feather = new THREE.Mesh(new THREE.ConeGeometry(7.5, 58 - w * 8, 4), bladeWingMat);
+          feather.rotation.z = dir * -(0.85 + w * 0.32);
+          feather.scale.set(1.0, 1.0, 0.16);
+          feather.position.set(dir * (26 - w * 3), 14 - w * 8, -4);
+          wingPivot.add(feather);
+          body.add(wingPivot);
+          animParts.wings.push({ mesh: wingPivot, dir, idx: w });
+        }
+      }
+
+      // Broad Sculpted Pauldrons, Left Shield Arm & Right Colossal Greatsword Arm!
+      for (const dir of [-1, 1]) {
+        const pauldron = new THREE.Mesh(new THREE.SphereGeometry(11, 10, 8), goldTrim);
+        pauldron.scale.set(1.2, 0.75, 1.15);
+        pauldron.position.set(dir * 26, 66, 0);
+        body.add(pauldron);
+      }
+
+      const leftArm = new THREE.Group();
+      leftArm.position.set(-28, 62, 2);
+      const lArmMesh = new THREE.Mesh(new THREE.CylinderGeometry(5.5, 4.5, 28, 8), plateMat);
+      lArmMesh.position.y = -14;
+      leftArm.add(lArmMesh);
+      body.add(leftArm);
+      animParts.arms.push({ mesh: leftArm, dir: -1 });
+
+      const rightArm = new THREE.Group();
+      rightArm.position.set(28, 62, 4);
+      const rArmMesh = new THREE.Mesh(new THREE.CylinderGeometry(5.5, 4.5, 28, 8), plateMat);
+      rArmMesh.position.y = -14;
+      rArmMesh.rotation.x = 0.45;
+      // Colossal Sovereign Greatsword!
+      const sword = new THREE.Group();
+      sword.position.set(0, -24, 14);
+      const hilt = new THREE.Mesh(new THREE.BoxGeometry(20, 4.5, 4.5), goldTrim);
+      const blade = new THREE.Mesh(new THREE.ConeGeometry(6.8, 86, 4), bladeWingMat);
+      blade.rotation.x = Math.PI * 0.5;
+      blade.scale.set(1.0, 1.0, 0.28);
+      blade.position.z = 44;
+      sword.add(hilt, blade);
+      rightArm.add(rArmMesh, sword);
+      body.add(rightArm);
+      animParts.weaponArm = rightArm;
     }
 
+    // Delicate Ancient Arcane Magic Circle at Boss Feet (replaces clunky yellow torus!)
+    const circleTex = this.texBank.getMagicCircleTexture(def.accent || '#f5d076');
     const haloMesh = new THREE.Mesh(
-      new THREE.TorusGeometry(r * 1.25, 2.8, 8, 28),
-      new THREE.MeshBasicMaterial({ color: def.accent })
+      new THREE.PlaneGeometry(r * 2.8, r * 2.8),
+      new THREE.MeshBasicMaterial({ map: circleTex, transparent: true, opacity: 0.48, depthWrite: false, side: THREE.DoubleSide })
     );
-    haloMesh.rotation.x = Math.PI / 2;
-    haloMesh.position.y = r * 1.1;
+    haloMesh.rotation.x = -Math.PI / 2;
+    haloMesh.position.y = 1.6;
     root.add(haloMesh);
 
+    // Subtle Translucent Sacred Barrier Sphere when Guardian Crystals are alive
     const shieldMesh = new THREE.Mesh(
-      new THREE.IcosahedronGeometry(r * 1.38, 1),
-      new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.24, wireframe: true })
+      new THREE.IcosahedronGeometry(r * 1.48, 2),
+      new THREE.MeshBasicMaterial({ color: 0x7dd3fc, transparent: true, opacity: 0.16, wireframe: true })
     );
-    shieldMesh.position.y = r * 1.05;
+    shieldMesh.position.y = r * 1.15;
     root.add(shieldMesh);
 
-    root.userData = { coreMesh: body, haloMesh, shieldMesh, coreMat };
+    root.userData = { coreMesh: body, haloMesh, shieldMesh, coreMat, animParts, bossId: def.id };
     return root;
   }
 }
@@ -1282,6 +1785,7 @@ export class Renderer {
     this.npcMeshes.clear();
     this.grassInstancedMesh = null;
     this.grassPositions = [];
+    this.waterMeshes = [];
 
     const pal = map.meta.palette;
     this.scene.background.set(pal.skyHorizon || pal.voidBg);
@@ -1290,38 +1794,209 @@ export class Renderer {
       this.skyDomeMat.color.set(tint);
     }
     this.scene.fog.color.set(pal.fogColor || pal.voidBg);
-    this.scene.fog.density = pal.fogDensity || 0.0008;
+    this.scene.fog.density = pal.fogDensity || 0.00075;
     this.hemiLight.color.set(pal.ambientSky || '#87ceeb');
     this.hemiLight.groundColor.set(pal.ambientGround || '#5e7a52');
     this.sunLight.color.set(pal.sunColor || '#fff5dc');
+    this.hemiLight.intensity = map.areaId === 'cave' ? 1.05 : 1.38;
+    this.sunLight.intensity = map.areaId === 'cave' ? 1.15 : 1.95;
 
-    const floorGeo = new THREE.BoxGeometry(TS, 18, TS);
-    const wallGeo = new THREE.BoxGeometry(TS, 54, TS);
-    const gateGeo = new THREE.BoxGeometry(TS, 44, TS);
+    // ========================================================================
+    // 1. CONTINUOUS SCULPTED HEIGHTMAP TERRAIN MESH (NO FLAT TILE CUBES!)
+    //    High-res PlaneGeometry + Multi-Octave Hills + Carved Riverbeds +
+    //    Smooth Vertex-Color Biome Blending + Organic Painterly Detail Map!
+    // ========================================================================
+    const worldW = map.pixelWidth;
+    const worldH = map.pixelHeight;
+    const segX = Math.min(110, map.width * 2);
+    const segZ = Math.min(84, map.height * 2);
+    const terrainGeo = new THREE.PlaneGeometry(worldW, worldH, segX, segZ);
+    terrainGeo.rotateX(-Math.PI / 2);
+    terrainGeo.translate(worldW * 0.5, 0, worldH * 0.5);
 
-    const matFloorA = this.texBank.createToonMaterial({ map: this.texBank.getTileTexture(map.areaId, 'floorA', pal) });
-    const matFloorB = this.texBank.createToonMaterial({ map: this.texBank.getTileTexture(map.areaId, 'floorB', pal) });
-    const matAccent = this.texBank.createToonMaterial({ map: this.texBank.getTileTexture(map.areaId, 'accent', pal) });
-    const matBoss = this.texBank.createToonMaterial({ map: this.texBank.getTileTexture(map.areaId, 'boss', pal) });
-    const matDamage = this.texBank.createToonMaterial({
-      map: this.texBank.getTileTexture(map.areaId, 'damage', pal),
-      emissive: new THREE.Color(map.areaId === 'magma' ? '#ea580c' : '#0284c7'),
-      emissiveIntensity: 0.45,
+    const posAttr = terrainGeo.attributes.position;
+    const colors = new Float32Array(posAttr.count * 3);
+
+    const cFloorA = new THREE.Color(pal.floorA);
+    const cFloorB = new THREE.Color(pal.floorB);
+    const cPath = new THREE.Color(pal.floorAccent);
+    const cShore = new THREE.Color(map.areaId === 'magma' ? '#4a1d14' : map.areaId === 'cave' ? '#2c425e' : '#b8a57d');
+    const cRiverBed = new THREE.Color(map.areaId === 'magma' ? '#7c2d12' : '#1b4965');
+    const cCliffSoil = new THREE.Color(pal.wallFront);
+    const cBossStone = new THREE.Color(map.areaId === 'cave' ? '#476282' : map.areaId === 'magma' ? '#4a2c24' : map.areaId === 'citadel' ? '#cbd5e1' : '#857a66');
+    const cHazard = new THREE.Color(map.areaId === 'magma' ? '#ea580c' : '#2563eb');
+    const tmpCol = new THREE.Color();
+
+    for (let i = 0; i < posAttr.count; i++) {
+      const vx = posAttr.getX(i);
+      const vz = posAttr.getZ(i);
+      const vy = getTerrainHeight(vx, vz, map.areaId, map);
+      posAttr.setY(i, vy);
+
+      // Smooth organic biome blending (eliminates all square grid edges!)
+      const noise = (Math.sin(vx * 0.016 + vz * 0.011) * Math.cos(vz * 0.014 - vx * 0.009) + 1) * 0.5;
+      tmpCol.copy(cFloorA).lerp(cFloorB, noise);
+
+      const accentW = sampleTileWeight(map, vx, vz, TILE.ACCENT);
+      const waterW = sampleTileWeight(map, vx, vz, TILE.WATER);
+      const bossW = sampleTileWeight(map, vx, vz, TILE.BOSS_FLOOR);
+      const dmgW = sampleTileWeight(map, vx, vz, TILE.DAMAGE);
+      const wallW = sampleTileWeight(map, vx, vz, TILE.WALL);
+
+      if (accentW > 0.01) tmpCol.lerp(cPath, Math.min(1, accentW * 1.15));
+      if (bossW > 0.01) tmpCol.lerp(cBossStone, Math.min(1, bossW * 1.15));
+      if (wallW > 0.05 && map.areaId !== 'town') tmpCol.lerp(cCliffSoil, Math.min(0.85, wallW));
+      if (waterW > 0.01) {
+        const bridgeMask = Math.max(0, 1 - accentW * 1.5);
+        const wFactor = waterW * bridgeMask;
+        if (wFactor > 0.02) {
+          tmpCol.lerp(wFactor > 0.45 ? cRiverBed : cShore, Math.min(1, wFactor * 1.4));
+        }
+      }
+      if (dmgW > 0.05) tmpCol.lerp(cHazard, Math.min(0.95, dmgW * 1.3));
+
+      // Subtle sunlit hillcrest warmth / valley shading
+      const elevTint = Math.max(-0.08, Math.min(0.1, vy * 0.008));
+      colors[i * 3] = Math.max(0, Math.min(1, tmpCol.r + elevTint));
+      colors[i * 3 + 1] = Math.max(0, Math.min(1, tmpCol.g + elevTint));
+      colors[i * 3 + 2] = Math.max(0, Math.min(1, tmpCol.b + elevTint * 0.6));
+    }
+
+    terrainGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    terrainGeo.computeVertexNormals();
+
+    const terrainDetailTex = this.texBank.getOrganicDetailTexture(map.areaId);
+    const terrainMat = this.texBank.createToonMaterial({
+      vertexColors: true,
+      map: terrainDetailTex,
     });
-    const matWater = this.texBank.createToonMaterial({
-      color: pal.water,
-      emissive: new THREE.Color(pal.water),
-      emissiveIntensity: 0.25,
-    });
-    const matWall = this.texBank.createToonMaterial({ map: this.texBank.getTileTexture(map.areaId, 'wall', pal) });
+    const terrainMesh = new THREE.Mesh(terrainGeo, terrainMat);
+    terrainMesh.receiveShadow = true;
+    this.mapGroup.add(terrainMesh);
+
+    // Subtle Cobblestone Royal Plaza Overlay ONLY in Town's Central Square
+    if (map.areaId === 'town') {
+      const plazaTex = this.texBank.getTileTexture('town', 'accent', pal);
+      plazaTex.wrapS = THREE.RepeatWrapping;
+      plazaTex.wrapT = THREE.RepeatWrapping;
+      plazaTex.repeat.set(8, 8);
+      const plazaMesh = new THREE.Mesh(
+        new THREE.CircleGeometry(TS * 5.2, 32),
+        this.texBank.createToonMaterial({ map: plazaTex })
+      );
+      plazaMesh.rotation.x = -Math.PI / 2;
+      plazaMesh.position.set(16.5 * TS, 2.75, 12.5 * TS);
+      plazaMesh.receiveShadow = true;
+      this.mapGroup.add(plazaMesh);
+    }
+
+    // ========================================================================
+    // 2. REAL 3D TRANSLUCENT SHIMMERING WATER SURFACES + ARCHED BRIDGES
+    // ========================================================================
+    let hasWater = false;
+    for (let i = 0; i < map.tiles.length; i++) {
+      if (map.tiles[i] === TILE.WATER) { hasWater = true; break; }
+    }
+    if (hasWater) {
+      const isLava = map.areaId === 'magma';
+      const waterGeo = new THREE.PlaneGeometry(worldW, worldH, 32, 24);
+      waterGeo.rotateX(-Math.PI / 2);
+      const waterMat = isLava
+        ? new THREE.MeshBasicMaterial({ color: 0xf97316, transparent: true, opacity: 0.9 })
+        : new THREE.MeshPhongMaterial({
+            color: new THREE.Color(pal.water).lerp(new THREE.Color('#38bdf8'), 0.35),
+            emissive: new THREE.Color(pal.water),
+            emissiveIntensity: 0.22,
+            specular: new THREE.Color('#e0f2fe'),
+            shininess: 85,
+            transparent: true,
+            opacity: 0.78,
+          });
+      const waterMesh = new THREE.Mesh(waterGeo, waterMat);
+      waterMesh.position.set(worldW * 0.5, -4.6, worldH * 0.5);
+      this.mapGroup.add(waterMesh);
+      this.waterMeshes.push(waterMesh);
+    }
+
+    // ========================================================================
+    // 3. SACRED CIRCULAR ANCIENT STONE BOSS SANCTUARY (NO CYBER GRID!)
+    // ========================================================================
+    if (map.bossArena && map.bossArena.center) {
+      const bc = map.bossArena.center;
+      const by = getTerrainHeight(bc.x, bc.y, map.areaId, map);
+      const medTex = this.texBank.getStoneMedallionTexture(map.areaId);
+      const sanctuaryDisc = new THREE.Mesh(
+        new THREE.CircleGeometry(215, 36),
+        new THREE.MeshBasicMaterial({ map: medTex, transparent: true, opacity: 0.95, depthWrite: false })
+      );
+      sanctuaryDisc.rotation.x = -Math.PI / 2;
+      sanctuaryDisc.position.set(bc.x, by + 0.6, bc.y);
+      this.mapGroup.add(sanctuaryDisc);
+
+      // 6 Weathered Sanctuary Monolith Pillars surrounding the circular boss arena
+      const monoMat = this.texBank.createToonMaterial({ map: this.texBank.getTileTexture(map.areaId, 'wall', pal) });
+      const brazierMat = new THREE.MeshBasicMaterial({ color: map.areaId === 'cave' ? 0x7dd3fc : 0xfbbf24 });
+      for (let i = 0; i < 6; i++) {
+        const ang = (i / 6) * Math.PI * 2 + 0.35;
+        const px = bc.x + Math.cos(ang) * 205;
+        const pz = bc.y + Math.sin(ang) * 205;
+        const py = getTerrainHeight(px, pz, map.areaId, map);
+        const h = i % 2 === 0 ? 48 : 34;
+        const col = new THREE.Mesh(new THREE.CylinderGeometry(7.5, 9.5, h, 8), monoMat);
+        col.position.set(px, py + h * 0.5 - 2, pz);
+        col.castShadow = true;
+        this.mapGroup.add(col);
+        if (i % 2 === 0) {
+          const flame = new THREE.Mesh(new THREE.OctahedronGeometry(5.5, 0), brazierMat);
+          flame.position.set(px, py + h + 5, pz);
+          this.mapGroup.add(flame);
+        }
+      }
+    }
+
+    // ========================================================================
+    // 4. NATURAL SCULPTED CLIFFS, RUINED STONE COLUMNS, BRIDGES & CASTLE WALLS
+    //    (100% ABOLISHED SQUARE BLOCK WALLS!)
+    // ========================================================================
+    const matWallStone = this.texBank.createToonMaterial({ map: this.texBank.getTileTexture(map.areaId, 'wall', pal) });
+    const matRockCliff = this.texBank.createToonMaterial({ color: pal.wallFront }, pal.wallTop);
+    const matMossCap = this.texBank.createToonMaterial({ color: map.areaId === 'cave' ? '#5ea2d1' : map.areaId === 'magma' ? '#7c2d12' : '#4f8f3c' });
     const matCracked = this.texBank.createToonMaterial({
       map: this.texBank.getTileTexture(map.areaId, 'cracked', pal),
       emissive: new THREE.Color('#d97706'),
-      emissiveIntensity: 0.25,
+      emissiveIntensity: 0.3,
     });
-    const matGate = new THREE.MeshBasicMaterial({ color: pal.neon, transparent: true, opacity: 0.55 });
-    const matBossGate = new THREE.MeshBasicMaterial({ color: '#dc2626', transparent: true, opacity: 0.62 });
+    const matBridgeWood = this.texBank.createToonMaterial({ color: map.areaId === 'magma' ? 0x57534e : 0x7c4d25 });
+    const matGateBar = this.texBank.createToonMaterial({ color: 0xb48636 }, '#fde68a');
+    const matBossGateBar = this.texBank.createToonMaterial({ color: 0x3b151e }, '#f87171');
+    const matGateVeil = new THREE.MeshBasicMaterial({
+      color: '#f5d076',
+      transparent: true,
+      opacity: 0.24,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const matBossGateVeil = new THREE.MeshBasicMaterial({
+      color: '#ef4444',
+      transparent: true,
+      opacity: 0.26,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
 
+    const rockGeo = new THREE.DodecahedronGeometry(TS * 0.64, 0);
+    const rockSubGeo = new THREE.DodecahedronGeometry(TS * 0.44, 0);
+    const shoreRockGeo = new THREE.DodecahedronGeometry(7.5, 0);
+    const pillarGeo = new THREE.CylinderGeometry(10.5, 12.5, 58, 10);
+    const brokenPillarGeo = new THREE.CylinderGeometry(9.5, 12.5, 34, 10);
+    const gateBarGeo = new THREE.CylinderGeometry(1.5, 1.8, 42, 6);
+    const gateTipGeo = new THREE.ConeGeometry(2.6, 8.5, 6);
+    const gateCrossGeo = new THREE.BoxGeometry(TS, 3.2, 3.2);
+    const gateVeilGeo = new THREE.PlaneGeometry(TS, 40);
+    const gatePlinthGeo = new THREE.CylinderGeometry(4.8, 6.2, 46, 8);
+
+    const isRuinsStyle = map.areaId === 'ruins' || map.areaId === 'citadel' || map.areaId === 'secret' || map.areaId === 'tower';
+    const isTown = map.areaId === 'town';
     const grassCandidates = [];
 
     for (let ty = 0; ty < map.height; ty++) {
@@ -1330,121 +2005,323 @@ export class Renderer {
         if (t === TILE.VOID) continue;
         const wx = (tx + 0.5) * TS;
         const wz = (ty + 0.5) * TS;
-        const groundY = getTerrainHeight(wx, wz, map.areaId);
-
-        const alt = (tx + ty) % 2 === 0;
-        let fMat = alt ? matFloorA : matFloorB;
-        if (t === TILE.ACCENT) fMat = matAccent;
-        else if (t === TILE.BOSS_FLOOR) fMat = matBoss;
-        else if (t === TILE.DAMAGE) fMat = matDamage;
-        else if (t === TILE.WATER) fMat = matWater;
-
-        const fMesh = new THREE.Mesh(floorGeo, fMat);
-        fMesh.position.set(wx, (t === TILE.WATER ? -11 : -9) + groundY, wz);
-        fMesh.receiveShadow = true;
-        this.mapGroup.add(fMesh);
+        const groundY = getTerrainHeight(wx, wz, map.areaId, map);
 
         if (t === TILE.FLOOR && (map.areaId === 'town' || map.areaId === 'forest' || map.areaId === 'ruins')) {
           grassCandidates.push({ x: wx, z: wz, y: groundY });
         }
 
-        if (t === TILE.WALL || t === TILE.CRACKED) {
-          const wMesh = new THREE.Mesh(wallGeo, t === TILE.CRACKED ? matCracked : matWall);
-          wMesh.position.set(wx, 24 + groundY, wz);
-          wMesh.castShadow = true;
-          wMesh.receiveShadow = true;
-          this.mapGroup.add(wMesh);
+        // Shoreline pebbles & smooth rocks beside water edges
+        if (t === TILE.FLOOR && hasWater && ((tx * 7 + ty * 13) % 3 === 0)) {
+          const nearWater =
+            getTile(map, tx + 1, ty) === TILE.WATER ||
+            getTile(map, tx - 1, ty) === TILE.WATER ||
+            getTile(map, tx, ty + 1) === TILE.WATER ||
+            getTile(map, tx, ty - 1) === TILE.WATER;
+          if (nearWater) {
+            const sr = new THREE.Mesh(shoreRockGeo, matRockCliff);
+            sr.position.set(wx + Math.sin(tx * 5) * 10, groundY + 1.5, wz + Math.cos(ty * 5) * 10);
+            sr.scale.set(1.2, 0.55, 1.0);
+            sr.rotation.y = tx + ty;
+            this.mapGroup.add(sr);
+          }
+        }
+
+        // Real 3D Arched Bridges spanning water channels!
+        if (t === TILE.ACCENT && hasWater) {
+          const waterNS = getTile(map, tx, ty - 1) === TILE.WATER || getTile(map, tx, ty + 1) === TILE.WATER;
+          const waterEW = getTile(map, tx - 1, ty) === TILE.WATER || getTile(map, tx + 1, ty) === TILE.WATER;
+          if (waterNS || waterEW) {
+            const deck = new THREE.Mesh(new THREE.BoxGeometry(TS + 2, 4.5, TS + 2), matBridgeWood);
+            deck.position.set(wx, groundY + 1.5, wz);
+            deck.receiveShadow = true;
+            this.mapGroup.add(deck);
+            if (waterNS) {
+              for (const dz of [-TS * 0.45, TS * 0.45]) {
+                const post = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.5, 15, 6), matBridgeWood);
+                post.position.set(wx, groundY + 8, wz + dz);
+                this.mapGroup.add(post);
+              }
+            }
+          }
+        }
+
+        if (t === TILE.WALL) {
+          const hash = (tx * 37 + ty * 17) & 31;
+          if (isTown) {
+            // Hyrule Castle Town Masonry Curtain Wall with Crenellations!
+            const wMesh = new THREE.Mesh(new THREE.BoxGeometry(TS + 1, 46, TS + 1), matWallStone);
+            wMesh.position.set(wx, groundY + 21, wz);
+            wMesh.castShadow = true;
+            wMesh.receiveShadow = true;
+            this.mapGroup.add(wMesh);
+            if ((tx + ty) % 2 === 0) {
+              const merlon = new THREE.Mesh(new THREE.BoxGeometry(TS * 0.55, 10, TS * 0.55), matWallStone);
+              merlon.position.set(wx, groundY + 48, wz);
+              this.mapGroup.add(merlon);
+            }
+          } else if (isRuinsStyle) {
+            // Ancient Weathered Fluted Columns, Ruined Plinths & Crumbled Masonry (NO square wall bricks!)
+            const isBorder = tx <= 3 || tx >= map.width - 4 || ty <= 3 || ty >= map.height - 4;
+            if (!isBorder || (tx + ty) % 2 === 0) {
+              const intact = hash % 3 !== 0;
+              const col = new THREE.Mesh(intact ? pillarGeo : brokenPillarGeo, matWallStone);
+              col.position.set(wx, groundY + (intact ? 26 : 14), wz);
+              col.rotation.y = hash * 0.35;
+              if (!intact) col.rotation.z = (hash % 2 === 0 ? 1 : -1) * 0.14;
+              col.castShadow = true;
+              col.receiveShadow = true;
+              this.mapGroup.add(col);
+              if (intact) {
+                const cap = new THREE.Mesh(new THREE.BoxGeometry(28, 6, 28), matWallStone);
+                cap.position.set(wx, groundY + 56, wz);
+                this.mapGroup.add(cap);
+              }
+            } else {
+              // Low weathered temple ruin wall slab
+              const slab = new THREE.Mesh(new THREE.DodecahedronGeometry(TS * 0.56, 0), matWallStone);
+              slab.scale.set(1.15, 0.85 + (hash % 5) * 0.14, 1.15);
+              slab.position.set(wx, groundY + 14, wz);
+              slab.rotation.y = hash * 0.5;
+              this.mapGroup.add(slab);
+            }
+          } else {
+            // Natural Sculpted Jagged Rock Cliffs & Moss-Capped Boulders (Forest / Cave / Magma!)
+            const hScale = 1.15 + (hash % 7) * 0.14;
+            const cliff = new THREE.Mesh(rockGeo, matRockCliff);
+            cliff.position.set(wx + Math.sin(hash) * 4, groundY + 18 * hScale, wz + Math.cos(hash) * 4);
+            cliff.scale.set(1.15 + (hash % 3) * 0.12, hScale * 1.25, 1.15 + ((hash + 1) % 3) * 0.12);
+            cliff.rotation.set((hash % 5) * 0.08, hash * 0.7, ((hash + 2) % 5) * 0.08);
+            cliff.castShadow = true;
+            cliff.receiveShadow = true;
+            this.mapGroup.add(cliff);
+
+            if (hash % 2 === 0) {
+              const cap = new THREE.Mesh(rockSubGeo, matMossCap);
+              cap.position.set(wx, groundY + 34 * hScale, wz);
+              cap.scale.set(1.2, 0.45, 1.2);
+              cap.rotation.y = hash;
+              this.mapGroup.add(cap);
+            }
+          }
+        } else if (t === TILE.CRACKED) {
+          // Natural Fissured Breakable Boulder glowing with golden cracks!
+          const boulder = new THREE.Mesh(rockGeo, matCracked);
+          boulder.position.set(wx, groundY + 22, wz);
+          boulder.scale.set(1.08, 1.18, 1.08);
+          boulder.rotation.y = tx * 0.9 + ty;
+          boulder.castShadow = true;
+          this.mapGroup.add(boulder);
         } else if (t === TILE.GATE || t === TILE.BOSS_GATE) {
-          const gMesh = new THREE.Mesh(gateGeo, t === TILE.BOSS_GATE ? matBossGate : matGate);
-          gMesh.position.set(wx, 22 + groundY, wz);
-          this.mapGroup.add(gMesh);
+          const isBoss = t === TILE.BOSS_GATE;
+          const barMat = isBoss ? matBossGateBar : matGateBar;
+          const veilMat = isBoss ? matBossGateVeil : matGateVeil;
+          const sameN = getTile(map, tx, ty - 1) === t;
+          const sameS = getTile(map, tx, ty + 1) === t;
+          const sameW = getTile(map, tx - 1, ty) === t;
+          const sameE = getTile(map, tx + 1, ty) === t;
+          const wallNS = getTile(map, tx, ty - 1) === TILE.WALL || getTile(map, tx, ty + 1) === TILE.WALL;
+          const runsNS = sameN || sameS || (!sameW && !sameE && wallNS);
+
+          const gGroup = new THREE.Group();
+          gGroup.position.set(wx, groundY, wz);
+          if (runsNS) gGroup.rotation.y = Math.PI * 0.5;
+
+          // 3 forged spear bars + pointed finials
+          for (const bx of [-15, 0, 15]) {
+            const bar = new THREE.Mesh(gateBarGeo, barMat);
+            bar.position.set(bx, 21, 0);
+            bar.castShadow = true;
+            const tip = new THREE.Mesh(gateTipGeo, barMat);
+            tip.position.set(bx, 45.5, 0);
+            gGroup.add(bar, tip);
+          }
+          // Twin horizontal iron crossbars
+          for (const by of [11, 32]) {
+            const cross = new THREE.Mesh(gateCrossGeo, barMat);
+            cross.position.set(0, by, 0);
+            gGroup.add(cross);
+          }
+          // Delicate translucent arcane seal veil
+          const veil = new THREE.Mesh(gateVeilGeo, veilMat);
+          veil.position.set(0, 20, 0);
+          gGroup.add(veil);
+
+          // Weathered stone gateposts at doorway ends
+          const hasLeftEdge = runsNS ? !sameN : !sameW;
+          const hasRightEdge = runsNS ? !sameS : !sameE;
+          if (hasLeftEdge) {
+            const lp = new THREE.Mesh(gatePlinthGeo, matWallStone);
+            lp.position.set(-TS * 0.48, 22, 0);
+            lp.castShadow = true;
+            gGroup.add(lp);
+          }
+          if (hasRightEdge) {
+            const rp = new THREE.Mesh(gatePlinthGeo, matWallStone);
+            rp.position.set(TS * 0.48, 22, 0);
+            rp.castShadow = true;
+            gGroup.add(rp);
+          }
+
+          this.mapGroup.add(gGroup);
         }
       }
     }
 
-    // Wind-Swaying Instanced Grass Blades (Up to 750 blades in a single draw call!)
+    // Castle Town Corner Watchtowers with Royal Blue Pitched Roofs!
+    if (isTown) {
+      const towerRoofMat = this.texBank.createToonMaterial({ color: 0x1d4ed8 }, '#fde68a');
+      const towerPositions = [
+        [2.5, 2.5], [31.5, 2.5], [2.5, 23.5], [31.5, 23.5],
+      ];
+      for (const [ttx, tty] of towerPositions) {
+        const txW = ttx * TS;
+        const tzW = tty * TS;
+        const tyH = getTerrainHeight(txW, tzW, 'town', map);
+        const body = new THREE.Mesh(new THREE.CylinderGeometry(28, 32, 86, 10), matWallStone);
+        body.position.set(txW, tyH + 40, tzW);
+        const roof = new THREE.Mesh(new THREE.ConeGeometry(38, 46, 10), towerRoofMat);
+        roof.position.set(txW, tyH + 104, tzW);
+        this.mapGroup.add(body, roof);
+      }
+    }
+
+    // ========================================================================
+    // 5. 360° DISTANT MOUNTAIN RANGE RING (BOTW HORIZON DEPTH!)
+    // ========================================================================
+    if (!map.meta.darkness) {
+      const mtnColor = map.areaId === 'magma' ? '#5c2317' : map.areaId === 'ruins' ? '#9e8462' : map.areaId === 'secret' ? '#4338ca' : '#4b7b9e';
+      const mtnMat = this.texBank.createToonMaterial({ color: mtnColor });
+      const snowMat = this.texBank.createToonMaterial({ color: '#e2e8f0' });
+      const cx = worldW * 0.5;
+      const cz = worldH * 0.5;
+      const baseDist = Math.max(worldW, worldH) * 0.72;
+      for (let i = 0; i < 24; i++) {
+        const ang = (i / 24) * Math.PI * 2;
+        const dist = baseDist + (i % 3) * 165;
+        const mh = 220 + (i % 5) * 85;
+        const mr = 175 + (i % 4) * 55;
+        const mMesh = new THREE.Mesh(new THREE.ConeGeometry(mr, mh, 6), mtnMat);
+        mMesh.position.set(cx + Math.cos(ang) * dist, mh * 0.36 - 35, cz + Math.sin(ang) * dist);
+        mMesh.rotation.y = i * 1.1;
+        this.mapGroup.add(mMesh);
+        if (mh > 340 && (map.areaId === 'town' || map.areaId === 'forest' || map.areaId === 'citadel')) {
+          const cap = new THREE.Mesh(new THREE.ConeGeometry(mr * 0.34, mh * 0.32, 6), snowMat);
+          cap.position.set(mMesh.position.x, mMesh.position.y + mh * 0.35, mMesh.position.z);
+          cap.rotation.y = mMesh.rotation.y;
+          this.mapGroup.add(cap);
+        }
+      }
+    }
+
+    // ========================================================================
+    // 6. WIND-SWAYING INSTANCED GRASS BLADES (UP TO 850 BLADES, 1 DRAW CALL!)
+    // ========================================================================
     if (grassCandidates.length > 0) {
-      const bladeCount = Math.min(750, grassCandidates.length * 2);
-      const bladeGeo = new THREE.ConeGeometry(1.4, 7.5, 3);
-      bladeGeo.translate(0, 3.75, 0);
-      const bladeMat = this.texBank.createToonMaterial({ color: map.areaId === 'ruins' ? '#a39068' : '#5da844' });
+      const bladeCount = Math.min(850, grassCandidates.length * 2);
+      const bladeGeo = new THREE.ConeGeometry(1.45, 8.2, 3);
+      bladeGeo.translate(0, 4.1, 0);
+      const bladeMat = this.texBank.createToonMaterial({ color: map.areaId === 'ruins' ? '#a89468' : '#58a63f' });
       this.grassInstancedMesh = new THREE.InstancedMesh(bladeGeo, bladeMat, bladeCount);
       for (let i = 0; i < bladeCount; i++) {
         const tile = grassCandidates[i % grassCandidates.length];
-        const gx = tile.x + (Math.sin(i * 19.3) * 0.42) * TS;
-        const gz = tile.z + (Math.cos(i * 27.7) * 0.42) * TS;
-        const gy = getTerrainHeight(gx, gz, map.areaId);
+        const gx = tile.x + (Math.sin(i * 19.3) * 0.45) * TS;
+        const gz = tile.z + (Math.cos(i * 27.7) * 0.45) * TS;
+        const gy = getTerrainHeight(gx, gz, map.areaId, map);
         this.grassPositions.push({ x: gx, y: gy, z: gz, phase: (i % 17) * 0.4 });
         this.grassDummy.position.set(gx, gy, gz);
-        this.grassDummy.scale.set(1, 0.85 + (i % 5) * 0.12, 1);
+        this.grassDummy.scale.set(1, 0.8 + (i % 5) * 0.14, 1);
         this.grassDummy.updateMatrix();
         this.grassInstancedMesh.setMatrixAt(i, this.grassDummy.matrix);
       }
       this.mapGroup.add(this.grassInstancedMesh);
     }
 
-    // 3D Props (Multi-Tiered Fantasy Trees with Roots, Warm Lantern Pillars & Star Monument)
-    const barkMat = this.texBank.createToonMaterial({ color: 0x4a3525 });
+    // ========================================================================
+    // 7. ORGANIC TWISTED BRANCHING TREES, GLOWING CAVERN CRYSTALS & LANDMARKS
+    // ========================================================================
+    const barkMat = this.texBank.createToonMaterial({ color: 0x523620 });
     const stoneBaseMat = this.texBank.createToonMaterial({ color: 0x78716c });
+    const leafMatA = this.texBank.createToonMaterial({ color: '#3b8232' }, '#bef264');
+    const leafMatB = this.texBank.createToonMaterial({ color: '#2f6e28' }, '#86efac');
+    let caveLightCount = 0;
+
     for (const pr of map.props) {
-      const py = getTerrainHeight(pr.x, pr.y, map.areaId);
+      const py = getTerrainHeight(pr.x, pr.y, map.areaId, map);
       if (pr.type === 'tree') {
         const treeGroup = new THREE.Group();
-        treeGroup.position.set(pr.x, py, pr.y);
-        // Root flare base
-        const rootBase = new THREE.Mesh(new THREE.CylinderGeometry(4.5, 8.5, 8, 7), barkMat);
-        rootBase.position.y = 4;
-        // Angled trunk
-        const trunk = new THREE.Mesh(new THREE.CylinderGeometry(3.2, 4.8, 22, 7), barkMat);
-        trunk.position.y = 14;
-        trunk.rotation.z = 0.06;
-        treeGroup.add(rootBase, trunk);
+        treeGroup.position.set(pr.x, py - 1, pr.y);
+        const sc = pr.scale || 1.05;
+        treeGroup.scale.setScalar(sc);
 
-        // Layered non-spherical foliage clusters
-        const leafMat = this.texBank.createToonMaterial({ color: '#3b8232' }, '#bef264');
-        const tiers = [
-          { y: 24, r: 18, h: 16, ox: 0, oz: 0 },
-          { y: 33, r: 14, h: 15, ox: 2, oz: -1 },
-          { y: 41, r: 9.5, h: 12, ox: -1, oz: 1 },
+        // Flared Root Base + Curved Twisted Trunk + 2 Forking Woody Branches!
+        const rootBase = new THREE.Mesh(new THREE.CylinderGeometry(4.8, 9.5, 10, 7), barkMat);
+        rootBase.position.y = 5;
+        const trunk = new THREE.Mesh(new THREE.CylinderGeometry(3.0, 5.2, 26, 7), barkMat);
+        trunk.position.set(1.2, 17, 0);
+        trunk.rotation.z = -0.09;
+        const b1 = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 2.8, 16, 6), barkMat);
+        b1.position.set(-6.5, 29, 2);
+        b1.rotation.z = 0.65;
+        const b2 = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 2.6, 15, 6), barkMat);
+        b2.position.set(7.2, 30, -2);
+        b2.rotation.z = -0.58;
+        treeGroup.add(rootBase, trunk, b1, b2);
+
+        // Soft Overlapping Organic Broadleaf Canopy Clusters (NO stiff stacked cones!)
+        const clusters = [
+          { x: 0, y: 40, z: 0, r: 16.5, sx: 1.25, sy: 0.78, mat: leafMatA },
+          { x: -11, y: 34, z: 4, r: 12.5, sx: 1.15, sy: 0.75, mat: leafMatB },
+          { x: 11, y: 35, z: -4, r: 13.0, sx: 1.15, sy: 0.78, mat: leafMatA },
+          { x: 2, y: 36, z: 10, r: 11.5, sx: 1.1, sy: 0.72, mat: leafMatB },
+          { x: -2, y: 47, z: -2, r: 10.5, sx: 1.1, sy: 0.82, mat: leafMatA },
         ];
-        for (const tr of tiers) {
-          const cone = new THREE.Mesh(new THREE.ConeGeometry(tr.r, tr.h, 7), leafMat);
-          cone.position.set(tr.ox, tr.y, tr.oz);
-          cone.castShadow = true;
-          treeGroup.add(cone);
+        for (const cl of clusters) {
+          const puff = new THREE.Mesh(new THREE.IcosahedronGeometry(cl.r, 1), cl.mat);
+          puff.position.set(cl.x, cl.y, cl.z);
+          puff.scale.set(cl.sx, cl.sy, cl.sx);
+          puff.castShadow = true;
+          treeGroup.add(puff);
         }
         this.mapGroup.add(treeGroup);
       } else if (pr.type === 'crystal' || pr.type === 'lamp') {
-        const plinth = new THREE.Mesh(new THREE.CylinderGeometry(8, 10, 6, 8), stoneBaseMat);
-        plinth.position.set(pr.x, py + 3, pr.y);
-        const cry = new THREE.Mesh(
-          new THREE.OctahedronGeometry(10, 0),
-          this.texBank.createToonMaterial({
-            color: pr.color || '#f59e0b',
-            emissive: new THREE.Color(pr.color || '#f59e0b'),
-            emissiveIntensity: 0.55,
-          })
-        );
-        cry.position.set(pr.x, py + 20, pr.y);
-        this.mapGroup.add(plinth, cry);
+        // Multi-Spire Luminous Cavern Crystal Cluster / Royal Town Street Lantern
+        const cg = new THREE.Group();
+        cg.position.set(pr.x, py, pr.y);
+        const plinth = new THREE.Mesh(new THREE.CylinderGeometry(7.5, 10, 6, 8), stoneBaseMat);
+        plinth.position.y = 3;
+        const cryMat = this.texBank.createToonMaterial({
+          color: pr.color || '#fbbf24',
+          emissive: new THREE.Color(pr.color || '#f59e0b'),
+          emissiveIntensity: 0.65,
+        }, '#fffbeb');
+        const mainSpire = new THREE.Mesh(new THREE.ConeGeometry(6.5, 24, 6), cryMat);
+        mainSpire.position.y = 16;
+        const sideSpire = new THREE.Mesh(new THREE.ConeGeometry(4.2, 15, 5), cryMat);
+        sideSpire.position.set(6.5, 10, 2);
+        sideSpire.rotation.z = -0.35;
+        cg.add(plinth, mainSpire, sideSpire);
+        this.mapGroup.add(cg);
+
+        // Add actual soft PointLight inside Cave so cavern walls & contours shine atmospherically!
+        if (map.areaId === 'cave' && caveLightCount < 6) {
+          const pl = new THREE.PointLight(pr.color || '#7dd3fc', 1.45, 340);
+          pl.position.set(pr.x, py + 28, pr.y);
+          this.mapGroup.add(pl);
+          caveLightCount += 1;
+        }
       } else if (pr.type === 'monument') {
-        const base = new THREE.Mesh(new THREE.CylinderGeometry(24, 28, 8, 8), stoneBaseMat);
+        const base = new THREE.Mesh(new THREE.CylinderGeometry(24, 29, 9, 8), stoneBaseMat);
         base.position.set(pr.x, py + 4, pr.y);
-        const mon = new THREE.Mesh(
-          new THREE.OctahedronGeometry(20, 0),
-          this.texBank.createToonMaterial({
-            color: 0x38bdf8,
-            emissive: new THREE.Color('#0284c7'),
-            emissiveIntensity: 0.55,
-          }, '#fef08a')
-        );
-        mon.position.set(pr.x, py + 34, pr.y);
+        const mon = this.rigFactory.createArcaneCrystalSpire('#38bdf8');
+        mon.scale.setScalar(1.45);
+        mon.position.set(pr.x, py + 36, pr.y);
         this.mapGroup.add(base, mon);
       }
     }
 
-    // Fantasy Town Buildings / Market Stalls behind Facility NPCs in Luminaria Town!
-    if (map.areaId === 'town') {
+    // Fantasy Town Market Stalls behind Facility NPCs in Luminaria Town!
+    if (isTown) {
       const roofColors = {
         town_gear: 0x1e40af,
         town_magic: 0x6b21a8,
@@ -1454,7 +2331,7 @@ export class Renderer {
       };
       for (const n of map.npcs) {
         if (!roofColors[n.npcId]) continue;
-        const by = getTerrainHeight(n.x, n.y, 'town');
+        const by = getTerrainHeight(n.x, n.y, 'town', map);
         const pavilion = this._createFantasyPavilion(roofColors[n.npcId]);
         const offsetZ = n.y < 12 * TS ? -26 : 26;
         pavilion.position.set(n.x, by, n.y + offsetZ);
@@ -1464,7 +2341,7 @@ export class Renderer {
 
     // 3D Treasure Chests grounded to terrain
     for (const ch of map.chests) {
-      const cy = getTerrainHeight(ch.x, ch.y, map.areaId);
+      const cy = getTerrainHeight(ch.x, ch.y, map.areaId, map);
       const rar = RARITY_INFO[ch.rarity] || RARITY_INFO.rare;
       const box = new THREE.Mesh(
         new THREE.BoxGeometry(24, 16, 18),
@@ -1480,45 +2357,45 @@ export class Renderer {
       this.chestMeshes.set(ch.id, box);
     }
 
-    // 3D Stone Arch Portals grounded to terrain
+    // 3D Ancient Stone Waygate Portals grounded to terrain
     for (const pt of map.portals) {
-      const py = getTerrainHeight(pt.x, pt.y, map.areaId);
+      const py = getTerrainHeight(pt.x, pt.y, map.areaId, map);
       const portalGroup = new THREE.Group();
       portalGroup.position.set(pt.x, py, pt.y);
-      const base = new THREE.Mesh(new THREE.CylinderGeometry(24, 26, 4, 16), stoneBaseMat);
-      base.position.y = 2;
-      const torus = new THREE.Mesh(
-        new THREE.TorusGeometry(20, 2.2, 8, 24),
-        new THREE.MeshBasicMaterial({ color: pt.color || '#38bdf8' })
+      const base = new THREE.Mesh(new THREE.CylinderGeometry(24, 27, 4.5, 16), stoneBaseMat);
+      base.position.y = 2.2;
+      const runeTex = this.texBank.getMagicCircleTexture(pt.color || '#fbbf24');
+      const runeDisc = new THREE.Mesh(
+        new THREE.PlaneGeometry(46, 46),
+        new THREE.MeshBasicMaterial({ map: runeTex, transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide })
       );
-      torus.rotation.x = Math.PI / 2;
-      torus.position.y = 4.5;
-      portalGroup.add(base, torus);
+      runeDisc.rotation.x = -Math.PI / 2;
+      runeDisc.position.y = 5.2;
+      portalGroup.add(base, runeDisc);
       this.mapGroup.add(portalGroup);
       this.portalMeshes.set(pt.id, portalGroup);
     }
 
-    // 3D NPCs grounded to terrain
+    // 3D Living NPCs grounded to terrain with role-specific fantasy props!
     for (const n of map.npcs) {
       const def = NPCS[n.npcId];
       if (!def) continue;
-      const ny = getTerrainHeight(n.x, n.y, map.areaId);
+      const ny = getTerrainHeight(n.x, n.y, map.areaId, map);
       let mesh;
       if (def.bodyType === 'device') {
         mesh = new THREE.Group();
         const ped = new THREE.Mesh(new THREE.CylinderGeometry(12, 15, 10, 8), stoneBaseMat);
         ped.position.y = 5;
-        const slate = new THREE.Mesh(
-          new THREE.OctahedronGeometry(11, 0),
-          this.texBank.createToonMaterial({ color: 0x38bdf8, emissive: new THREE.Color('#0284c7'), emissiveIntensity: 0.6 })
-        );
-        slate.position.y = 22;
+        const slate = this.rigFactory.createArcaneCrystalSpire('#38bdf8');
+        slate.scale.setScalar(0.8);
+        slate.position.y = 26;
         mesh.add(ped, slate);
         mesh.position.set(n.x, ny, n.y);
       } else {
+        const npcWeapon = def.role === 'shop_gear' || def.role === 'talk' ? 'blade' : def.role === 'blacksmith' ? 'dagger' : 'wand';
         mesh = this.rigFactory.createHumanoidRig({
           id: def.id,
-          jobId: 'knight',
+          jobId: def.role === 'shop_magic' ? 'mage' : 'knight',
           bodyType: def.bodyType || 'male',
           color: def.color,
           accent: '#f59e0b',
@@ -1527,7 +2404,7 @@ export class Renderer {
           hairColor: def.hairColor || '#e5b869',
           eyeColor: def.color,
           skinTone: '#f6d5b8',
-          weaponType: 'wand',
+          weaponType: npcWeapon,
           weaponColor: def.color,
         });
         mesh.position.set(n.x, ny, n.y);
@@ -1594,9 +2471,9 @@ export class Renderer {
       return;
     }
     rig.rotation.z = 0;
-    const bob = isMoving ? Math.abs(Math.sin(phase)) * 2.4 : Math.sin(this.time * 3.0) * 0.8;
+    const bob = isMoving ? Math.abs(Math.sin(phase)) * 2.5 : Math.sin(this.time * 2.8 + phase * 0.1) * 0.85;
     u.body.position.y = 20 + bob + zHeight;
-    u.body.rotation.x = isMoving ? 0.14 : 0; // Forward heroic sprint lean!
+    u.body.rotation.x = isMoving ? 0.16 : 0; // Forward heroic sprint lean!
 
     // Toggle weapon & shield between hand (combat) and back sheath (exploration)
     if (u.weaponHand && u.backGear) {
@@ -1606,19 +2483,37 @@ export class Renderer {
     }
 
     if (u.capeMesh) {
-      u.capeMesh.rotation.x = (isMoving ? 0.45 : 0.16) + Math.sin(phase * 1.5) * 0.12;
+      u.capeMesh.rotation.x = (isMoving ? 0.48 : 0.16) + Math.sin(phase * 1.5 + this.time * 2.4) * 0.12;
     }
 
     if (isMoving) {
-      u.leftLeg.rotation.x = Math.sin(phase) * 0.72;
-      u.rightLeg.rotation.x = -Math.sin(phase) * 0.72;
-      u.leftArm.rotation.x = -Math.sin(phase) * 0.52;
-      u.rightArm.rotation.x = Math.sin(phase) * 0.52;
+      const s = Math.sin(phase);
+      u.leftLeg.rotation.x = s * 0.72;
+      u.rightLeg.rotation.x = -s * 0.72;
+      if (u.lShin && u.rShin) {
+        u.lShin.rotation.x = Math.max(0, -s * 0.65);
+        u.rShin.rotation.x = Math.max(0, s * 0.65);
+      }
+      u.leftArm.rotation.x = -s * 0.56;
+      u.rightArm.rotation.x = s * 0.56;
+      if (u.lForeArm && u.rForeArm) {
+        u.lForeArm.rotation.x = -0.35 - Math.abs(s) * 0.35;
+        u.rForeArm.rotation.x = -0.45 - Math.abs(s) * 0.35;
+      }
     } else {
+      const breath = Math.sin(this.time * 2.6 + phase * 0.15);
       u.leftLeg.rotation.x = 0;
       u.rightLeg.rotation.x = 0;
-      u.leftArm.rotation.x = 0;
-      u.rightArm.rotation.x = 0;
+      if (u.lShin && u.rShin) {
+        u.lShin.rotation.x = 0.06;
+        u.rShin.rotation.x = 0.06;
+      }
+      u.leftArm.rotation.x = breath * 0.06;
+      u.rightArm.rotation.x = -breath * 0.06;
+      if (u.lForeArm && u.rForeArm) {
+        u.lForeArm.rotation.x = -0.26 + breath * 0.05;
+        u.rForeArm.rotation.x = weaponDrawn ? -0.52 : -0.26 - breath * 0.05;
+      }
     }
   }
 
@@ -1694,6 +2589,13 @@ export class Renderer {
       c.mesh.position.z = Math.sin(c.angle) * c.dist;
     }
 
+    // Gentle shimmering water tide animation
+    if (this.waterMeshes && this.waterMeshes.length > 0) {
+      for (const wm of this.waterMeshes) {
+        wm.position.y = -4.6 + Math.sin(this.time * 2.2) * 0.45;
+      }
+    }
+
     // Wind-swaying grass animation
     if (this.grassInstancedMesh && this.grassPositions.length > 0) {
       const len = this.grassPositions.length;
@@ -1708,7 +2610,6 @@ export class Renderer {
     }
 
     if (cam.mode === 'fps') {
-      // First-Person View: Hide player head, show weapon in hand, look forward along facing/yaw
       if (this.playerRig && this.playerRig.userData.headGroup) {
         this.playerRig.userData.headGroup.visible = false;
       }
@@ -1725,7 +2626,6 @@ export class Renderer {
         p.y + Math.sin(lookYaw) * 180
       );
     } else {
-      // Over-the-Shoulder TPS Orbit Camera ('tps' or 'action') with Terrain & Wall Collision Clamping!
       if (this.playerRig && this.playerRig.userData.headGroup) {
         this.playerRig.userData.headGroup.visible = true;
       }
@@ -1733,7 +2633,6 @@ export class Renderer {
       const pitch = cam.pitch;
       const yaw = cam.yaw;
 
-      // Check wall collisions along ray from player to camera so camera never clips inside walls!
       let safeDist = baseDist;
       const backDirX = -Math.cos(yaw) * Math.cos(pitch);
       const backDirZ = -Math.sin(yaw) * Math.cos(pitch);
@@ -1754,7 +2653,6 @@ export class Renderer {
 
       this.camera3D.position.set(camWX, camWY, camWZ);
 
-      // Look slightly ahead of player (or midpoint toward Z-Targeted enemy!)
       let lookX = cam.x + Math.cos(yaw) * 32;
       let lookZ = cam.y + Math.sin(yaw) * 32;
       let lookY = playerGroundY + 26;
@@ -1794,32 +2692,49 @@ export class Renderer {
     const pGroundY = getTerrainHeight(p.x, p.y, areaId);
     this.playerRig.position.set(p.x, pGroundY, p.y);
     this.playerRig.rotation.y = Math.PI * 0.5 - p.facing;
+
+    // Visible Damage Invulnerability Frames (i-frames) blinking feedback!
+    if (p.damageBlinkTimer > 0) {
+      this.playerRig.visible = Math.floor(this.time * 18) % 2 === 0;
+    } else {
+      this.playerRig.visible = true;
+    }
+
     const isMoving = Math.hypot(p.vx, p.vy) > 5;
     const weaponDrawn = p.weaponDrawnTimer > 0 || p.guarding || !game.map.meta.safe;
     this._animateHumanoidRig(this.playerRig, p.walkPhase, isMoving, p.downed, weaponDrawn, p.zHeight || 0);
 
-    // 3-Step Combo Swing & Guard Pose Animation
+    // Expressive 3-Step Combo Swing & Guard Pose Kinematics
     const u = this.playerRig.userData;
     if (p.guarding) {
-      u.leftArm.rotation.x = -1.1;
-      u.leftArm.rotation.y = 0.65;
+      u.leftArm.rotation.x = -1.15;
+      u.leftArm.rotation.y = 0.72;
+      if (u.lForeArm) u.lForeArm.rotation.x = -0.65;
     } else {
       u.leftArm.rotation.y = 0;
     }
     if (p.attackAnimTimer > 0) {
       const prog = 1 - p.attackAnimTimer / 0.28;
       if (p.comboStep === 1) {
-        u.rightArm.rotation.x = -1.2;
-        u.rightArm.rotation.z = -0.9 + prog * 1.8;
-        u.body.rotation.y = (0.5 - prog) * 0.6;
+        // Step 1: Wide Right-to-Left Horizontal Sweep with Torso Twist!
+        u.rightArm.rotation.x = -1.35;
+        u.rightArm.rotation.z = -1.1 + prog * 2.2;
+        if (u.rForeArm) u.rForeArm.rotation.x = -0.25;
+        u.body.rotation.y = (0.5 - prog) * 0.95;
+        u.body.rotation.x = 0.26;
       } else if (p.comboStep === 2) {
-        u.rightArm.rotation.x = -0.4 - prog * 1.4;
-        u.rightArm.rotation.z = 0.8 - prog * 1.6;
-        u.body.rotation.y = (prog - 0.5) * 0.6;
+        // Step 2: Diagonal Left-to-Right Upward Rising Slash!
+        u.rightArm.rotation.x = -0.25 - prog * 1.85;
+        u.rightArm.rotation.z = 0.95 - prog * 1.9;
+        if (u.rForeArm) u.rForeArm.rotation.x = -0.15;
+        u.body.rotation.y = (prog - 0.5) * 0.95;
+        u.body.rotation.x = 0.14 - prog * 0.22;
       } else {
-        // 3rd Hit 360 Spin Slash!
-        u.rightArm.rotation.x = -1.4;
+        // Step 3: Leaping 360° Spin Cleave / Helm Breaker Finisher!
+        u.rightArm.rotation.x = -1.55;
+        u.rightArm.rotation.z = -0.45;
         u.body.rotation.y = prog * Math.PI * 2;
+        u.body.rotation.x = 0.28;
       }
     } else {
       u.rightArm.rotation.z = 0;
@@ -1835,18 +2750,26 @@ export class Renderer {
       aura.material.opacity = 0;
     }
 
-    // 2. Ancient Spirit Guardian Orb (Support Drone)
+    // 2. Ancient Spirit Guardian Orb
     const dGroundY = getTerrainHeight(p.drone.x, p.drone.y, areaId);
     this.droneMesh.position.set(p.drone.x, dGroundY + 34 + Math.sin(this.time * 4) * 3.5, p.drone.y);
     this.droneMesh.rotation.y = this.time * 2.5;
 
-    // 3. NPCs grounded idle animation
+    // 3. Living NPCs (Breathing, Gentle Arm Sway, Carried Props & Turning Gaze toward Hero!)
     for (const n of game.map.npcs) {
       const m = this.npcMeshes.get(n.npcId);
       if (m && m.userData && m.userData.body) {
-        this._animateHumanoidRig(m, this.time * 2 + n.x, false, false, false, 0);
+        this._animateHumanoidRig(m, n.x * 0.15, false, false, true, 0);
+        const distToHero = Math.hypot(p.x - n.x, p.y - n.y);
+        if (distToHero < 210) {
+          const targetRot = Math.PI * 0.5 - Math.atan2(p.y - n.y, p.x - n.x);
+          let diff = targetRot - m.rotation.y;
+          while (diff > Math.PI) diff -= Math.PI * 2;
+          while (diff < -Math.PI) diff += Math.PI * 2;
+          m.rotation.y += diff * 0.08;
+        }
       } else if (m) {
-        m.rotation.y = this.time * 1.5;
+        m.rotation.y = this.time * 1.4;
       }
     }
 
@@ -1912,7 +2835,7 @@ export class Renderer {
       }
     }
 
-    // 6. Boss & Guardian Crystals grounded to terrain
+    // 6. Bespoke Sculpted 3D Bosses & Floating Arcane Crystal Spires
     if (game.boss && game.boss.alive) {
       const b = game.boss;
       if (!this.bossRig || this.bossRigId !== b.id) {
@@ -1925,9 +2848,33 @@ export class Renderer {
       this.bossRig.visible = true;
       this.bossRig.position.set(b.x, by, b.y);
       this.bossRig.rotation.y = Math.PI * 0.5 - b.facing;
-      this.bossRig.userData.haloMesh.rotation.z = this.time * (b.phase === 2 ? 3.2 : 1.4);
-      this.bossRig.userData.shieldMesh.visible = b.isShielded();
-      this.bossRig.userData.coreMat.emissive.set(b.hitFlash > 0 ? '#ffffff' : b.phase === 2 ? '#dc2626' : '#000000');
+
+      const bu = this.bossRig.userData;
+      bu.haloMesh.rotation.z = this.time * (b.phase === 2 ? 1.8 : 0.85);
+      bu.shieldMesh.visible = b.isShielded();
+      bu.coreMat.emissive.set(b.hitFlash > 0 ? '#ffffff' : b.parryBreakTimer > 0 ? '#eab308' : b.phase === 2 ? '#991b1b' : '#000000');
+
+      // Living Bespoke Boss Kinematics (Dragon Wing Flap, Tail Undulation, Treant Arms, Sovereign Greatsword!)
+      const ap = bu.animParts;
+      if (ap) {
+        const beat = this.time * (b.phase === 2 ? 4.8 : 3.0);
+        bu.coreMesh.position.y = Math.sin(beat) * 3.5;
+        for (const w of ap.wings) {
+          w.mesh.rotation.z = Math.sin(beat + (w.idx || 0) * 0.5) * 0.36 * w.dir;
+        }
+        for (const arm of ap.arms) {
+          arm.mesh.rotation.x = Math.sin(beat * 0.9 + arm.dir) * 0.42;
+        }
+        for (const seg of ap.tailSegs) {
+          seg.mesh.position.x = Math.sin(beat - seg.idx * 0.65) * (4 + seg.idx * 2.5);
+        }
+        if (ap.neck) {
+          ap.neck.rotation.x = Math.sin(beat * 0.8) * 0.14;
+        }
+        if (ap.weaponArm) {
+          ap.weaponArm.rotation.x = -0.35 + Math.sin(beat * 1.1) * 0.55;
+        }
+      }
 
       const liveCrystals = new Set();
       for (const c of b.crystals) {
@@ -1935,16 +2882,15 @@ export class Renderer {
         liveCrystals.add(c.id);
         let cMesh = this.crystalMeshes.get(c.id);
         if (!cMesh) {
-          cMesh = new THREE.Mesh(
-            new THREE.OctahedronGeometry(15, 0),
-            this.texBank.createToonMaterial({ color: 0x38bdf8, emissive: new THREE.Color('#0284c7'), emissiveIntensity: 0.65 })
-          );
+          cMesh = this.rigFactory.createArcaneCrystalSpire(b.def.accent || '#38bdf8');
           this.crystalMeshes.set(c.id, cMesh);
           this.entityGroup.add(cMesh);
         }
         const cy = getTerrainHeight(c.x, c.y, areaId);
-        cMesh.position.set(c.x, cy + 22 + Math.sin(this.time * 4 + c.orbitAngle) * 4, c.y);
-        cMesh.rotation.y = this.time * 2.4;
+        cMesh.position.set(c.x, cy + 28 + Math.sin(this.time * 3.8 + c.orbitAngle) * 4.5, c.y);
+        cMesh.rotation.y = this.time * 1.8;
+        if (cMesh.userData.ring1) cMesh.userData.ring1.rotation.z = this.time * 2.6;
+        if (cMesh.userData.ring2) cMesh.userData.ring2.rotation.x = -this.time * 2.1;
       }
       for (const [cid, mesh] of this.crystalMeshes.entries()) {
         if (!liveCrystals.has(cid)) {
@@ -2220,16 +3166,16 @@ export class Renderer {
 
     for (const t of game.damageTexts) {
       const ratio = Math.max(0, t.life / t.maxLife);
-      const ty = getTerrainHeight(t.x, t.y, areaId) + 32 + (1 - ratio) * 28;
+      const ty = getTerrainHeight(t.x, t.y, areaId) + 46 + (1 - ratio) * 34;
       const sc = this.worldToScreen(t.x, ty, t.y);
       if (sc.behind) continue;
       ctx.save();
       ctx.globalAlpha = Math.min(1, ratio * 1.4);
-      const size = Math.round(15 * (t.scale || 1));
+      const size = Math.min(20, Math.round(13.5 * (t.scale || 1)));
       ctx.font = `900 ${size}px ui-monospace, "Hiragino Kaku Gothic ProN", sans-serif`;
       ctx.textAlign = 'center';
-      ctx.strokeStyle = 'rgba(15, 23, 42, 0.9)';
-      ctx.lineWidth = 4;
+      ctx.strokeStyle = 'rgba(15, 23, 42, 0.88)';
+      ctx.lineWidth = 3.5;
       ctx.strokeText(t.text, sc.x, sc.y);
       ctx.fillStyle = t.color;
       ctx.fillText(t.text, sc.x, sc.y);
@@ -2265,19 +3211,20 @@ export class Renderer {
 
     lctx.globalCompositeOperation = 'source-over';
     lctx.clearRect(0, 0, lc.width, lc.height);
-    lctx.fillStyle = 'rgba(4, 9, 20, 0.85)';
+    // Atmospheric blue-tinted cavern dusk so cliffs, ridges & stairs remain readable!
+    lctx.fillStyle = 'rgba(10, 20, 42, 0.56)';
     lctx.fillRect(0, 0, lc.width, lc.height);
 
     lctx.globalCompositeOperation = 'destination-out';
     const punchLight = (wx, wy, radius) => {
-      const sc = this.worldToScreen(wx, 14, wy);
+      const sc = this.worldToScreen(wx, 18, wy);
       if (sc.behind) return;
       const lx = sc.x * sx;
       const ly = sc.y * sy;
-      const lr = radius * sx * 0.95;
-      const g = lctx.createRadialGradient(lx, ly, lr * 0.14, lx, ly, lr);
+      const lr = radius * sx * 1.15;
+      const g = lctx.createRadialGradient(lx, ly, lr * 0.16, lx, ly, lr);
       g.addColorStop(0, 'rgba(0,0,0,1)');
-      g.addColorStop(0.6, 'rgba(0,0,0,0.72)');
+      g.addColorStop(0.65, 'rgba(0,0,0,0.75)');
       g.addColorStop(1, 'rgba(0,0,0,0)');
       lctx.fillStyle = g;
       lctx.beginPath();
@@ -2285,10 +3232,10 @@ export class Renderer {
       lctx.fill();
     };
 
-    punchLight(game.player.x, game.player.y, 260);
-    punchLight(game.player.drone.x, game.player.drone.y, 130);
-    for (const l of game.map.lights) punchLight(l.x, l.y, l.radius);
-    if (game.boss && game.boss.alive) punchLight(game.boss.x, game.boss.y, 230);
+    punchLight(game.player.x, game.player.y, 320);
+    punchLight(game.player.drone.x, game.player.drone.y, 170);
+    for (const l of game.map.lights) punchLight(l.x, l.y, l.radius * 1.2);
+    if (game.boss && game.boss.alive) punchLight(game.boss.x, game.boss.y, 290);
 
     ctx.drawImage(lc, 0, 0, this.width, this.height);
   }

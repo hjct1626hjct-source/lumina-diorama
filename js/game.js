@@ -534,6 +534,7 @@ export class Game {
     if (triggerEnemy) {
       p.flurryRushTimer = 2.6;
       p.flurryTarget = triggerEnemy;
+      p.invulnTimer = Math.max(p.invulnTimer, 1.25); // Full invulnerability during Flurry Rush window!
       this.lockTarget = triggerEnemy;
       this.triggerSlowMo(1.1, 0.28);
       this.triggerFlash('#38bdf8', 0.38);
@@ -554,6 +555,7 @@ export class Game {
 
     // Auto-face Z-Targeted enemy or Flurry Rush target
     if (p.flurryRushTimer > 0 && p.flurryTarget && (p.flurryTarget.alive || p.flurryTarget.hp > 0)) {
+      p.invulnTimer = Math.max(p.invulnTimer, 0.45);
       const t = p.flurryTarget;
       const dist = Math.hypot(t.x - p.x, t.y - p.y);
       const ang = Math.atan2(t.y - p.y, t.x - p.x);
@@ -877,9 +879,9 @@ export class Game {
       this.audio.playSe('buff');
       const dur = sp.basePower + (lv - 1) * 3;
       p.statuses.overclock = Math.max(p.statuses.overclock, dur);
-      this.spawnDamageText(p.x, p.y - 28, 'OVERCLOCK!', '#38f8d4', 1.25);
-      this.spawnRing(p.x, p.y, '#38f8d4', 18, 220, 0.45);
-      this.spawnBurst(p.x, p.y, '#38f8d4', 20, 180);
+      this.spawnDamageText(p.x, p.y - 28, '⚔ ブレイブオーラ!', '#fbbf24', 1.2);
+      this.spawnRing(p.x, p.y, '#fbbf24', 18, 220, 0.45);
+      this.spawnBurst(p.x, p.y, '#fef08a', 20, 180);
       this.network.broadcast({ type: 'aoe_buff', areaId: this.currentAreaId, x: p.x, y: p.y, duration: dur });
     }
   }
@@ -1187,10 +1189,11 @@ export class Game {
     if (this.portalCooldown > 0) return;
     if (this.isPortalLocked(pt)) {
       this.audio.playSe('hurt');
+      this.portalCooldown = 1.1;
       if (pt.requiresBoss) {
         this.addToast('🔒 このエリアのボスを撃破すると次のゲートが開きます！');
       } else if (pt.requiresClear) {
-        this.addToast('🔒 機械魔王オメガノヴァ撃破後に「エンドレス試練の塔」が解放されます！');
+        this.addToast('🔒 厄災魔導王オメガノヴァ撃破後に「剣の試練・無限の塔」が解放されます！');
       } else if (pt.requiresSecret) {
         this.addToast('🔒 ボス3体撃破 または 隠し壁2箇所破壊で裏ボス神殿が解放されます！');
       }
@@ -1208,7 +1211,7 @@ export class Game {
   }
 
   // ==========================================================================
-  // PLAYER DAMAGE, GUARD / PERFECT PARRY, DOWNED RESCUE & DEATH PENALTY
+  // PLAYER DAMAGE, GUARD / PERFECT PARRY, GUARANTEED I-FRAMES & DEATH PENALTY
   // ==========================================================================
   damageLocalPlayer(rawAtk, statusOnHit, srcX, srcY, sourceEntity = null) {
     const p = this.player;
@@ -1217,8 +1220,8 @@ export class Game {
     // 1. Check Perfect Parry (Zelda-style Just Guard within 280ms window!)
     if (p.parryWindow > 0) {
       p.parryWindow = 0;
-      p.parryFlashTimer = 0.45;
-      p.invulnTimer = 0.85;
+      p.parryFlashTimer = 0.48;
+      p.invulnTimer = 1.05; // Full invulnerability during Parry counter!
       p.addLimit(18);
       this.triggerHitstop(0.06);
       this.triggerSlowMo(0.42, 0.3);
@@ -1234,7 +1237,6 @@ export class Game {
         sourceEntity.applyParryBreak(3.5);
         this.spawnDamageText(sourceEntity.x, sourceEntity.y - 30, '⚡ BREAK!! (被ダメ1.5倍)', '#fde047', 1.25);
       } else {
-        // Stagger any nearby enemies within 130px
         for (const e of this.enemies) {
           if (e.alive && Math.hypot(e.x - p.x, e.y - p.y) < 140) {
             e.applyParryBreak(3.5);
@@ -1247,24 +1249,26 @@ export class Game {
       return;
     }
 
-    // 2. Check Standard Shield / Magic Barrier Guard
+    // 2. Check Standard Shield / Magic Barrier Guard (Massive Damage Reduction + Guard i-frames)
     const st = p.getStats();
     if (p.guarding && p.stamina >= 12) {
-      p.stamina = Math.max(0, p.stamina - 16);
+      p.stamina = Math.max(0, p.stamina - 15);
       p.staminaDisplayAlpha = 1;
-      const blockedDmg = Math.max(1, Math.round((rawAtk - st.def * 0.65) * 0.22));
+      const blockedDmg = Math.max(1, Math.round((rawAtk - st.def * 0.65) * 0.15));
       p.hp = Math.max(1, p.hp - blockedDmg);
-      p.invulnTimer = 0.38;
+      p.invulnTimer = 0.5;
       this.audio.playSe('hit');
       this.spawnRing(p.x, p.y, '#38bdf8', 12, 46, 0.22);
       this.spawnDamageText(p.x, p.y - 26, `🛡 GUARD -${blockedDmg}`, '#93c5fd', 0.98);
       return;
     }
 
+    // 3. Standard Hit Taken -> Guaranteed 0.95s Invulnerability Frames + Visible Blink!
     const dmg = Math.max(2, Math.round(rawAtk - st.def * 0.55));
     p.hp = Math.max(0, p.hp - dmg);
-    p.invulnTimer = 0.62;
-    p.hitFlash = 0.16;
+    p.invulnTimer = 0.95;
+    p.damageBlinkTimer = 0.95;
+    p.hitFlash = 0.22;
     p.addLimit(7);
 
     this.spawnDamageText(p.x, p.y - 26, `-${dmg}`, '#fb7185', 1.15);

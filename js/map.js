@@ -113,7 +113,7 @@ function applyPersistentState(map, progress) {
 }
 
 // ============================================================================
-// AREA 0: 拠点ネオンタウン (NEON LUMINA TOWN)
+// AREA 0: 王都ルミナリア城下町 (KINGDOM OF LUMINARIA)
 // ============================================================================
 function buildTown(progress) {
   const map = createBaseMap('town', 34, 26);
@@ -213,7 +213,7 @@ function buildTown(progress) {
 }
 
 // ============================================================================
-// AREA 1: 翠光のジオラマ樹海 (VERDANT LUMINA FOREST)
+// AREA 1: 風のフィローネ大草原＆聖樹の森 (VERDANT HIGHLANDS & GREAT WOODS)
 // ============================================================================
 function buildForest(progress) {
   const map = createBaseMap('forest', 46, 32);
@@ -303,8 +303,8 @@ function buildForest(progress) {
 
   // Portals
   map.portals.push(
-    { id: 'pt_forest_town', ...tCenter(4, 15.5), targetArea: 'town', label: '拠点ネオンタウンへ', color: '#38f8d4' },
-    { id: 'pt_forest_cave', ...tCenter(41, 15.5), targetArea: 'cave', label: '2. 暗闇のクリスタル洞窟へ', color: '#38bdf8', requiresBoss: 'boss_sylvarion' }
+    { id: 'pt_forest_town', ...tCenter(4, 15.5), targetArea: 'town', label: '王都ルミナリア城下町へ', color: '#fbbf24' },
+    { id: 'pt_forest_cave', ...tCenter(41, 15.5), targetArea: 'cave', label: '2. 暗闇の氷晶鍾乳洞へ', color: '#38bdf8', requiresBoss: 'boss_sylvarion' }
   );
 
   // Boss Arena
@@ -323,7 +323,7 @@ function buildForest(progress) {
 }
 
 // ============================================================================
-// AREA 2: 暗闇のクリスタル洞窟 (OBSIDIAN CRYSTAL CAVERN — Dynamic Darkness!)
+// AREA 2: 暗闇の氷晶鍾乳洞 (OBSIDIAN FROST CAVERN — Dynamic Cavern Lights!)
 // ============================================================================
 function buildCave(progress) {
   const map = createBaseMap('cave', 46, 32);
@@ -341,7 +341,7 @@ function buildCave(progress) {
   fillRect(map, 18, 22, 5, 2, TILE.DAMAGE);
   fillRect(map, 20, 9, 4, 2, TILE.DAMAGE);
 
-  // Energy Gate to Boss Sector
+  // Arcane Seal Gate to Boss Sector
   const gateTiles = [
     { tx: 27, ty: 15 }, { tx: 28, ty: 15 },
     { tx: 27, ty: 16 }, { tx: 28, ty: 16 },
@@ -362,14 +362,14 @@ function buildCave(progress) {
   fillRect(map, 31, 7, 11, 18, TILE.BOSS_FLOOR);
   const bossGateTiles = [{ tx: 29, ty: 15 }, { tx: 29, ty: 16 }];
 
-  // Ambient Luminous Crystal Torches punching soft pools of light in Darkness!
+  // Ambient Luminous Crystal Torches & Glowing Moss pools illuminating cavern cliffs!
   const crystalLights = [
-    [6, 15], [11, 19], [18, 7], [24, 6], [19, 19], [24, 25], [35, 11], [35, 20], [40, 15],
+    [6, 15], [11, 19], [10, 9], [18, 7], [24, 6], [19, 19], [24, 25], [25, 15], [35, 11], [35, 20], [40, 15],
   ];
   for (const [lx, ly] of crystalLights) {
     const pos = tCenter(lx, ly);
-    map.lights.push({ x: pos.x, y: pos.y, radius: 168, color: '#38bdf8' });
-    map.props.push({ type: 'crystal', x: pos.x, y: pos.y, color: '#38bdf8', scale: 1.0 });
+    map.lights.push({ x: pos.x, y: pos.y, radius: 220, color: '#7dd3fc' });
+    map.props.push({ type: 'crystal', x: pos.x, y: pos.y, color: '#7dd3fc', scale: 1.15 });
   }
 
   // NPC Miner
@@ -387,7 +387,7 @@ function buildCave(progress) {
   // Mystic Shrine
   map.shrines.push({ id: 'shrine_cave', ...tCenter(23, 26), used: false });
 
-  // Moving Plasma Saw Trap
+  // Moving Arcane Saw Trap
   map.traps.push({
     id: 'trap_cave_1',
     ...tCenter(17, 19),
@@ -426,8 +426,8 @@ function buildCave(progress) {
 
   // Portals
   map.portals.push(
-    { id: 'pt_cave_forest', ...tCenter(4, 15.5), targetArea: 'forest', label: '1. 翠光のジオラマ樹海へ', color: '#34d399' },
-    { id: 'pt_cave_ruins', ...tCenter(41, 15.5), targetArea: 'ruins', label: '3. 古代サイバー機工遺跡へ', color: '#22d3ee', requiresBoss: 'boss_crystalion' }
+    { id: 'pt_cave_forest', ...tCenter(4, 15.5), targetArea: 'forest', label: '1. 風のフィローネ樹海へ', color: '#34d399' },
+    { id: 'pt_cave_ruins', ...tCenter(41, 15.5), targetArea: 'ruins', label: '3. 古代魔導遺跡・深部へ', color: '#f59e0b', requiresBoss: 'boss_crystalion' }
   );
 
   map.bossArena = {
@@ -445,14 +445,14 @@ function buildCave(progress) {
 }
 
 // ============================================================================
-// AREA 3: 古代サイバー機工遺跡 (ANCIENT CYBER RUINS)
+// AREA 3: 黄昏の古代石造神殿遺跡 (ANCIENT STONE TEMPLE RUINS)
 // ============================================================================
 function buildRuins(progress) {
   const map = createBaseMap('ruins', 48, 34);
   fillRect(map, 2, 2, 44, 30, TILE.FLOOR);
   borderRect(map, 2, 2, 44, 30, TILE.WALL);
 
-  // Geometric Cyber Circuit Walkways
+  // Ancient Flagstone Temple Walkways
   fillRect(map, 4, 16, 26, 2, TILE.ACCENT);
   fillRect(map, 14, 5, 2, 24, TILE.ACCENT);
   fillRect(map, 23, 5, 2, 24, TILE.ACCENT);
@@ -552,9 +552,9 @@ function buildRuins(progress) {
 
   // Portals (including Secret Boss Portal hidden inside cracked wall vault!)
   map.portals.push(
-    { id: 'pt_ruins_cave', ...tCenter(4, 16.5), targetArea: 'cave', label: '2. 暗闇のクリスタル洞窟へ', color: '#38bdf8' },
-    { id: 'pt_ruins_magma', ...tCenter(43, 16.5), targetArea: 'magma', label: '4. 灼熱のマグマリアクターへ', color: '#fb923c', requiresBoss: 'boss_chronos' },
-    { id: 'pt_ruins_secret', ...tCenter(25.5, 5.5), targetArea: 'secret', label: '🌌 虚空の星核神殿 (裏ボス)', color: '#fbbf24' }
+    { id: 'pt_ruins_cave', ...tCenter(4, 16.5), targetArea: 'cave', label: '2. 暗闇の氷晶鍾乳洞へ', color: '#38bdf8' },
+    { id: 'pt_ruins_magma', ...tCenter(43, 16.5), targetArea: 'magma', label: '4. 灼熱のオルディン竜火山へ', color: '#fb923c', requiresBoss: 'boss_chronos' },
+    { id: 'pt_ruins_secret', ...tCenter(25.5, 5.5), targetArea: 'secret', label: '🌌 星核の創世大神殿 (裏ボス)', color: '#fbbf24' }
   );
 
   map.bossArena = {
@@ -572,14 +572,14 @@ function buildRuins(progress) {
 }
 
 // ============================================================================
-// AREA 4: 灼熱のマグマリアクター (MAGMA CORE REACTOR)
+// AREA 4: 灼熱のオルディン竜火山 (DRAGONFIRE VOLCANO CALDERA)
 // ============================================================================
 function buildMagma(progress) {
   const map = createBaseMap('magma', 48, 34);
   fillRect(map, 2, 2, 44, 30, TILE.FLOOR);
   borderRect(map, 2, 2, 44, 30, TILE.WALL);
 
-  // Glowing Lava Channels with Cyber Cooling Catwalks
+  // Molten Lava Channels with Ancient Stone Bridges
   fillRect(map, 11, 3, 3, 28, TILE.WATER);
   fillRect(map, 21, 3, 3, 28, TILE.WATER);
   fillRect(map, 11, 8, 3, 3, TILE.ACCENT);
@@ -594,7 +594,7 @@ function buildMagma(progress) {
   fillRect(map, 26, 11, 2, 3, TILE.DAMAGE);
   fillRect(map, 26, 20, 2, 3, TILE.DAMAGE);
 
-  // Reactor Bulkhead + Switch Gate
+  // Volcanic Basalt Wall + Switch Gate
   fillRect(map, 30, 3, 2, 28, TILE.WALL);
   const gateTiles = [
     { tx: 30, ty: 16 }, { tx: 31, ty: 16 },
@@ -602,7 +602,7 @@ function buildMagma(progress) {
   ];
   for (const g of gateTiles) setTile(map, g.tx, g.ty, TILE.GATE);
 
-  // Secret Cracked Wall Room (South-East of Mid Reactor)
+  // Secret Cracked Wall Room (South-East of Mid Caldera)
   fillRect(map, 24, 26, 5, 5, TILE.WALL);
   fillRect(map, 25, 27, 3, 3, TILE.ACCENT);
   setTile(map, 26, 26, TILE.CRACKED);
@@ -630,10 +630,10 @@ function buildMagma(progress) {
     }
   );
 
-  // NPC Engineer
-  map.npcs.push({ npcId: 'magma_engineer', ...tCenter(7, 14), label: '炉心技師ゴウ' });
+  // NPC Smith
+  map.npcs.push({ npcId: 'magma_engineer', ...tCenter(7, 14), label: '火口鍛冶師ゴウ' });
 
-  // Cooling Gate Switch
+  // Caldera Gate Switch
   map.switches.push({
     id: 'sw_magma_1',
     ...tCenter(26.5, 6),
@@ -675,8 +675,8 @@ function buildMagma(progress) {
 
   // Portals
   map.portals.push(
-    { id: 'pt_magma_ruins', ...tCenter(4, 16.5), targetArea: 'ruins', label: '3. 古代サイバー機工遺跡へ', color: '#22d3ee' },
-    { id: 'pt_magma_citadel', ...tCenter(43, 16.5), targetArea: 'citadel', label: '5. 機械魔王の天空城へ', color: '#f472b6', requiresBoss: 'boss_ignis' }
+    { id: 'pt_magma_ruins', ...tCenter(4, 16.5), targetArea: 'ruins', label: '3. 古代魔導遺跡・深部へ', color: '#f59e0b' },
+    { id: 'pt_magma_citadel', ...tCenter(43, 16.5), targetArea: 'citadel', label: '5. 天空のハイリア聖城へ', color: '#fbbf24', requiresBoss: 'boss_ignis' }
   );
 
   map.bossArena = {
@@ -694,7 +694,7 @@ function buildMagma(progress) {
 }
 
 // ============================================================================
-// AREA 5: 機械魔王の天空城 (ASTRAL CITADEL OF OMEGA)
+// AREA 5: 天空のハイリア聖城 (CELESTIAL SANCTUARY CITADEL)
 // ============================================================================
 function buildCitadel(progress) {
   const map = createBaseMap('citadel', 50, 36);
@@ -761,7 +761,7 @@ function buildCitadel(progress) {
     ...tCenter(27, 30),
     activated: false,
     gateTiles,
-    color: '#f472b6',
+    color: '#fbbf24',
   });
 
   // Mystic Shrine
@@ -797,7 +797,7 @@ function buildCitadel(progress) {
 
   // Portals
   map.portals.push(
-    { id: 'pt_citadel_magma', ...tCenter(4, 17.5), targetArea: 'magma', label: '4. 灼熱のマグマリアクターへ', color: '#fb923c' }
+    { id: 'pt_citadel_magma', ...tCenter(4, 17.5), targetArea: 'magma', label: '4. 灼熱のオルディン竜火山へ', color: '#fb923c' }
   );
 
   map.bossArena = {
@@ -815,7 +815,7 @@ function buildCitadel(progress) {
 }
 
 // ============================================================================
-// AREA 6: 虚空の星核神殿 (SECRET SUPERBOSS ROOM)
+// AREA 6: 星核の創世大神殿 (SANCTUM OF THE STAR CORE — SECRET SUPERBOSS)
 // ============================================================================
 function buildSecretVault(progress) {
   const map = createBaseMap('secret', 34, 28);
@@ -839,8 +839,8 @@ function buildSecretVault(progress) {
     id: 'pt_secret_town',
     ...tCenter(5, 13.5),
     targetArea: 'town',
-    label: '拠点ネオンタウンへ帰還',
-    color: '#38f8d4',
+    label: '王都ルミナリア城下町へ帰還',
+    color: '#fbbf24',
   });
 
   map.bossArena = {
@@ -942,18 +942,23 @@ function buildTowerFloor(floor = 1) {
   return map;
 }
 
+let _activeTerrainMap = null;
+
 export function buildAreaMap(areaId, progress, towerFloor = 1) {
+  let map;
   switch (areaId) {
-    case 'town': return buildTown(progress);
-    case 'forest': return buildForest(progress);
-    case 'cave': return buildCave(progress);
-    case 'ruins': return buildRuins(progress);
-    case 'magma': return buildMagma(progress);
-    case 'citadel': return buildCitadel(progress);
-    case 'secret': return buildSecretVault(progress);
-    case 'tower': return buildTowerFloor(towerFloor);
-    default: return buildTown(progress);
+    case 'town': map = buildTown(progress); break;
+    case 'forest': map = buildForest(progress); break;
+    case 'cave': map = buildCave(progress); break;
+    case 'ruins': map = buildRuins(progress); break;
+    case 'magma': map = buildMagma(progress); break;
+    case 'citadel': map = buildCitadel(progress); break;
+    case 'secret': map = buildSecretVault(progress); break;
+    case 'tower': map = buildTowerFloor(towerFloor); break;
+    default: map = buildTown(progress); break;
   }
+  _activeTerrainMap = map;
+  return map;
 }
 
 // ============================================================================
@@ -1045,38 +1050,87 @@ export function breakCrackedWall(map, cw) {
 }
 
 // ============================================================================
-// CONTINUOUS TERRAIN HEIGHTMAP FUNCTION — 100% GROUNDING FOR ALL 3D ENTITIES
+// CONTINUOUS NATURAL TERRAIN HEIGHTMAP (Multi-Octave Hills + Carved Riverbeds)
+// 100% EXACT GROUNDING SHARED BY TERRAIN MESH & ALL 3D ENTITIES
 // ============================================================================
-export function getTerrainHeight(x, z, areaId = 'town') {
+export function sampleTileWeight(map, x, z, targetTile) {
+  if (!map) return 0;
+  const fx = x / TS - 0.5;
+  const fz = z / TS - 0.5;
+  const x0 = Math.floor(fx);
+  const z0 = Math.floor(fz);
+  const ux = Math.max(0, Math.min(1, fx - x0));
+  const uz = Math.max(0, Math.min(1, fz - z0));
+  const sx = ux * ux * (3 - 2 * ux);
+  const sz = uz * uz * (3 - 2 * uz);
+  const w00 = getTile(map, x0, z0) === targetTile ? 1 : 0;
+  const w10 = getTile(map, x0 + 1, z0) === targetTile ? 1 : 0;
+  const w01 = getTile(map, x0, z0 + 1) === targetTile ? 1 : 0;
+  const w11 = getTile(map, x0 + 1, z0 + 1) === targetTile ? 1 : 0;
+  const a = w00 + (w10 - w00) * sx;
+  const b = w01 + (w11 - w01) * sx;
+  return a + (b - a) * sz;
+}
+
+export function getTerrainHeight(x, z, areaId = 'town', mapOverride = null) {
+  const map = mapOverride || (_activeTerrainMap && _activeTerrainMap.areaId === areaId ? _activeTerrainMap : null);
+
+  // Multi-octave organic Hyrule hills & micro-undulations (no flat grid feel!)
+  const fbm =
+    Math.sin(x * 0.0055 + z * 0.0022) * Math.cos(z * 0.0062 - x * 0.0018) * 1.0 +
+    Math.sin(x * 0.0135 - z * 0.0115) * 0.42 +
+    Math.cos(x * 0.024 + z * 0.027) * 0.16;
+
+  let baseH = 0;
   if (areaId === 'town') {
-    // Central castle plaza is gently elevated with smooth stone ramps
     const dx = (x - 16.5 * TS) / (10 * TS);
     const dz = (z - 12.5 * TS) / (8 * TS);
     const dist = Math.hypot(dx, dz);
-    if (dist < 0.7) return 2.5;
-    if (dist < 1.25) return 2.5 * (1 - (dist - 0.7) / 0.55);
-    return Math.sin(x * 0.008) * Math.cos(z * 0.008) * 1.4;
-  }
-  if (areaId === 'forest') {
-    // Rolling Hyrule-style grassy hills & valleys (flattened near boss arena x > 30*TS)
+    if (dist < 0.72) baseH = 2.6;
+    else if (dist < 1.28) baseH = 2.6 * (1 - (dist - 0.72) / 0.56);
+    else baseH = fbm * 2.2;
+  } else if (areaId === 'forest') {
     const bossFlatten = x > 29 * TS ? Math.max(0, 1 - (x - 29 * TS) / (3 * TS)) : 1.0;
-    const hill =
-      Math.sin(x * 0.0075) * Math.cos(z * 0.0085) * 6.5 +
-      Math.sin(x * 0.018 + z * 0.015) * 2.4;
-    return hill * bossFlatten;
-  }
-  if (areaId === 'cave') {
+    baseH = (fbm * 8.5 + 1.5) * bossFlatten;
+  } else if (areaId === 'cave') {
     const bossFlatten = x > 29 * TS ? Math.max(0, 1 - (x - 29 * TS) / (3 * TS)) : 1.0;
-    return (Math.sin(x * 0.011) * Math.cos(z * 0.011) * 4.2) * bossFlatten;
-  }
-  if (areaId === 'ruins') {
+    baseH = (fbm * 6.5) * bossFlatten;
+  } else if (areaId === 'ruins') {
     const bossFlatten = x > 31 * TS ? Math.max(0, 1 - (x - 31 * TS) / (3 * TS)) : 1.0;
-    return (Math.sin(x * 0.009) * Math.cos(z * 0.009) * 3.2) * bossFlatten;
-  }
-  if (areaId === 'magma') {
+    baseH = (fbm * 5.2) * bossFlatten;
+  } else if (areaId === 'magma') {
     const bossFlatten = x > 32 * TS ? Math.max(0, 1 - (x - 32 * TS) / (3 * TS)) : 1.0;
-    return (Math.sin(x * 0.01) * Math.cos(z * 0.008) * 5.2) * bossFlatten;
+    baseH = (fbm * 7.8) * bossFlatten;
+  } else {
+    baseH = fbm * 2.4;
   }
-  return Math.sin(x * 0.007) * Math.cos(z * 0.007) * 1.8;
+
+  if (map) {
+    // 1. Carve real depressed riverbeds & moats where TILE.WATER exists!
+    const waterW = sampleTileWeight(map, x, z, TILE.WATER);
+    const accentW = sampleTileWeight(map, x, z, TILE.ACCENT);
+    const bossW = sampleTileWeight(map, x, z, TILE.BOSS_FLOOR);
+    const wallW = sampleTileWeight(map, x, z, TILE.WALL);
+
+    // Smoothly flatten sacred boss sanctuary
+    if (bossW > 0.01) {
+      baseH = baseH * (1 - bossW) + 1.2 * bossW;
+    }
+    // Smooth riverbed depression (bridges on TILE.ACCENT stay above water!)
+    if (waterW > 0.01) {
+      const bridgeMask = Math.max(0, 1 - accentW * 1.4);
+      baseH -= waterW * bridgeMask * 16.5;
+    }
+    // Natural rocky embankment rise under walls/cliffs
+    if (wallW > 0.05 && areaId !== 'town') {
+      baseH += wallW * 6.0;
+    }
+    // Subtle worn dirt path dip on field roadways (keeps paths natural!)
+    if (accentW > 0.1 && areaId === 'forest') {
+      baseH -= accentW * 1.1;
+    }
+  }
+
+  return baseH;
 }
 
