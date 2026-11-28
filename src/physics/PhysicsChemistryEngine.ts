@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { getTerrainHeight, getTerrainNormal, isWaterAt } from '../world/TerrainGenerator';
+import { getInteriorWaterLevelAt, getTerrainHeight, getTerrainNormal, isWaterAt } from '../world/TerrainGenerator';
 import { WORLD_BOUNDS } from '../data/regions';
 import type { ChemistryElement, ChemistryMaterial } from '../types/botw';
 
@@ -114,9 +114,14 @@ export interface PhysicsBody {
   angularVelocity: THREE.Vector3;
   mass: number;
   radius: number;
+  halfWidth?: number;
+  halfDepth?: number;
+  rotY?: number;
   halfHeight: number;
   material: ChemistryMaterial;
   isStatic: boolean;
+  stasisInteractable?: boolean;
+  isPlatform?: boolean;
   isMinecart?: boolean;
   isMetalBox?: boolean;
   isRaft?: boolean;
@@ -323,10 +328,61 @@ export class PhysicsChemistryEngine {
 
   private normalTmp = new THREE.Vector3();
   private querySetTmp = new Set<StaticCollider>();
+  private lastPropColliders: StaticCollider[] = [];
+  private savedOverworld: {
+    bodies: PhysicsBody[];
+    staticColliders: StaticCollider[];
+    propColliders: StaticCollider[];
+    fireZones: FireUpdraftZone[];
+  } | null = null;
 
   constructor(scene: THREE.Scene) {
     this.effectsGroup.name = 'ChemistryEffects';
     scene.add(this.effectsGroup);
+  }
+
+  enterInteriorContext(): void {
+    if (this.savedOverworld) return;
+    for (const f of this.fireZones) f.mesh.visible = false;
+    for (const b of this.bodies) {
+      if (b.stasisArrowMesh) b.stasisArrowMesh.visible = false;
+    }
+    this.savedOverworld = {
+      bodies: this.bodies,
+      staticColliders: this.staticColliders,
+      propColliders: this.lastPropColliders,
+      fireZones: this.fireZones,
+    };
+    this.bodies = [];
+    this.staticColliders = [];
+    this.lastPropColliders = [];
+    this.propColliderCount = 0;
+    this.fireZones = [];
+    this.staticGrid.clear();
+    this.propGrid.clear();
+    this.grid.clear();
+  }
+
+  exitInteriorContext(): void {
+    if (!this.savedOverworld) return;
+    for (const f of this.fireZones) this.effectsGroup.remove(f.mesh);
+    for (const b of this.bodies) {
+      if (b.stasisArrowMesh) this.effectsGroup.remove(b.stasisArrowMesh);
+    }
+    this.bodies = this.savedOverworld.bodies;
+    this.staticColliders = this.savedOverworld.staticColliders;
+    this.lastPropColliders = this.savedOverworld.propColliders;
+    this.fireZones = this.savedOverworld.fireZones;
+    this.savedOverworld = null;
+
+    for (const f of this.fireZones) f.mesh.visible = true;
+    this.staticGrid.clear();
+    for (const c of this.staticColliders) this.staticGrid.insert(c);
+    this.propGrid.clear();
+    this.propColliderCount = this.lastPropColliders.length;
+    for (const c of this.lastPropColliders) this.propGrid.insert(c);
+    this.grid.clear();
+    for (const b of this.bodies) this.grid.insert(b);
   }
 
   addBody(body: PhysicsBody): void {
@@ -409,6 +465,7 @@ export class PhysicsChemistryEngine {
    * Replaces dynamic foliage/tree/rock static colliders streamed around the player.
    */
   setTerrainPropColliders(colliders: StaticCollider[]): void {
+    this.lastPropColliders = colliders;
     this.propGrid.clear();
     this.propColliderCount = colliders.length;
     for (let i = 0; i < colliders.length; i++) {
@@ -555,21 +612,86 @@ export class PhysicsChemistryEngine {
       }
     }
 
-    // Also resolve solid horizontal collision & walkable top against dynamic PhysicsBodies (boulders, crates, Cryonis pillars)
+    // Also resolve solid horizontal collision & walkable top against dynamic PhysicsBodies (boulders, crates, Cryonis pillars, Magnesis bridges/platforms)
     for (let i = 0; i < this.bodies.length; i++) {
       const b = this.bodies[i];
       if (b.magnesisGrabbed) continue;
+      const topY = b.position.y + b.halfHeight * 2;
+      const minY = b.position.y;
+      const feetY = pos.y;
+      const headY = pos.y + height;
+
+      if (b.halfWidth && b.halfDepth) {
+        const relX = pos.x - b.position.x;
+        const relZ = pos.z - b.position.z;
+        const rot = b.rotY ?? b.mesh.rotation.y ?? 0;
+        const cosR = Math.cos(rot);
+        const sinR = Math.sin(rot);
+        const lx = relX * cosR - relZ * sinR;
+        const lz = relX * sinR + relZ * cosR;
+
+        const clx = Math.max(-b.halfWidth, Math.min(b.halfWidth, lx));
+        const clz = Math.max(-b.halfDepth, Math.min(b.halfDepth, lz));
+        const dlx = lx - clx;
+        const dlz = lz - clz;
+        const distSq = dlx * dlx + dlz * dlz;
+        if (distSq >= radius * radius) continue;
+
+        if (feetY >= topY - stepHeight && feetY <= topY + 0.52) {
+          if (Math.abs(lx) <= b.halfWidth + radius * 0.65 && Math.abs(lz) <= b.halfDepth + radius * 0.65) {
+            if (topY > res.supportY) res.supportY = topY;
+          }
+          continue;
+        }
+        if (feetY >= topY - 0.04 || headY <= minY + 0.04) continue;
+        if (feetY < minY - 0.14 && headY > minY) {
+          pos.y = minY - height;
+          res.hitCeiling = true;
+          continue;
+        }
+
+        let lnx = 0;
+        let lnz = 0;
+        let pen = 0;
+        if (distSq > 1e-8) {
+          const dist = Math.sqrt(distSq);
+          lnx = dlx / dist;
+          lnz = dlz / dist;
+          pen = radius - dist;
+        } else {
+          const penX = b.halfWidth - Math.abs(lx) + radius;
+          const penZ = b.halfDepth - Math.abs(lz) + radius;
+          if (penX < penZ) {
+            lnx = lx >= 0 ? 1 : -1;
+            pen = penX;
+          } else {
+            lnz = lz >= 0 ? 1 : -1;
+            pen = penZ;
+          }
+        }
+        const wnx = lnx * cosR + lnz * sinR;
+        const wnz = -lnx * sinR + lnz * cosR;
+        pos.x += wnx * pen;
+        pos.z += wnz * pen;
+        res.collidedHorizontal = true;
+        res.hitNormal.set(wnx, 0, wnz);
+        if (b.isCryonisPillar && topY - pos.y > 0.85) {
+          res.hitClimbable = true;
+          res.wallTopY = Math.max(res.wallTopY, topY);
+        }
+        continue;
+      }
+
       const dx = pos.x - b.position.x;
       const dz = pos.z - b.position.z;
       const combinedR = b.radius + radius;
       const distSq = dx * dx + dz * dz;
       if (distSq >= combinedR * combinedR) continue;
-      const topY = b.position.y + b.halfHeight * 2;
-      if (pos.y >= topY - stepHeight && pos.y <= topY + 0.45) {
+      if (feetY >= topY - stepHeight && feetY <= topY + 0.45) {
         if (topY > res.supportY) res.supportY = topY;
         continue;
       }
-      if (pos.y < topY - stepHeight && pos.y + height > b.position.y + 0.08) {
+      if (feetY < topY - stepHeight && headY > minY + 0.08) {
         const dist = Math.sqrt(distSq);
         const nx = dist > 1e-5 ? dx / dist : 1;
         const nz = dist > 1e-5 ? dz / dist : 0;
@@ -772,7 +894,8 @@ export class PhysicsChemistryEngine {
   }
 
   applyElementToBody(body: PhysicsBody, element: ChemistryElement, isRaining: boolean): ChemistryReactionResult {
-    const inWater = isWaterAt(body.position.x, body.position.z) && body.position.y <= WORLD_BOUNDS.waterLevel + 0.5;
+    const wl = getInteriorWaterLevelAt(body.position.x, body.position.z) ?? WORLD_BOUNDS.waterLevel;
+    const inWater = isWaterAt(body.position.x, body.position.z) && body.position.y <= wl + 0.5;
     const res = evaluateChemistryInteraction(element, body.material, { isRaining, inWater });
     if (res.ignited) {
       body.isBurning = true;
@@ -861,10 +984,20 @@ export class PhysicsChemistryEngine {
   isPlayerStandingDirectlyOn(playerPos: THREE.Vector3, targetBody: PhysicsBody): boolean {
     const dx = playerPos.x - targetBody.position.x;
     const dz = playerPos.z - targetBody.position.z;
-    const horiz = Math.hypot(dx, dz);
     const topY = targetBody.position.y + targetBody.halfHeight * 2;
     const verticalGap = Math.abs(playerPos.y - topY);
-    if (horiz <= targetBody.radius + 0.55 && verticalGap < 0.7) {
+    let insideHoriz = false;
+    if (targetBody.halfWidth && targetBody.halfDepth) {
+      const rot = targetBody.rotY ?? targetBody.mesh.rotation.y ?? 0;
+      const cosR = Math.cos(rot);
+      const sinR = Math.sin(rot);
+      const lx = dx * cosR - dz * sinR;
+      const lz = dx * sinR + dz * cosR;
+      insideHoriz = Math.abs(lx) <= targetBody.halfWidth + 0.55 && Math.abs(lz) <= targetBody.halfDepth + 0.55;
+    } else {
+      insideHoriz = Math.hypot(dx, dz) <= targetBody.radius + 0.55;
+    }
+    if (insideHoriz && verticalGap < 0.7) {
       // Check if an intermediate body (e.g. second minecart or wooden crate) sits between player and target!
       for (const other of this.bodies) {
         if (other.id === targetBody.id) continue;
@@ -911,10 +1044,11 @@ export class PhysicsChemistryEngine {
         continue;
       }
 
-      // Gravity & Water Buoyancy
-      const inWater = isWaterAt(b.position.x, b.position.z) && b.position.y < WORLD_BOUNDS.waterLevel;
+      // Gravity & Water Buoyancy (supports shrine interior pools!)
+      const wl = getInteriorWaterLevelAt(b.position.x, b.position.z) ?? WORLD_BOUNDS.waterLevel;
+      const inWater = isWaterAt(b.position.x, b.position.z) && b.position.y < wl;
       if (inWater && b.buoyant) {
-        const submerge = WORLD_BOUNDS.waterLevel - b.position.y;
+        const submerge = wl - b.position.y;
         b.velocity.y += (submerge * 22.0 - b.velocity.y * 4.5) * clampedDt;
         b.velocity.x *= Math.pow(0.28, clampedDt);
         b.velocity.z *= Math.pow(0.28, clampedDt);
@@ -924,6 +1058,36 @@ export class PhysicsChemistryEngine {
 
       // Integrate velocity
       b.position.addScaledVector(b.velocity, clampedDt);
+
+      // Keep rolling boulders & metal boxes outside solid static walls/pilasters
+      if (b.isBoulder || b.isMetalBox) {
+        const staticHits = this.querySetTmp;
+        staticHits.clear();
+        const pad = b.radius + 0.35;
+        this.staticGrid.queryAABB(b.position.x - pad, b.position.z - pad, b.position.x + pad, b.position.z + pad, staticHits);
+        for (const col of staticHits) {
+          if (b.position.y >= col.maxY - 0.1 || b.position.y + b.halfHeight * 2 <= col.minY + 0.1) continue;
+          if (col.shape === 'box' && (col.rotY ?? 0) === 0) {
+            const clx = Math.max(col.x - col.halfW, Math.min(col.x + col.halfW, b.position.x));
+            const clz = Math.max(col.z - col.halfD, Math.min(col.z + col.halfD, b.position.z));
+            const dx = b.position.x - clx;
+            const dz = b.position.z - clz;
+            const d2 = dx * dx + dz * dz;
+            if (d2 < b.radius * b.radius && d2 > 1e-6) {
+              const d = Math.sqrt(d2);
+              const nx = dx / d;
+              const nz = dz / d;
+              b.position.x += nx * (b.radius - d);
+              b.position.z += nz * (b.radius - d);
+              const vn = b.velocity.x * nx + b.velocity.z * nz;
+              if (vn < 0) {
+                b.velocity.x -= 1.35 * vn * nx;
+                b.velocity.z -= 1.35 * vn * nz;
+              }
+            }
+          }
+        }
+      }
 
       // Terrain collision & slope rolling
       const groundY = getTerrainHeight(b.position.x, b.position.z);

@@ -6,7 +6,7 @@ import {
   createBotWWaterMaterial,
 } from '../rendering/BotWToonShader';
 import { textureBank } from '../rendering/ProceduralTextures';
-import { WORLD_BOUNDS } from '../data/regions';
+import { PHYSICAL_SHRINES, WORLD_BOUNDS } from '../data/regions';
 import { getRegionAt, getTerrainHeight, getTerrainNormal, sampleBiomeAt } from './TerrainGenerator';
 import type { PhysicsChemistryEngine, StaticCollider } from '../physics/PhysicsChemistryEngine';
 import type { GraphicsQuality } from '../types/botw';
@@ -531,6 +531,19 @@ export class TerrainChunkManager {
         const wz = (gz + r2) * step;
         if ((wx - px) * (wx - px) + (wz - pz) * (wz - pz) > radius * radius) continue;
 
+        // Exclude Shrine of Resurrection, Temple of Time, and all physical Shrine stone bases
+        if (wx >= -329 && wx <= -298 && wz >= 447 && wz <= 463) continue;
+        if (wx >= -258 && wx <= -232 && wz >= 478 && wz <= 512) continue;
+        let nearShrine = false;
+        for (let si = 0; si < PHYSICAL_SHRINES.length; si++) {
+          const sh = PHYSICAL_SHRINES[si];
+          if (Math.hypot(wx - sh.x, wz - sh.z) < 7.5) {
+            nearShrine = true;
+            break;
+          }
+        }
+        if (nearShrine) continue;
+
         const wy = getTerrainHeight(wx, wz);
         if (wy < WORLD_BOUNDS.waterLevel + 0.8) continue;
 
@@ -589,7 +602,8 @@ export class TerrainChunkManager {
         const wz = (gz + 0.15 + r2 * 0.7) * step;
         if ((wx - px) * (wx - px) + (wz - pz) * (wz - pz) > radius * radius) continue;
 
-        // Keep immediate spawn overlook, Temple of Time, Oman Au Shrine & Hyrule Castle grounds unobstructed!
+        // Keep immediate spawn overlook, 2-room Shrine of Resurrection, Temple of Time, Oman Au Shrine & Hyrule Castle grounds unobstructed!
+        if (Math.hypot(wx - (-314), wz - 455) < 34) continue;
         if (Math.hypot(wx - (-300), wz - 455) < 26) continue;
         if (Math.hypot(wx - (-245), wz - 495) < 34) continue;
         if (Math.hypot(wx - (-220), wz - 425) < 24) continue;

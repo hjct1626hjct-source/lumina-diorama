@@ -364,4 +364,101 @@ describe('3D Spatial-Hash Collision, Camera Clamping & 21-GLB Progressive Loadin
     expect(isRuneUnlocked('magnesis', ['magnesis'], true)).toBe(true);
     expect(isRuneUnlocked('camera', ['magnesis'], true)).toBe(false);
   });
+
+  it('validates v6 Phase A guards: weapon/shield/slate locks, Goddess Statue Orb exchange, and Dye/Fairy rupee deductions', async () => {
+    const {
+      canPerformMeleeAttack,
+      canPerformShieldAction,
+      canUseSheikahFeatures,
+      createDefaultSave,
+      exchangeSpiritOrbs,
+      purchaseArmorDye,
+      purchaseGreatFairyUpgrade,
+    } = await import('../src/save/SaveManager');
+    const { GREAT_FAIRY_UPGRADE_COSTS } = await import('../src/data/armors');
+    const { PLATEAU_SHRINE_RUNE_MAP } = await import('../src/world/ShrineInteriorManager');
+
+    const save = createDefaultSave('normal');
+
+    // 1. Fresh Awakening in SoR room 1: no Slate, no weapon, no shield
+    expect(save.playerPos.x).toBeLessThan(-320);
+    expect(canUseSheikahFeatures(save)).toBe(false);
+    expect(canPerformMeleeAttack(save)).toBe(false);
+    expect(canPerformShieldAction(save)).toBe(false);
+
+    // 2. Equipping valid items & picking up Slate unlocks guards cleanly
+    save.hasSheikahSlate = true;
+    save.weapons.push({
+      id: 'travelers_sword',
+      nameJa: '旅人の剣',
+      nameEn: "Traveler's Sword",
+      category: 'sword',
+      attack: 5,
+      durability: 20,
+      currentDurability: 20,
+      material: 'Metal',
+      color: '#9ba2aa',
+      accentColor: '#6d4c32',
+    });
+    save.equippedWeaponId = 'travelers_sword';
+    save.shields.push({
+      id: 'pot_lid',
+      nameJa: 'ナベのフタ',
+      nameEn: 'Pot Lid',
+      category: 'shield',
+      attack: 1,
+      durability: 10,
+      currentDurability: 10,
+      material: 'Wood',
+      color: '#9c7852',
+      accentColor: '#6a4e32',
+    });
+    save.equippedShieldId = 'pot_lid';
+
+    expect(canUseSheikahFeatures(save)).toBe(true);
+    expect(canPerformMeleeAttack(save)).toBe(true);
+    expect(canPerformShieldAction(save)).toBe(true);
+
+    // 3. Goddess Statue Spirit Orb exchange (4 orbs -> +1 Heart or +20 Stamina, blocks if <4)
+    save.spiritOrbs = 3;
+    expect(exchangeSpiritOrbs(save, 'heart').ok).toBe(false);
+    expect(save.maxHearts).toBe(3);
+
+    save.spiritOrbs = 8;
+    expect(exchangeSpiritOrbs(save, 'heart').ok).toBe(true);
+    expect(save.maxHearts).toBe(4);
+    expect(save.spiritOrbs).toBe(4);
+    expect(exchangeSpiritOrbs(save, 'stamina').ok).toBe(true);
+    expect(save.maxStamina).toBe(120);
+    expect(save.spiritOrbs).toBe(0);
+
+    // 4. Dye Shop (20 rupees) & Great Fairy Upgrade rupee deduction & insufficient-rupee rejection
+    save.rupees = 10;
+    const dyeFail = purchaseArmorDye(save, 'crimson', [{ id: 'hylian_tunic', dyeable: true }], 20);
+    expect(dyeFail.ok).toBe(false);
+    expect(save.rupees).toBe(10);
+
+    save.rupees = 100;
+    const dyeOk = purchaseArmorDye(save, 'crimson', [{ id: 'hylian_tunic', dyeable: true }], 20);
+    expect(dyeOk.ok).toBe(true);
+    expect(save.rupees).toBe(80);
+    expect(save.armorDyes['hylian_tunic']).toBe('crimson');
+
+    const fairyOk = purchaseGreatFairyUpgrade(save, 'hylian_tunic', true, GREAT_FAIRY_UPGRADE_COSTS[1].rupees);
+    expect(fairyOk.ok).toBe(true);
+    expect(save.armorStars['hylian_tunic']).toBe(1);
+    expect(save.rupees).toBe(30); // 80 - 50 for ★1!
+
+    // ★2 costs 150 rupees -> must reject with 30 rupees left
+    const fairyFail = purchaseGreatFairyUpgrade(save, 'hylian_tunic', true, GREAT_FAIRY_UPGRADE_COSTS[2].rupees);
+    expect(fairyFail.ok).toBe(false);
+    expect(save.armorStars['hylian_tunic']).toBe(1);
+
+    // 5. All 4 Great Plateau Shrine rune pedestal assignments exist
+    expect(PLATEAU_SHRINE_RUNE_MAP['shrine_oman_au'].runes).toEqual(['magnesis']);
+    expect(PLATEAU_SHRINE_RUNE_MAP['shrine_ja_baij'].runes).toEqual(['bomb_round', 'bomb_square']);
+    expect(PLATEAU_SHRINE_RUNE_MAP['shrine_owa_daim'].runes).toEqual(['stasis']);
+    expect(PLATEAU_SHRINE_RUNE_MAP['shrine_keh_namut'].runes).toEqual(['cryonis']);
+  });
 });
+

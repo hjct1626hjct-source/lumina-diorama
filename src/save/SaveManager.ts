@@ -129,7 +129,7 @@ export function createDefaultSave(mode: SaveMode): SaveSlotData {
     inGameTimeHours: 7.5,
     daysElapsed: 1,
     bloodMoonTimerSec: 0,
-    playerPos: { x: -314.8, y: 52, z: 455, yaw: Math.PI / 2 },
+    playerPos: { x: -323.5, y: 52, z: 455, yaw: Math.PI / 2 },
     hearts: 3,
     maxHearts: 3,
     tempHearts: 0,
@@ -166,6 +166,7 @@ export function createDefaultSave(mode: SaveMode): SaveSlotData {
     champions: createDefaultChampions(),
     activatedTowers: [] as RegionId[],
     completedShrines: [],
+    discoveredShrines: [],
     discoveredLocations: ['shrine_of_resurrection'],
     foundKoroks: [],
     unlockedMemories: [],
@@ -421,6 +422,11 @@ function normalizeSaveData(raw: unknown, mode: SaveMode): SaveSlotData | null {
     unlockedRunes: Array.isArray(partial.unlockedRunes) ? [...partial.unlockedRunes] : defaults.unlockedRunes,
     activatedTowers: Array.isArray(partial.activatedTowers) ? [...partial.activatedTowers] : [],
     completedShrines: Array.isArray(partial.completedShrines) ? [...partial.completedShrines] : [],
+    discoveredShrines: Array.isArray(partial.discoveredShrines)
+      ? [...partial.discoveredShrines]
+      : Array.isArray(partial.completedShrines)
+      ? [...partial.completedShrines]
+      : [],
     discoveredLocations: Array.isArray(partial.discoveredLocations) ? [...partial.discoveredLocations] : [],
     foundKoroks: Array.isArray(partial.foundKoroks) ? [...partial.foundKoroks] : [],
     unlockedMemories: Array.isArray(partial.unlockedMemories) ? [...partial.unlockedMemories] : [],
@@ -810,3 +816,86 @@ export class SaveManager {
 }
 
 export const saveManager = new SaveManager();
+
+export function canPerformMeleeAttack(save: SaveSlotData): boolean {
+  if (!save.equippedWeaponId) return false;
+  return save.weapons.some((w) => w.id === save.equippedWeaponId);
+}
+
+export function canPerformShieldAction(save: SaveSlotData): boolean {
+  if (!save.equippedShieldId) return false;
+  return save.shields.some((s) => s.id === save.equippedShieldId);
+}
+
+export function canUseSheikahFeatures(save: SaveSlotData): boolean {
+  return !!save.hasSheikahSlate;
+}
+
+export function exchangeSpiritOrbs(
+  save: SaveSlotData,
+  vessel: 'heart' | 'stamina'
+): { ok: boolean; messageJa: string } {
+  if (save.spiritOrbs < 4) {
+    return { ok: false, messageJa: `克服の証が足りません（現在 ${save.spiritOrbs} / 必要 4個）` };
+  }
+  if (vessel === 'heart') {
+    if (save.maxHearts >= 30) {
+      return { ok: false, messageJa: 'ハートの器はすでに最大（30）に達しています！' };
+    }
+    save.spiritOrbs -= 4;
+    save.maxHearts = Math.min(30, save.maxHearts + 1);
+    save.hearts = save.maxHearts;
+    return { ok: true, messageJa: `❤️ ハートの器を授かった！（最大ハート ${save.maxHearts}）` };
+  }
+  if (save.maxStamina >= 300) {
+    return { ok: false, messageJa: 'がんばりの器はすでに最大（3周 / 300）に達しています！' };
+  }
+  save.spiritOrbs -= 4;
+  save.maxStamina = Math.min(300, save.maxStamina + 20);
+  save.stamina = save.maxStamina;
+  return { ok: true, messageJa: `💚 がんばりの器を授かった！（最大がんばり ${save.maxStamina}）` };
+}
+
+export function purchaseArmorDye(
+  save: SaveSlotData,
+  dyeId: string,
+  equippedTargets: Array<{ id: string; dyeable: boolean }>,
+  costRupees = 20
+): { ok: boolean; dyedCount: number; messageJa: string } {
+  const dyeableTargets = equippedTargets.filter((t) => t.dyeable);
+  if (dyeableTargets.length === 0) {
+    return { ok: false, dyedCount: 0, messageJa: '染色可能な防具を装備していません' };
+  }
+  if (save.rupees < costRupees) {
+    return { ok: false, dyedCount: 0, messageJa: `ルピーが足りません（必要 ${costRupees} / 所持 ${save.rupees} ルピー）` };
+  }
+  save.rupees -= costRupees;
+  for (const t of dyeableTargets) {
+    if (dyeId === 'default') delete save.armorDyes[t.id];
+    else save.armorDyes[t.id] = dyeId;
+  }
+  return { ok: true, dyedCount: dyeableTargets.length, messageJa: `${costRupees}ルピーで防具を染色しました！` };
+}
+
+export function purchaseGreatFairyUpgrade(
+  save: SaveSlotData,
+  armorId: string,
+  upgradeable: boolean,
+  costRupees: number
+): { ok: boolean; newStar: number; messageJa: string } {
+  const cur = save.armorStars[armorId] ?? 0;
+  if (!upgradeable) {
+    return { ok: false, newStar: cur, messageJa: 'この防具は強化できません' };
+  }
+  if (cur >= 4) {
+    return { ok: false, newStar: cur, messageJa: 'すでに最大強化（★4）されています' };
+  }
+  if (save.rupees < costRupees) {
+    return { ok: false, newStar: cur, messageJa: `ルピーが足りません（必要 ${costRupees} / 所持 ${save.rupees} ルピー）` };
+  }
+  save.rupees -= costRupees;
+  const next = cur + 1;
+  save.armorStars[armorId] = next;
+  return { ok: true, newStar: next, messageJa: `${costRupees}ルピーで ★${next} へ強化した！` };
+}
+

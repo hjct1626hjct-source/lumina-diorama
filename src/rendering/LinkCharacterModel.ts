@@ -113,6 +113,8 @@ export class LinkCharacterModel {
   private backShieldGroup!: THREE.Group;
   private backGlbCrestGroup = new THREE.Group();
   private handSwordGroup = new THREE.Group();
+  private handBranchGroup = new THREE.Group();
+  private handAxeGroup = new THREE.Group();
   private handTorchGroup = new THREE.Group();
   private torchFlameMesh!: THREE.Mesh;
   private torchLight!: THREE.PointLight;
@@ -757,6 +759,43 @@ export class LinkCharacterModel {
     this.handTorchGroup.add(this.torchFlameMesh, this.torchLight);
     this.rightForearm.add(this.handTorchGroup);
 
+    // Hand-drawn Tree Branch (knotted organic wood)
+    this.handBranchGroup.position.set(0, -0.22, 0.04);
+    this.handBranchGroup.rotation.set(Math.PI * 0.48, 0, 0);
+    this.handBranchGroup.visible = false;
+    const branchMat = createBotWToonMaterial({ color: '#6b4929', map: textureBank.getWoodPlankTexture('#6b4929').map });
+    const branchStem = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.036, 0.85, 7), branchMat);
+    branchStem.position.y = 0.40;
+    const branchTwig = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.018, 0.28, 6), branchMat);
+    branchTwig.position.set(0.06, 0.58, 0.02);
+    branchTwig.rotation.z = -0.58;
+    const leafPatch = new THREE.Mesh(new THREE.SphereGeometry(0.055, 6, 5), createBotWToonMaterial({ color: '#4d923a' }));
+    leafPatch.position.set(0.11, 0.70, 0.02);
+    this.handBranchGroup.add(branchStem, branchTwig, leafPatch);
+    this.rightForearm.add(this.handBranchGroup);
+
+    // Hand-drawn Woodcutter's Axe (hickory shaft + crescent steel blade)
+    this.handAxeGroup.position.set(0, -0.22, 0.04);
+    this.handAxeGroup.rotation.set(Math.PI * 0.48, 0, 0);
+    this.handAxeGroup.visible = false;
+    const axeShaft = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.024, 0.028, 0.92, 8),
+      createBotWToonMaterial({ color: '#6e4726', map: textureBank.getWoodPlankTexture().map })
+    );
+    axeShaft.position.y = 0.42;
+    const axeHead = new THREE.Mesh(
+      new THREE.BoxGeometry(0.24, 0.19, 0.045),
+      createBotWToonMaterial({ color: '#9ba6b2', metalHighlight: true })
+    );
+    axeHead.position.set(0.10, 0.78, 0);
+    const axeEdge = new THREE.Mesh(
+      new THREE.BoxGeometry(0.04, 0.21, 0.03),
+      createBotWToonMaterial({ color: '#dce4ee', metalHighlight: true })
+    );
+    axeEdge.position.set(0.21, 0.78, 0);
+    this.handAxeGroup.add(axeShaft, axeHead, axeEdge);
+    this.rightForearm.add(this.handAxeGroup);
+
     // Dynamic Slash Ribbon Arc
     const slashGeo = new THREE.RingGeometry(0.7, 1.45, 18, 1, -Math.PI * 0.65, Math.PI * 1.3);
     const slashMat = new THREE.MeshBasicMaterial({
@@ -845,7 +884,7 @@ export class LinkCharacterModel {
 
   /**
    * Synchronizes Link's 3D appearance with ALL equipped armor pieces, Kochi Dye colors,
-   * naked/underwear state, Master Sword / Torch / `sword_shield.glb` gear, shield, bow, and paraglider!
+   * naked/underwear state, Master Sword / Branch / Axe / Torch / `sword_shield.glb` gear, shield, bow, and paraglider!
    */
   applyEquipmentVisuals(vis: HeroEquipmentVisuals): void {
     const sig = JSON.stringify([
@@ -868,16 +907,32 @@ export class LinkCharacterModel {
 
     const hasWeapon = !!vis.weaponId;
     const hasShield = !!vis.shieldId;
+    const isBranch = vis.weaponId === 'tree_branch';
+    const isAxe = vis.weaponId === 'woodcutters_axe';
     const useTorch = hasWeapon && (vis.holdingTorchFire || vis.weaponId === 'torch');
-    const useGlbCrestBack =
-      hasWeapon && hasShield && !vis.isMasterSword && vis.shieldId !== 'hylian_shield' && this.backGlbCrestGroup.children.length > 0;
+    const isSwordMesh = hasWeapon && !isBranch && !isAxe && !useTorch;
 
-    this.backSwordGroup.visible = hasWeapon && !vis.weaponDrawn && !useGlbCrestBack;
+    if (vis.isMasterSword) {
+      this.swordBladeMat.color.set('#d8e6f8');
+      this.swordBladeMat.emissive.set('#2268a8');
+      this.swordBladeMat.emissiveIntensity = 0.25;
+    } else if (vis.weaponColor) {
+      this.swordBladeMat.color.set(vis.weaponColor);
+      this.swordBladeMat.emissive.set('#000000');
+      this.swordBladeMat.emissiveIntensity = 0;
+    }
+
+    const useGlbCrestBack =
+      isSwordMesh && hasShield && !vis.isMasterSword && vis.shieldId !== 'hylian_shield' && this.backGlbCrestGroup.children.length > 0;
+
+    this.backSwordGroup.visible = isSwordMesh && !vis.weaponDrawn && !useGlbCrestBack;
     this.backShieldGroup.visible = hasShield && !vis.weaponDrawn && !vis.shieldSurfing && !useGlbCrestBack;
     this.backGlbCrestGroup.visible = !vis.weaponDrawn && !vis.shieldSurfing && useGlbCrestBack;
 
-    this.handSwordGroup.visible = hasWeapon && vis.weaponDrawn && !useTorch && !vis.bowDrawn && !vis.paragliderOpen;
-    this.handTorchGroup.visible = hasWeapon && vis.weaponDrawn && useTorch && !vis.bowDrawn && !vis.paragliderOpen;
+    this.handSwordGroup.visible = isSwordMesh && vis.weaponDrawn && !vis.bowDrawn && !vis.paragliderOpen;
+    this.handBranchGroup.visible = hasWeapon && isBranch && vis.weaponDrawn && !vis.bowDrawn && !vis.paragliderOpen;
+    this.handAxeGroup.visible = hasWeapon && isAxe && vis.weaponDrawn && !vis.bowDrawn && !vis.paragliderOpen;
+    this.handTorchGroup.visible = useTorch && vis.weaponDrawn && !vis.bowDrawn && !vis.paragliderOpen;
     this.handShieldGroup.visible = hasShield && vis.weaponDrawn && !vis.bowDrawn && !vis.paragliderOpen && !vis.shieldSurfing;
     this.handBowGroup.visible = !!vis.bowId && vis.bowDrawn && !vis.paragliderOpen;
     this.paragliderGroup.visible = vis.paragliderOpen;

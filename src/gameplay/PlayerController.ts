@@ -1,10 +1,11 @@
 import * as THREE from 'three';
 import { LinkCharacterModel, type HeroAnimState } from '../rendering/LinkCharacterModel';
-import { getSurfaceType, getTerrainHeight, getTerrainNormal, isWaterAt } from '../world/TerrainGenerator';
+import { getInteriorWaterLevelAt, getSurfaceType, getTerrainHeight, getTerrainNormal, isWaterAt } from '../world/TerrainGenerator';
 import { WORLD_BOUNDS } from '../data/regions';
 import { ARMOR_MAP, KOCHI_DYE_MAP, type ArmorSummary } from '../data/armors';
 import { PhysicsChemistryEngine } from '../physics/PhysicsChemistryEngine';
 import { SheikahRuneSystem } from './SheikahRunes';
+import { canPerformShieldAction } from '../save/SaveManager';
 import type { ArrowType, SaveSlotData } from '../types/botw';
 
 export interface ActiveArrow {
@@ -47,13 +48,13 @@ const CCD_MAX_STEP = 0.24;
  * - Smooth wall sliding & Universal Wall Climbing (both steep terrain cliffs AND architectural walls/towers + ledge mantling!)
  * - Stamina Wheel (max 3 full green rings = 300 units + yellow temporary stamina + exhaustion penalty)
  * - Paraglider (gliding physics, Fire Updraft thermal lift, Revali's Gale vertical launch!)
- * - Shield Surfing, Swimming, Midair Bow Bullet-Time (1/19x), Perfect Dodge -> Flurry Rush, Perfect Guard -> Beam Parry
+ * - Shield Surfing, Swimming (with drowning safeguard), Fall Damage (>10m), Midair Bow Bullet-Time, Perfect Dodge -> Flurry Rush, Perfect Guard -> Beam Parry
  */
 export class PlayerController {
   public readonly model = new LinkCharacterModel();
-  public readonly position = new THREE.Vector3(-298, 52, 454);
+  public readonly position = new THREE.Vector3(-323.5, 52, 455);
   public readonly velocity = new THREE.Vector3();
-  public yaw = 0.72;
+  public yaw = Math.PI / 2;
 
   public grounded = true;
   public climbing = false;
@@ -81,6 +82,10 @@ export class PlayerController {
   public footstepTimer = 0;
   public noiseLevel = 0.15; // 0..1 drives purple Sound Sensor waveform!
 
+  // Fall damage & drowning recovery state
+  public maxAirY = 52;
+  public readonly lastSafeLandPos = new THREE.Vector3(-323.5, 52, 455);
+
   // Active Arrow Projectiles
   public arrows: ActiveArrow[] = [];
   public readonly arrowsGroup = new THREE.Group();
@@ -100,6 +105,11 @@ export class PlayerController {
     scene.add(this.arrowsGroup);
   }
 
+  resetSafeLandPos(pos: THREE.Vector3): void {
+    this.lastSafeLandPos.copy(pos);
+    this.maxAirY = pos.y;
+  }
+
   teleportTo(x: number, z: number, extraY = 0.2): void {
     const y = getTerrainHeight(x, z) + extraY;
     this.position.set(x, y, z);
@@ -110,6 +120,19 @@ export class PlayerController {
     this.paragliding = false;
     this.shieldSurfing = false;
     this.model.root.position.copy(this.position);
+    this.resetSafeLandPos(this.position);
+  }
+
+  setExactPosition(x: number, y: number, z: number): void {
+    this.position.set(x, y, z);
+    this.velocity.set(0, 0, 0);
+    this.grounded = true;
+    this.climbing = false;
+    this.climbingWall = false;
+    this.paragliding = false;
+    this.shieldSurfing = false;
+    this.model.root.position.copy(this.position);
+    this.resetSafeLandPos(this.position);
   }
 
   getForwardDirection(out = new THREE.Vector3()): THREE.Vector3 {
@@ -141,9 +164,11 @@ export class PlayerController {
     } else if (!this.paragliding && save.hasParaglider && !this.exhausted && save.stamina > 4) {
       this.paragliding = true;
       this.velocity.y = Math.max(this.velocity.y, -1.2);
+      this.maxAirY = this.position.y;
       onParagliderOpen?.();
     } else if (this.paragliding) {
       this.paragliding = false;
+      this.maxAirY = this.position.y;
     }
   }
 
@@ -157,19 +182,27 @@ export class PlayerController {
     this.climbingWall = false;
     this.grounded = true;
     this.climbDetachCooldown = 0.35;
+    this.maxAirY = this.position.y;
   }
 
-  triggerShieldSurf(onNotify?: (msg: string) => void): void {
+  triggerShieldSurf(save: SaveSlotData, onNotify?: (msg: string) => void): boolean {
+    if (!canPerformShieldAction(save)) {
+      onNotify?.('盾を装備していないため盾サーフィンできません！');
+      return false;
+    }
     if (!this.grounded && !this.paragliding && !this.climbing) {
       this.shieldSurfing = true;
       this.weaponDrawn = false;
       onNotify?.('盾サーフィン開始！');
+      return true;
     } else if (this.grounded) {
       this.velocity.y = 7.2;
       this.grounded = false;
       this.shieldSurfing = true;
       onNotify?.('盾サーフィン！');
+      return true;
     }
+    return false;
   }
 
   triggerRevalisGale(save: SaveSlotData, onNotify?: (msg: string) => void): boolean {
@@ -182,14 +215,20 @@ export class PlayerController {
     this.climbing = false;
     this.climbingWall = false;
     this.paragliding = true;
+    this.maxAirY = this.position.y;
     onNotify?.('リーバルの猛り！強烈な上昇気流で飛び上がった！');
     return true;
   }
 
-  triggerGuardStart(): void {
+  triggerGuardStart(save: SaveSlotData, onNotify?: (msg: string) => void): boolean {
+    if (!canPerformShieldAction(save)) {
+      onNotify?.('盾を装備していません');
+      return false;
+    }
     this.guarding = true;
     this.weaponDrawn = true;
     this.perfectGuardWindow = 0.28; // Authentic ~17-frame Perfect Parry window!
+    return true;
   }
 
   triggerDodge(input: InputState, save: SaveSlotData, onPerfectCheck: () => boolean, onFlurryTrigger: () => void): void {
@@ -287,9 +326,13 @@ export class PlayerController {
       onFootstep: (surface: 'grass' | 'stone' | 'snow' | 'sand' | 'water') => void;
       onBulletTimeEnter?: () => void;
       onNotify?: (msg: string) => void;
+      onFallDamage?: (hearts: number) => void;
+      onDrown?: (safePos: THREE.Vector3) => void;
     }
   ): { moveSpeed: number; animState: HeroAnimState } {
     const dt = Math.min(rawDt, 0.05);
+    const wasGrounded = this.grounded;
+    const wasParagliding = this.paragliding;
 
     this.perfectGuardWindow = Math.max(0, this.perfectGuardWindow - dt);
     this.perfectDodgeWindow = Math.max(0, this.perfectDodgeWindow - dt);
@@ -346,6 +389,7 @@ export class PlayerController {
       this.syncVisuals(save);
       this.model.updateAnimation(dt, 'ride', Math.abs(runes.bikeSpeed));
       this.noiseLevel = 0.72;
+      this.maxAirY = this.position.y;
       return { moveSpeed: Math.abs(runes.bikeSpeed), animState: 'ride' };
     }
 
@@ -366,7 +410,8 @@ export class PlayerController {
     this.bulletTimeActive = wantsBulletTime;
     this.aimingBow = input.aimBow;
     if (this.aimingBow) this.weaponDrawn = true;
-    this.guarding = input.guard && !this.aimingBow && !this.paragliding;
+    const hasShield = canPerformShieldAction(save);
+    this.guarding = input.guard && hasShield && !this.aimingBow && !this.paragliding;
     this.crouching = input.crouch && this.grounded;
 
     if (this.bulletTimeActive) {
@@ -374,14 +419,23 @@ export class PlayerController {
       this.consumeStamina(save, drainRate * dt);
     }
 
-    // Check Terrain Height, Slope & Water
+    // Check Terrain Height, Slope & Water (supports interior shrine pools)
     const groundY = getTerrainHeight(this.position.x, this.position.z);
     getTerrainNormal(this.position.x, this.position.z, this.tmpNormal);
-    const inWater = isWaterAt(this.position.x, this.position.z) && this.position.y <= WORLD_BOUNDS.waterLevel - 0.35;
+    const waterSurfaceY = getInteriorWaterLevelAt(this.position.x, this.position.z) ?? WORLD_BOUNDS.waterLevel;
+    const inWater = isWaterAt(this.position.x, this.position.z) && this.position.y <= waterSurfaceY - 0.35;
     this.swimming = inWater;
     if (this.swimming) {
       this.climbing = false;
       this.climbingWall = false;
+      this.maxAirY = this.position.y;
+    }
+
+    // Track peak height during freefall for >10m fall damage
+    if (!this.grounded && !this.climbing && !this.swimming && !this.paragliding) {
+      this.maxAirY = Math.max(this.maxAirY, this.position.y);
+    } else if (this.paragliding || this.climbing) {
+      this.maxAirY = this.position.y;
     }
 
     // Terrain cliff climbing check (steep natural cliff >35 deg -> normal.y < 0.78)
@@ -484,11 +538,18 @@ export class PlayerController {
       this.velocity.y = 0;
       this.position.x += this.velocity.x * dt;
       this.position.z += this.velocity.z * dt;
-      this.position.y = WORLD_BOUNDS.waterLevel - 0.65;
+      this.position.y = waterSurfaceY - 0.65;
       physics.resolveCapsuleCollision(this.position, PLAYER_RADIUS, PLAYER_HEIGHT, 0.45);
       if (hasMove) {
         const drain = input.sprint ? (armor.activeSetBonus === 'swim_dash_stamina' ? 10 : 20) : 6.5;
         this.consumeStamina(save, drain * dt);
+      } else {
+        this.consumeStamina(save, 1.5 * dt);
+      }
+      if (this.exhausted || save.stamina <= 0) {
+        opts.onDrown?.(this.lastSafeLandPos);
+        this.swimming = false;
+        this.exhausted = false;
       }
       animState = 'swim';
       horizSpeed = hasMove ? swimSpd : 0;
@@ -621,10 +682,24 @@ export class PlayerController {
           this.velocity.y = 0;
           this.grounded = true;
           this.paragliding = false;
+          if (!wasGrounded) {
+            const fallDist = this.maxAirY - newSupportY;
+            if (fallDist > 10.5 && !wasParagliding) {
+              const dmg = Math.min(12, Math.max(0.5, Math.floor((fallDist - 8.5) * 0.45) * 0.5));
+              opts.onFallDamage?.(dmg);
+            }
+            this.maxAirY = newSupportY;
+          }
+          if (!inWater) {
+            this.lastSafeLandPos.copy(this.position);
+          }
           if (this.shieldSurfing && Math.hypot(this.velocity.x, this.velocity.z) < 2.2) {
             this.shieldSurfing = false;
           }
         } else if (this.position.y > newSupportY + 0.55) {
+          if (this.grounded) {
+            this.maxAirY = Math.max(this.position.y, newSupportY);
+          }
           this.grounded = false;
         }
       }

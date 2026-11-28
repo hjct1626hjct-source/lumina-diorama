@@ -335,6 +335,7 @@ export interface SaveSlotData {
   champions: ChampionsState;
   activatedTowers: RegionId[];
   completedShrines: string[];
+  discoveredShrines: string[];
   discoveredLocations: string[];
   foundKoroks: string[];
   unlockedMemories: string[];

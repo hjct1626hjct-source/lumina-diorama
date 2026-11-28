@@ -3,6 +3,7 @@ import { createBotWToonMaterial } from '../rendering/BotWToonShader';
 import { textureBank } from '../rendering/ProceduralTextures';
 import { modelLoader, type NormalizedInstance } from '../rendering/ModelLoader';
 import { getTerrainHeight } from '../world/TerrainGenerator';
+import type { PhysicsChemistryEngine } from '../physics/PhysicsChemistryEngine';
 import type { EnemySpecies, EnemyTier } from '../types/botw';
 
 /**
@@ -95,6 +96,7 @@ export interface WorldEnemy {
 
 export interface ProjectileBeam {
   id: string;
+  attacker: WorldEnemy;
   fromEnemy: boolean;
   isGuardianLaser: boolean;
   position: THREE.Vector3;
@@ -184,7 +186,7 @@ export class EnemyAndBossSystem {
       { id: 'guard_hc_1', species: 'guardian_stalker', nameJa: 'ガーディアン（歩行型）', tier: 'boss', x: -110, z: 120, baseHp: 1500, atk: 38, isBoss: true },
       { id: 'guard_hc_2', species: 'guardian_stalker', nameJa: 'ガーディアン（歩行型）', tier: 'boss', x: -80, z: -120, baseHp: 1500, atk: 38, isBoss: true },
       { id: 'moblin_ch_1', species: 'moblin', nameJa: 'モリブリン', tier: 'blue', x: -140, z: 220, baseHp: 75, atk: 16 },
-      { id: 'calamity_ganon', species: 'calamity_ganon', nameJa: '厄災ガノン', tier: 'boss', x: -80, z: -260, baseHp: 4000, atk: 44, isBoss: true },
+      { id: 'calamity_ganon', species: 'calamity_ganon', nameJa: '厄災ガノン', tier: 'boss', x: -80, z: -200, baseHp: 4000, atk: 44, isBoss: true },
       // Regional signature monsters, Wizzrobes, Lynels & Hinoxes
       { id: 'lizal_lan', species: 'lizalfos', nameJa: 'リザルフォス', tier: 'blue', x: 820, z: -60, baseHp: 70, atk: 18 },
       { id: 'wizzrobe_lan_elec', species: 'wizzrobe', nameJa: 'ボルトウィズローブ', tier: 'blue', x: 780, z: -110, baseHp: 180, atk: 22, casterElement: 'shock' },
@@ -741,6 +743,7 @@ export class EnemyAndBossSystem {
       masterMode: boolean;
       stealthLevel: number;
       disguises: string[];
+      physics?: PhysicsChemistryEngine;
       onEnemyAttackPlayer: (enemy: WorldEnemy, damage: number, isLaser: boolean) => void;
       onReflectBeamHitEnemy: (enemy: WorldEnemy, damage: number) => void;
     }
@@ -856,6 +859,11 @@ export class EnemyAndBossSystem {
           e.glbInstance?.playClip('attack');
           opts.onEnemyAttackPlayer(e, e.attack, false);
         }
+
+        // Prevent non-flying ground enemies from clipping through shrine/castle/village walls
+        if (opts.physics && !e.isHoverCaster && e.species !== 'windblight' && e.species !== 'calamity_ganon') {
+          opts.physics.resolveCapsuleCollision(e.position, Math.min(1.6, Math.max(0.55, e.radius)), 2.2, 0.55);
+        }
       } else {
         if (e.guardianLaserMesh) e.guardianLaserMesh.visible = false;
         e.guardianCharge = Math.max(0, e.guardianCharge - dt * 0.8);
@@ -880,7 +888,7 @@ export class EnemyAndBossSystem {
 
       if (p.fromEnemy) {
         if (p.position.distanceTo(playerPos.clone().add(new THREE.Vector3(0, 1.0, 0))) < 1.35) {
-          opts.onEnemyAttackPlayer(this.enemies[0], p.damage, p.isGuardianLaser);
+          opts.onEnemyAttackPlayer(p.attacker, p.damage, p.isGuardianLaser);
           this.group.remove(p.mesh);
           this.projectiles.splice(i, 1);
           continue;
@@ -942,6 +950,7 @@ export class EnemyAndBossSystem {
 
     this.projectiles.push({
       id: `orb_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+      attacker: caster,
       fromEnemy: true,
       isGuardianLaser: false,
       position: start,
@@ -964,6 +973,7 @@ export class EnemyAndBossSystem {
 
     this.projectiles.push({
       id: `beam_${Date.now()}`,
+      attacker: guardian,
       fromEnemy: true,
       isGuardianLaser: true,
       position: start,

@@ -153,9 +153,8 @@ html, body {
 
 /* ==================== AUTHENTIC BOTW HUD ==================== */
 #botw-hud {
-  position: fixed;
+  position: absolute;
   inset: 0;
-  z-index: 20;
   pointer-events: none;
 }
 
@@ -165,9 +164,10 @@ html, body {
 
 /* Top-Left: Hearts + Champions' Abilities + Rupees */
 .hud-top-left {
-  position: absolute;
+  position: fixed;
   top: calc(16px + var(--sat));
   left: calc(18px + var(--sal));
+  z-index: 22;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -227,9 +227,10 @@ html, body {
 }
 
 .master-triforce {
-  position: absolute;
+  position: fixed;
   bottom: calc(20px + var(--sab));
   left: calc(20px + var(--sal));
+  z-index: 22;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -248,15 +249,16 @@ html, body {
 
 /* Top-Center: Region Arrival Banner + Boss HP Bar + Toast */
 .hud-top-center {
-  position: absolute;
-  top: calc(16px + var(--sat));
+  position: fixed;
+  top: calc(18px + var(--sat));
   left: 50%;
   transform: translateX(-50%);
+  z-index: 22;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  width: min(540px, 68vw);
+  width: min(560px, 60vw);
   pointer-events: none;
 }
 
@@ -341,9 +343,10 @@ html, body {
 
 /* Top-Right: Quick Action Strip (Sheikah Slate / Map / Camera / Controls / Pro HUD) */
 .hud-top-right {
-  position: absolute;
+  position: fixed;
   top: calc(14px + var(--sat));
   right: calc(16px + var(--sar));
+  z-index: 30;
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
@@ -354,6 +357,7 @@ html, body {
 
 .hud-chip-btn {
   appearance: none;
+  touch-action: manipulation;
   cursor: pointer;
   padding: 6px 11px;
   border-radius: 4px;
@@ -371,7 +375,8 @@ html, body {
 
 /* Screen-projected Circular Green Stamina Wheel beside Link */
 #stamina-wheel-wrap {
-  position: absolute;
+  position: fixed;
+  z-index: 22;
   width: 68px;
   height: 68px;
   transform: translate(-50%, -50%);
@@ -386,9 +391,10 @@ html, body {
 
 /* Bottom-Left: Active Rune + D-Pad Quick Select + Interact Prompt */
 .hud-bottom-left {
-  position: absolute;
+  position: fixed;
   bottom: calc(22px + var(--sab));
   left: calc(18px + var(--sal));
+  z-index: 30;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -404,6 +410,7 @@ html, body {
 }
 
 .rune-slot {
+  touch-action: manipulation;
   cursor: pointer;
   padding: 6px 9px;
   border-radius: 5px;
@@ -458,9 +465,10 @@ html, body {
 
 /* Bottom-Right: Authentic BotW Circular Minimap + Sound Waveform + Thermometer + Weather + Clock */
 .hud-bottom-right {
-  position: absolute;
+  position: fixed;
   bottom: calc(18px + var(--sab));
   right: calc(18px + var(--sar));
+  z-index: 30;
   display: flex;
   align-items: flex-end;
   gap: 12px;
@@ -938,9 +946,8 @@ html, body {
 
 /* ==================== IPAD / MOBILE MULTI-TOUCH CONTROLS ==================== */
 .touch-controls-layer {
-  position: fixed;
+  position: absolute;
   inset: 0;
-  z-index: 25;
   pointer-events: none;
   touch-action: none;
 }
@@ -949,11 +956,11 @@ html, body {
   display: none !important;
 }
 
-/* Full right & upper viewport 360° camera look drag area (zero blind spots!) */
+/* Full right & upper viewport 360° camera look drag area (behind HUD buttons!) */
 .touch-look-zone {
   position: fixed;
   inset: 0;
-  z-index: 25;
+  z-index: 18;
   pointer-events: auto;
   touch-action: none;
 }
@@ -1492,3 +1499,29 @@ body.touch-ui-active .master-triforce {
     padding: 14px 16px;
   }
 }
+
+/* ==================== SHRINE ELEVATOR TRANSITION FADE OVERLAY ==================== */
+.shrine-fade-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 42;
+  background: radial-gradient(circle at 50% 45%, rgba(18, 48, 72, 0.94), rgba(4, 9, 16, 0.99));
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.38s ease;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: #8cf3ff;
+  font-family: var(--botw-font-serif);
+  letter-spacing: 0.14em;
+  font-size: 20px;
+}
+
+.shrine-fade-overlay.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+

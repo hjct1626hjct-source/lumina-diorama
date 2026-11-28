@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { createBotWToonMaterial } from '../rendering/BotWToonShader';
 import { textureBank } from '../rendering/ProceduralTextures';
 import { PhysicsChemistryEngine, type PhysicsBody } from '../physics/PhysicsChemistryEngine';
-import { getTerrainHeight, isNoBikeZone, isWaterAt } from '../world/TerrainGenerator';
+import { getInteriorWaterLevelAt, getTerrainHeight, isNoBikeZone, isWaterAt } from '../world/TerrainGenerator';
 import { WORLD_BOUNDS } from '../data/regions';
 import type { RuneId } from '../types/botw';
 
@@ -198,6 +198,30 @@ export class SheikahRuneSystem {
   }
 
   /**
+   * Releases Magnesis, clears transient bombs/Cryonis pillars, and dismounts bike during shrine entry/exit transitions.
+   */
+  clearTransientRunes(physics: PhysicsChemistryEngine): void {
+    this.releaseMagnesis();
+    if (this.roundBomb) {
+      this.group.remove(this.roundBomb.mesh);
+      this.roundBomb = null;
+    }
+    if (this.squareBomb) {
+      this.group.remove(this.squareBomb.mesh);
+      this.squareBomb = null;
+    }
+    for (const p of this.cryonisPillars) {
+      this.group.remove(p.mesh);
+      physics.removeBody(p.body.id);
+    }
+    this.cryonisPillars.length = 0;
+    this.bikeSpawned = false;
+    this.ridingBike = false;
+    this.bikeGroup.visible = false;
+    this.bikeSpeed = 0;
+  }
+
+  /**
    * Executes the currently selected Sheikah Rune!
    */
   activateCurrentRune(params: {
@@ -212,6 +236,7 @@ export class SheikahRuneSystem {
     onNotify: (n: RuneNotification) => void;
     onExplosionImpact: (pos: THREE.Vector3, radius: number, damage: number, impulse: number, isBomb: boolean) => void;
     onStasisEnemy?: (origin: THREE.Vector3, dir: THREE.Vector3, upgraded: boolean) => boolean;
+    onCryonisCreated?: (pillar: ActiveCryonisPillar) => void;
     onCameraSnap?: () => void;
   }): boolean {
     const { playerPos, forwardDir, physics, upgradedBomb, upgradedStasis, unlockedRunes, isRaining, onNotify, onExplosionImpact } = params;
@@ -292,11 +317,11 @@ export class SheikahRuneSystem {
         onNotify({ text: `ビタロック充電中 (${this.stasisCd.toFixed(1)}s)`, accent: 'amber' });
         return false;
       }
-      // First check rigid body objects within 18m
+      // First check rigid body objects within 18m (including static gears marked stasisInteractable)
       let best: PhysicsBody | null = null;
       let bestDist = 18.5;
       for (const b of physics.bodies) {
-        if (b.isStatic || b.isFrozenStasis) continue;
+        if ((b.isStatic && !b.stasisInteractable) || b.isFrozenStasis) continue;
         const d = b.position.distanceTo(playerPos);
         if (d < bestDist) {
           const align = b.position.clone().sub(playerPos).normalize().dot(forwardDir);
@@ -329,13 +354,14 @@ export class SheikahRuneSystem {
     }
 
     if (this.activeRune === 'cryonis') {
-      // Check water target in front of player (3..16m)
+      // Check water target in front of player (3..16m), honoring shrine water pools
       let waterSpot: THREE.Vector3 | null = null;
       for (let dist = 3.5; dist <= 16; dist += 1.5) {
         const tx = playerPos.x + forwardDir.x * dist;
         const tz = playerPos.z + forwardDir.z * dist;
         if (isWaterAt(tx, tz)) {
-          waterSpot = new THREE.Vector3(tx, WORLD_BOUNDS.waterLevel, tz);
+          const wl = getInteriorWaterLevelAt(tx, tz) ?? WORLD_BOUNDS.waterLevel;
+          waterSpot = new THREE.Vector3(tx, wl, tz);
           break;
         }
       }
@@ -349,7 +375,8 @@ export class SheikahRuneSystem {
         this.group.remove(oldest.mesh);
         physics.removeBody(oldest.body.id);
       }
-      this.spawnCryonisPillar(waterSpot, physics);
+      const pillar = this.spawnCryonisPillar(waterSpot, physics);
+      params.onCryonisCreated?.(pillar);
       onNotify({ text: `アイスメイカー：氷柱を生成 (${this.cryonisPillars.length}/3)`, accent: 'cyan' });
       return true;
     }
@@ -472,7 +499,7 @@ export class SheikahRuneSystem {
     onNotify?.({ text: `バクダン起爆！ (威力${dmg})`, accent: 'cyan' });
   }
 
-  private spawnCryonisPillar(spot: THREE.Vector3, physics: PhysicsChemistryEngine): void {
+  private spawnCryonisPillar(spot: THREE.Vector3, physics: PhysicsChemistryEngine): ActiveCryonisPillar {
     const grp = new THREE.Group();
     const iceTex = textureBank.getSnowTexture();
     const iceMat = createBotWToonMaterial({
@@ -503,6 +530,8 @@ export class SheikahRuneSystem {
       angularVelocity: new THREE.Vector3(),
       mass: 999,
       radius: 1.5,
+      halfWidth: 1.3,
+      halfDepth: 1.3,
       halfHeight: 1.9,
       material: 'IceBlock',
       isStatic: true,
@@ -521,13 +550,15 @@ export class SheikahRuneSystem {
     };
     physics.addBody(body);
 
-    this.cryonisPillars.push({
+    const pillar: ActiveCryonisPillar = {
       id: body.id,
       body,
       mesh: grp,
       targetHeight: spot.y,
       currentHeight: spot.y - 3.6,
-    });
+    };
+    this.cryonisPillars.push(pillar);
+    return pillar;
   }
 
   update(
@@ -565,7 +596,8 @@ export class SheikahRuneSystem {
         .clone()
         .addScaledVector(forwardDir, this.magnesisHoldDist)
         .add(new THREE.Vector3(0, this.magnesisHoldHeight, 0));
-      const gY = getTerrainHeight(targetPos.x, targetPos.z) + 0.2;
+      const floorPad = this.magnesisTarget.isPlatform || this.magnesisTarget.isMetalBox ? 0.04 : 0.2;
+      const gY = getTerrainHeight(targetPos.x, targetPos.z) + floorPad;
       targetPos.y = Math.max(gY, targetPos.y);
 
       // Smooth inertial spring motion (gives weighty Havok pendulum feel!)
@@ -595,9 +627,10 @@ export class SheikahRuneSystem {
     // 2. Remote Bombs physics (Round rolls & wind-affected; Square stays stable!)
     for (const bomb of [this.roundBomb, this.squareBomb]) {
       if (!bomb) continue;
-      const inWater = isWaterAt(bomb.position.x, bomb.position.z) && bomb.position.y < WORLD_BOUNDS.waterLevel;
+      const wl = getInteriorWaterLevelAt(bomb.position.x, bomb.position.z) ?? WORLD_BOUNDS.waterLevel;
+      const inWater = isWaterAt(bomb.position.x, bomb.position.z) && bomb.position.y < wl;
       if (inWater) {
-        bomb.velocity.y += (WORLD_BOUNDS.waterLevel - bomb.position.y) * 18 * dt;
+        bomb.velocity.y += (wl - bomb.position.y) * 18 * dt;
         bomb.velocity.multiplyScalar(Math.pow(0.25, dt));
       } else {
         bomb.velocity.y -= 22.0 * dt;

@@ -76,12 +76,13 @@ def run_verification():
     port = find_free_port()
     base_url = f"http://127.0.0.1:{port}"
     # Start production preview server on guaranteed free port
+    vite_cmd = ["./node_modules/.bin/vite"] if os.path.exists("./node_modules/.bin/vite") else ["npx", "vite"]
     server = subprocess.Popen(
-        ["npx", "vite", "preview", "--port", str(port), "--strictPort", "--host", "127.0.0.1"],
+        [*vite_cmd, "preview", "--port", str(port), "--strictPort", "--host", "127.0.0.1"],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
-    time.sleep(2.2)
+    time.sleep(1.5)
 
     console_errors = []
     console_warnings = []
@@ -147,22 +148,39 @@ def run_verification():
                 assert set(disk_glbs) == set(loaded)
                 assert set(disk_glbs) == set(instantiated)
 
-                # Unlock Camera & Magnesis authentically via Shrine of Resurrection -> Oman Au -> Purah!
-                purah_unlock = page.evaluate("""() => {
+                # Unlock Camera & Magnesis authentically via Shrine of Resurrection -> Oman Au 3D Interior -> Purah!
+                purah_unlock = page.evaluate("""async () => {
                     const B = window.__BOTW__;
-                    // Collect Sheikah Slate pedestal
-                    B.teleport(-311.2, 455.0);
+                    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+                    const waitForIdle = async (inShrine) => {
+                        for (let i = 0; i < 40; i++) {
+                            if (B.engine.shrineInterior.isActive() === inShrine && !B.engine.paused) return;
+                            await sleep(50);
+                        }
+                    };
+                    // Collect Sheikah Slate from inner Awakening Room Pedestal (-319.5, 455.0)
+                    B.teleport(-319.5, 455.0);
                     B.interactNearest();
                     const hasSlate = B.engine.save.hasSheikahSlate;
-                    // Unlock Magnesis at Oman Au Shrine
+                    // Enter Oman Au 3D Shrine Interior -> Guidance Stone unlocks Magnesis -> Exit pad returns to overworld
                     B.teleport(-215, 420);
                     B.interactNearest();
+                    await waitForIdle(true);
+                    const enteredOman = B.engine.shrineInterior.activeShrine?.id === 'shrine_oman_au' && B.engine.player.position.y >= 595;
+                    B.engine.player.setExactPosition(3.4, 600, 14.5);
+                    B.interactNearest(); // Extract Magnesis from Guidance Stone
+                    const unlockedMagnesis = B.engine.save.unlockedRunes.includes('magnesis');
+                    B.engine.player.setExactPosition(0, 600, 18.5);
+                    B.interactNearest(); // Return to Hyrule via Exit pad
+                    await waitForIdle(false);
                     // Speak with Purah at Hateno Lab to unlock Camera Rune
                     B.teleport(1114, 545);
                     B.interactNearest();
-                    return hasSlate;
+                    return { hasSlate, enteredOman, unlockedMagnesis };
                 }""")
-                assert purah_unlock is True, "Sheikah Slate pedestal should unlock slate"
+                assert purah_unlock["hasSlate"] is True, "Sheikah Slate pedestal should unlock slate"
+                assert purah_unlock["enteredOman"] is True, "Oman Au Shrine must enter 3D interior at Y=600"
+                assert purah_unlock["unlockedMagnesis"] is True, "Guidance Stone pedestal inside Oman Au must unlock Magnesis"
                 page.locator("#btn-dlg-next").click()
                 page.locator("[data-dlg-act='unlock_camera_rune']").click()
                 page.evaluate("""() => {
@@ -186,10 +204,10 @@ def run_verification():
                 assert phys["staticColliders"] > 100 and phys["propColliders"] > 10
 
                 # Test Authentic New Game 3D Opening Sequence & Old Man 4-Shrine Gate
-                print("   Testing Authentic New Game 3D Opening -> Old Man 4-Shrine Paraglider Gate...")
+                print("   Testing Authentic New Game 3D Opening -> 2-Room SoR -> 4 Shrines -> Old Man Paraglider Gate...")
                 page.reload(wait_until="domcontentloaded", timeout=30000)
                 page.wait_for_function("() => Boolean(window.__BOTW__)", timeout=30000)
-                page.click("#btn-new-normal")
+                page.locator("#btn-new-normal").click(timeout=60000)
                 time.sleep(0.4)
                 assert page.locator("#awakening-overlay").is_visible(), "3D Awakening overlay should display instead of slideshow modal"
                 init_state = page.evaluate("""() => {
@@ -210,14 +228,14 @@ def run_verification():
                 # Inspect Slate Pedestal -> Both Shirt & Trousers Chests -> Exit Terminal -> Overlook Panorama Logo
                 sor_prog = page.evaluate("""() => {
                     const B = window.__BOTW__;
-                    B.teleport(-311.2, 455.0);
-                    B.interactNearest(); // Collect Sheikah Slate
+                    B.teleport(-319.5, 455.0);
+                    B.interactNearest(); // Collect Sheikah Slate & open inner partition door
                     B.teleport(-310.2, 458.4);
-                    B.interactNearest(); // Shirt Chest
+                    B.interactNearest(); // Shirt Chest in Anteroom
                     B.teleport(-308.0, 458.4);
-                    B.interactNearest(); // Trousers Chest
-                    B.teleport(-306.4, 456.6);
-                    B.interactNearest(); // Exit Terminal -> Open Stone Seal Door
+                    B.interactNearest(); // Trousers Chest in Anteroom
+                    B.teleport(-306.0, 456.6);
+                    B.interactNearest(); // Exit Terminal -> Open Outer Stone Seal Door
                     B.teleport(-293.0, 454.5); // Step onto cliff overlook
                     return {
                         slate: B.engine.save.hasSheikahSlate,
@@ -251,12 +269,31 @@ def run_verification():
                 page.locator("[data-dlg-act='grant_paraglider']").click()
                 assert page.evaluate("() => window.__BOTW__.engine.save.hasParaglider") is False, "Paraglider must NOT be granted before 4 shrines!"
 
-                # Complete the 4 Great Plateau Shrines -> Verify all 4 runes + Old Man King Reveal + Paraglider!
-                plateau_done = page.evaluate("""() => {
+                # Complete the 4 Great Plateau Shrines inside 3D chambers -> Verify all runes + Old Man King Reveal + Paraglider!
+                plateau_done = page.evaluate("""async () => {
                     const B = window.__BOTW__;
-                    for (const [x, z] of [[-215, 420], [-150, 490], [-275, 555], [-345, 525]]) {
-                        B.teleport(x, z);
+                    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+                    const waitForIdle = async (inShrine) => {
+                        for (let i = 0; i < 40; i++) {
+                            if (B.engine.shrineInterior.isActive() === inShrine && !B.engine.paused) return;
+                            await sleep(50);
+                        }
+                    };
+                    const shrines = [
+                        { x: -215, z: 420, altarY: 600 },
+                        { x: -150, z: 490, altarY: 600 },
+                        { x: -275, z: 555, altarY: 603.4 },
+                        { x: -345, z: 525, altarY: 602.6 },
+                    ];
+                    for (const s of shrines) {
+                        B.teleport(s.x, s.z);
                         B.interactNearest();
+                        await waitForIdle(true);
+                        B.engine.player.setExactPosition(3.4, 600, 14.5);
+                        B.interactNearest();
+                        B.engine.player.setExactPosition(0, s.altarY, -30.5);
+                        B.interactNearest();
+                        await waitForIdle(false);
                     }
                     const npc = B.engine.npcs.npcs.find(n => n.id === 'npc_old_man');
                     B.teleport(npc.position.x - 1.5, npc.position.z + 1.0);
@@ -326,16 +363,36 @@ def run_verification():
             assert gfx_l["dpr"] <= 1.51, f"iPad DPR must be clamped <= 1.5, got {gfx_l['dpr']}"
             assert gfx_l["preserveDrawingBuffer"] is False
 
-            # Minimal Touch HUD check + Repeated #tbtn-interact Multi-Tap Dialogue Regression Test!
+            # Minimal Touch HUD check + z-index Layering check (#btn-hud-slate above .touch-look-zone) + Cheat removal check!
             hud_compaction = page_l.evaluate("""() => {
                 const advHidden = window.getComputedStyle(document.getElementById('btn-hud-adv')).display === 'none';
-                const cookHidden = window.getComputedStyle(document.getElementById('btn-hud-cook')).display === 'none';
+                const cookRemoved = document.getElementById('btn-hud-cook') === null;
+                const timeCheatRemoved = document.getElementById('sys-time-6h') === null;
+                const bmCheatRemoved = document.getElementById('sys-bloodmoon') === null;
                 const runeBtnHidden = window.getComputedStyle(document.getElementById('tbtn-rune')).display === 'none';
-                return { advHidden, cookHidden, runeBtnHidden };
+
+                const slateBtn = document.getElementById('btn-hud-slate');
+                const sr = slateBtn.getBoundingClientRect();
+                const hit = document.elementFromPoint(sr.left + sr.width / 2, sr.top + sr.height / 2);
+                const slateTopmost = hit === slateBtn || slateBtn.contains(hit);
+                const hitId = hit?.id || hit?.className || '';
+                return { advHidden, cookRemoved, timeCheatRemoved, bmCheatRemoved, runeBtnHidden, slateTopmost, hitId };
             }""")
-            print(f"   iPad Minimal HUD state: {hud_compaction}")
-            assert hud_compaction["advHidden"] and hud_compaction["cookHidden"], "PC-only top-right HUD chips must be hidden in touch mode!"
+            print(f"   iPad Minimal HUD & Layering state: {hud_compaction}")
+            assert hud_compaction["advHidden"], "PC-only adventure chip must be hidden in touch mode!"
+            assert hud_compaction["cookRemoved"] and hud_compaction["timeCheatRemoved"] and hud_compaction["bmCheatRemoved"], "Cheat/shortcut UI must be removed!"
             assert hud_compaction["runeBtnHidden"], "Touch rune button must hide when 0 runes unlocked!"
+            assert hud_compaction["slateTopmost"], f"#btn-hud-slate must receive taps above .touch-look-zone, hit={hud_compaction['hitId']}"
+
+            # Verify tapping #btn-hud-slate at screen coordinates actually opens #slate-modal on iPad!
+            slate_center = page_l.evaluate("""() => {
+                const r = document.getElementById('btn-hud-slate').getBoundingClientRect();
+                return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+            }""")
+            page_l.touchscreen.tap(slate_center["x"], slate_center["y"])
+            page_l.evaluate("() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
+            assert page_l.locator("#slate-modal").is_visible(), "Tapping #btn-hud-slate on iPad must open Pouch modal!"
+            page_l.evaluate("() => window.__BOTW__.closeAllModals()")
 
             # Teleport beside Old Man and tap #tbtn-interact THREE consecutive times, including dropped-pointerup simulation!
             page_l.evaluate("""() => {

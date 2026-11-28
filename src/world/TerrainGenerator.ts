@@ -3,6 +3,21 @@ import { createNoise2D } from 'simplex-noise';
 import { LANDMARKS, PHYSICAL_SHRINES, REGION_LIST, REGIONS, WORLD_BOUNDS } from '../data/regions';
 import type { RegionDef, RegionId } from '../types/botw';
 
+export interface InteriorEnvironmentOverride {
+  getFloorY: (x: number, z: number) => number;
+  getWaterLevel: (x: number, z: number) => number | null;
+}
+
+let interiorEnvOverride: InteriorEnvironmentOverride | null = null;
+
+export function setInteriorEnvironmentOverride(override: InteriorEnvironmentOverride | null): void {
+  interiorEnvOverride = override;
+}
+
+export function getInteriorWaterLevelAt(x: number, z: number): number | null {
+  return interiorEnvOverride ? interiorEnvOverride.getWaterLevel(x, z) : null;
+}
+
 function createSeededRng(seed: number): () => number {
   let s = seed >>> 0;
   return () => {
@@ -79,6 +94,9 @@ export function getRegionAt(x: number, z: number): RegionDef {
  *   3. Death Mountain(~210m world = 700m displayed)
  */
 export function getTerrainHeight(x: number, z: number): number {
+  if (interiorEnvOverride) {
+    return interiorEnvOverride.getFloorY(x, z);
+  }
   // Base gently rolling Hyrule Field hills + CEDEC triangular sightline ridges
   let h = 14.0 + fbm(x * 0.0014, z * 0.0014, 4) * 26.0 + ridge(x * 0.0022, z * 0.0022) * 14.0;
 
@@ -282,11 +300,16 @@ export function sampleBiomeAt(x: number, z: number, y: number): BiomeSample {
 }
 
 export function isWaterAt(x: number, z: number): boolean {
+  if (interiorEnvOverride) {
+    const wl = interiorEnvOverride.getWaterLevel(x, z);
+    return wl !== null && interiorEnvOverride.getFloorY(x, z) < wl;
+  }
   if (isLavaAt(x, z)) return false;
   return getTerrainHeight(x, z) < WORLD_BOUNDS.waterLevel;
 }
 
 export function isLavaAt(x: number, z: number): boolean {
+  if (interiorEnvOverride) return false;
   const dmDist = Math.hypot(x - 520, z - (-840));
   if (dmDist < 220 && getTerrainHeight(x, z) < 76) return true;
   // Goron City lava moat
@@ -295,6 +318,7 @@ export function isLavaAt(x: number, z: number): boolean {
 }
 
 export function isFreezingWaterAt(x: number, z: number): boolean {
+  if (interiorEnvOverride) return false;
   if (!isWaterAt(x, z)) return false;
   const reg = getRegionAt(x, z);
   return reg.climate === 'extreme_cold' || reg.climate === 'highland_cold';
@@ -315,6 +339,11 @@ export function isNoBikeZone(x: number, z: number): { blocked: boolean; reasonJa
 }
 
 export function getSurfaceType(x: number, z: number): 'grass' | 'stone' | 'snow' | 'sand' | 'water' {
+  if (interiorEnvOverride) {
+    const wl = interiorEnvOverride.getWaterLevel(x, z);
+    if (wl !== null && interiorEnvOverride.getFloorY(x, z) < wl) return 'water';
+    return 'stone';
+  }
   const y = getTerrainHeight(x, z);
   if (y < WORLD_BOUNDS.waterLevel) return 'water';
   const n = getTerrainNormal(x, z);

@@ -28,8 +28,12 @@ import {
 import { LinkCharacterModel } from '../rendering/LinkCharacterModel';
 import {
   ALL_SAVE_SLOTS,
+  canUseSheikahFeatures,
   computeCompletionBreakdown,
+  exchangeSpiritOrbs,
   getManualSlotId,
+  purchaseArmorDye,
+  purchaseGreatFairyUpgrade,
   saveManager,
 } from '../save/SaveManager';
 import type { ClimateStatus } from '../world/WeatherClimateSystem';
@@ -74,9 +78,7 @@ export interface UiCallbacks {
   onEatMeal: (idx: number) => void;
   onRefuelBike: (materialIds: string[]) => void;
   onCookDone: (mealName: string, critical: boolean) => void;
-  onTriggerBloodMoon: () => void;
-  onAdvanceTime: (hours: number) => void;
-  onEnterTrialOfSword: (tier: 'beginning' | 'middle' | 'final') => void;
+  onWaitAtFire: (targetHour: number) => void;
   onTogglePause: (paused: boolean) => void;
   onSettingsChanged?: () => void;
   onNotify: (text: string, accent?: 'cyan' | 'amber' | 'red') => void;
@@ -144,6 +146,9 @@ export class BotWHudAndMenu {
   private elAwakening!: HTMLElement;
   private elAwakeningText!: HTMLElement;
   private elPanoramaTitle!: HTMLElement;
+  private elShrineFade!: HTMLElement;
+  private elShrineFadeTitle!: HTMLElement;
+  private elShrineFadeSub!: HTMLElement;
   private elHud!: HTMLElement;
   private elHearts!: HTMLElement;
   private elChamps!: HTMLElement;
@@ -167,6 +172,7 @@ export class BotWHudAndMenu {
   private elMinimapCanvas!: HTMLCanvasElement;
   private elBtnHudSlate!: HTMLElement;
   private elBtnHudMap!: HTMLElement;
+  private elBtnHudPro!: HTMLElement;
   private elSlateModal!: HTMLElement;
   private elSlateBody!: HTMLElement;
   private elDialogueBox!: HTMLElement;
@@ -235,6 +241,7 @@ export class BotWHudAndMenu {
           <div class="title-kicker">OPEN-AIR HYRULE ENGINE • BASE + DLC 1 & 2</div>
           <h1 class="title-main">BREATH OF THE WILD</h1>
           <div class="title-sub">ゼルダの伝説 ブレス オブ ザ ワイルド — Web 3D 完全再現エディション</div>
+          <div style="margin-top:8px;font-size:13px;letter-spacing:0.12em;color:#e4c465;">製作者:駿 (Created by Shun)</div>
           <div class="title-btn-group">
             <button id="btn-continue" class="botw-btn primary" type="button">▶ つづきから冒険する</button>
             <button id="btn-new-normal" class="botw-btn primary" type="button">✦ はじめから（通常モード）</button>
@@ -258,6 +265,12 @@ export class BotWHudAndMenu {
         <div class="panorama-kicker">THE LEGEND OF ZELDA</div>
         <div class="panorama-main">BREATH OF THE WILD</div>
         <div class="panorama-sub">ゼルダの伝説 ブレス オブ ザ ワイルド</div>
+      </div>
+
+      <!-- Shrine Interior Elevator Fade Transition -->
+      <div id="shrine-fade-overlay" class="shrine-fade-overlay">
+        <div id="shrine-fade-title"></div>
+        <div id="shrine-fade-sub" style="font-size:13px;color:#bdeeff;"></div>
       </div>
 
       <!-- Vignettes & Camera Viewfinder -->
@@ -289,7 +302,6 @@ export class BotWHudAndMenu {
           <button id="btn-hud-slate" class="hud-chip-btn" type="button">📱 ポーチ (Tab)</button>
           <button id="btn-hud-map" class="hud-chip-btn" type="button">🗺️ マップ (M)</button>
           <button id="btn-hud-adv" class="hud-chip-btn" type="button">📜 冒険手帳</button>
-          <button id="btn-hud-cook" class="hud-chip-btn" type="button">🍲 料理</button>
           <button id="btn-hud-pro" class="hud-chip-btn" type="button">👁️ プロHUD (H)</button>
         </div>
 
@@ -329,7 +341,7 @@ export class BotWHudAndMenu {
       <!-- EventFlow Dialogue Box -->
       <div id="dialogue-box" class="dialogue-box hidden"></div>
 
-      <!-- Cooking / Dye Shop / Great Fairy / Document / Memory Sub-Modal -->
+      <!-- Cooking / Campfire / Goddess Statue / Dye Shop / Great Fairy / Document / Memory Sub-Modal -->
       <div id="sub-modal" class="slate-modal hidden"></div>
 
       <!-- Sheikah Slate Pause Menu -->
@@ -353,6 +365,9 @@ export class BotWHudAndMenu {
     this.elAwakening = document.getElementById('awakening-overlay')!;
     this.elAwakeningText = document.getElementById('awakening-subtitle')!;
     this.elPanoramaTitle = document.getElementById('panorama-title-overlay')!;
+    this.elShrineFade = document.getElementById('shrine-fade-overlay')!;
+    this.elShrineFadeTitle = document.getElementById('shrine-fade-title')!;
+    this.elShrineFadeSub = document.getElementById('shrine-fade-sub')!;
     this.elHud = document.getElementById('botw-hud')!;
     this.elHearts = document.getElementById('hud-hearts')!;
     this.elChamps = document.getElementById('hud-champions')!;
@@ -376,6 +391,7 @@ export class BotWHudAndMenu {
     this.elMinimapCanvas = document.getElementById('minimap-canvas') as HTMLCanvasElement;
     this.elBtnHudSlate = document.getElementById('btn-hud-slate')!;
     this.elBtnHudMap = document.getElementById('btn-hud-map')!;
+    this.elBtnHudPro = document.getElementById('btn-hud-pro')!;
     this.elSlateModal = document.getElementById('slate-modal')!;
     this.elSlateBody = document.getElementById('slate-body')!;
     this.elDialogueBox = document.getElementById('dialogue-box')!;
@@ -409,7 +425,6 @@ export class BotWHudAndMenu {
     this.bindTap(document.getElementById('btn-hud-slate'), () => this.openSlate('inventory'));
     this.bindTap(document.getElementById('btn-hud-map'), () => this.openSlate('map'));
     this.bindTap(document.getElementById('btn-hud-adv'), () => this.openSlate('adventure'));
-    this.bindTap(document.getElementById('btn-hud-cook'), () => this.openCookingModal(false));
     this.bindTap(document.getElementById('btn-hud-pro'), () => {
       if (!this.save) return;
       this.save.settings.proHud = !this.save.settings.proHud;
@@ -422,6 +437,10 @@ export class BotWHudAndMenu {
     this.elSlateModal.querySelectorAll('.slate-tab-btn').forEach((btn) => {
       this.bindTap(btn, () => {
         const tab = (btn as HTMLElement).dataset.tab as typeof this.currentTab;
+        if ((tab === 'map' || tab === 'compendium') && this.save && !canUseSheikahFeatures(this.save)) {
+          this.showToast('シーカーストーンを取得するまで使用できません', 'amber');
+          return;
+        }
         this.currentTab = tab;
         this.renderSlateTab();
       });
@@ -430,6 +449,12 @@ export class BotWHudAndMenu {
 
   public bindSave(save: SaveSlotData): void {
     this.save = save;
+  }
+
+  public setShrineFade(active: boolean, titleJa = '', subtitleJa = ''): void {
+    this.elShrineFadeTitle.textContent = titleJa;
+    this.elShrineFadeSub.textContent = subtitleJa;
+    this.elShrineFade.classList.toggle('active', active);
   }
 
   public dismissTitleDirectly(): void {
@@ -637,6 +662,10 @@ export class BotWHudAndMenu {
 
   // ==================== SHEIKAH SLATE PAUSE MENU ====================
   public openSlate(tab: typeof this.currentTab = 'inventory'): void {
+    if ((tab === 'map' || tab === 'compendium') && this.save && !canUseSheikahFeatures(this.save)) {
+      this.showToast('シーカーストーンを手に入れるまでマップ・図鑑は使用できません', 'amber');
+      return;
+    }
     this.currentTab = tab;
     this.isSlateOpen = true;
     this.elSlateModal.classList.remove('hidden');
@@ -697,8 +726,6 @@ export class BotWHudAndMenu {
           ${hasAnyEquipped ? `<button id="btn-strip-naked" class="botw-btn small" type="button">🩳 装備を外す</button>` : ''}
           ${canVai ? `<button id="btn-equip-vai" class="botw-btn small" type="button">💃 淑女セット</button>` : ''}
           ${canChamp ? `<button id="btn-equip-champ" class="botw-btn small" type="button">⚔ 英傑の服セット</button>` : ''}
-          ${ownedArmors.length > 0 ? `<button id="btn-open-dye" class="botw-btn small" type="button">🎨 東風屋15色染色</button>` : ''}
-          ${ownedArmors.length > 0 ? `<button id="btn-open-fairy" class="botw-btn small" type="button">✨ 大妖精★4強化</button>` : ''}
         </div>
         ${
           ownedArmors.length === 0
@@ -890,14 +917,6 @@ export class BotWHudAndMenu {
       this.save.equippedArmor = { head: null, body: 'champions_tunic', legs: 'hylian_trousers' };
       this.renderInventoryTab();
     });
-    this.bindTap(this.elSlateBody.querySelector('#btn-open-dye'), () => {
-      this.closeSlate();
-      this.openDyeShopModal();
-    });
-    this.bindTap(this.elSlateBody.querySelector('#btn-open-fairy'), () => {
-      this.closeSlate();
-      this.openGreatFairyModal();
-    });
     this.elSlateBody.querySelectorAll('[data-wep-id]').forEach((el) =>
       this.bindTap(el, () => {
         this.save.equippedWeaponId = (el as HTMLElement).dataset.wepId!;
@@ -984,16 +1003,17 @@ export class BotWHudAndMenu {
       headDyeHex: headPiece && this.save.armorDyes[headPiece.id] ? KOCHI_DYE_MAP[this.save.armorDyes[headPiece.id]]?.hex : null,
       bodyDyeHex: bodyPiece && this.save.armorDyes[bodyPiece.id] ? KOCHI_DYE_MAP[this.save.armorDyes[bodyPiece.id]]?.hex : null,
       legsDyeHex: legsPiece && this.save.armorDyes[legsPiece.id] ? KOCHI_DYE_MAP[this.save.armorDyes[legsPiece.id]]?.hex : null,
-      weaponId: activeWep?.id,
-      shieldId: activeShd?.id,
+      weaponId: activeWep?.id ?? null,
+      shieldId: activeShd?.id ?? null,
       weaponDrawn: activeWep?.id === 'torch',
       isMasterSword: this.save.equippedWeaponId === 'master_sword',
-      weaponColor: '#d8e6f8',
-      shieldColor: '#244d9c',
+      weaponColor: activeWep?.color ?? '#d8e6f8',
+      shieldColor: activeShd?.color ?? '#244d9c',
       bowDrawn: false,
       paragliderOpen: false,
       shieldSurfing: false,
       holdingTorchFire: activeWep?.id === 'torch',
+      hasSheikahSlate: this.save.hasSheikahSlate,
     });
     this.previewLink.root.rotation.y = this.previewYaw;
     this.previewLink.updateAnimation(0.016, 'idle', 0);
@@ -1003,6 +1023,23 @@ export class BotWHudAndMenu {
   // ==================== INTERACTIVE CONTOUR SHEIKAH MAP + HERO'S PATH ====================
   private renderMapTab(): void {
     const comp = computeCompletionBreakdown(this.save);
+    const unlockedWarps: Array<{ name: string; x: number; z: number }> = [];
+    if (this.save.storyFlags['sor_door_opened']) {
+      unlockedWarps.push({ name: '回生の祠', x: -298, z: 455 });
+    }
+    for (const rId of this.save.activatedTowers) {
+      const reg = REGIONS[rId];
+      if (reg) {
+        unlockedWarps.push({ name: `${reg.nameJa} シーカータワー`, x: reg.towerPos.x, z: reg.towerPos.z });
+      }
+    }
+    const unlockedShrineIds = new Set([...this.save.discoveredShrines, ...this.save.completedShrines]);
+    for (const sh of PHYSICAL_SHRINES) {
+      if (unlockedShrineIds.has(sh.id)) {
+        unlockedWarps.push({ name: sh.nameJa, x: sh.x, z: sh.z + 7.2 });
+      }
+    }
+
     this.elSlateBody.innerHTML = `
       <div class="map-layout">
         <div>
@@ -1038,30 +1075,18 @@ export class BotWHudAndMenu {
             </div>
           </div>
           <div class="list-card">
-            <h4>ファストトラベル（全15エリア・主要拠点）</h4>
+            <h4>ファストトラベル（解放済の塔・試練の祠）</h4>
             <div style="display:flex;flex-direction:column;gap:5px;margin-top:6px;">
-              ${[
-                { name: '回生の祠（始まりの台地）', x: -298, z: 454 },
-                { name: '時の神殿跡', x: -245, z: 482 },
-                { name: 'マ・オーヌの祠（始まりの台地）', x: -215, z: 428 },
-                { name: '始まりの塔（シーカータワー）', x: -190, z: 388 },
-                { name: 'ハイラル城 正門', x: -80, z: -135 },
-                { name: 'カカリコ村（インパ・パーヤ）', x: 430, z: 268 },
-                { name: 'ハテノ村（マイホーム・染色屋）', x: 960, z: 584 },
-                { name: 'ゾーラの里 ＆ ヴァ・ルッタ', x: 960, z: -118 },
-                { name: 'ゴロンシティ ＆ デスマウンテン', x: 450, z: -748 },
-                { name: 'リトの村 ＆ ヴァ・メドー', x: -1072, z: -412 },
-                { name: 'ゲルドの街 ＆ ヴァ・ナボリス', x: -1060, z: 896 },
-                { name: 'コログの森（マスターソード）', x: 60, z: -680 },
-                { name: 'イチカラ村（アッカレ紅葉）', x: 1090, z: -450 },
-                { name: 'ヘブラ山頂（極寒750m）', x: -880, z: -840 },
-                { name: 'ゲルド山頂（最高峰800m）', x: -1100, z: 220 },
-              ]
-                .map(
-                  (w) =>
-                    `<button class="botw-btn small" data-warp-x="${w.x}" data-warp-z="${w.z}" data-warp-name="${w.name}" type="button">🌀 ${w.name}</button>`
-                )
-                .join('')}
+              ${
+                unlockedWarps.length === 0
+                  ? `<p style="font-size:12px;color:#9ab8ce;">回生の祠を出てシーカータワーや試練の祠を起動するとワープ先が登録されます。</p>`
+                  : unlockedWarps
+                      .map(
+                        (w) =>
+                          `<button class="botw-btn small" data-warp-x="${w.x}" data-warp-z="${w.z}" data-warp-name="${w.name}" type="button">🌀 ${w.name}</button>`
+                      )
+                      .join('')
+              }
             </div>
           </div>
         </div>
@@ -1178,6 +1203,7 @@ export class BotWHudAndMenu {
 
     // Physical Shrines (Diamonds)
     for (const sh of PHYSICAL_SHRINES) {
+      if (sh.category === 'dlc2' && this.save.defeatedDivineBeasts.length < 4) continue;
       const sx = toX(sh.x);
       const sy = toY(sh.z);
       const done = this.save.completedShrines.includes(sh.id);
@@ -1257,18 +1283,21 @@ export class BotWHudAndMenu {
       content = `
         <div class="list-card" style="border-color:#e4c465;">
           <h4>真エンディング進捗：本編記憶 ${baseUnlocked} / 18 ${baseUnlocked >= 18 ? '— ✨ 真エンディング解放済！' : ''}</h4>
-          <p>各記憶の「▶ 再生」で会話イベントを鑑賞、「🌀 現地へ移動」で光の柱へ移動できます。</p>
+          <p>各地で光の思い出に触れると記憶が解放され、「▶ 記憶を再生」でいつでも振り返れます。</p>
           ${baseUnlocked >= 18 ? `<button id="btn-play-true-end" class="botw-btn small primary" style="margin-top:6px;" type="button">✨ 真エンディング・エピローグを再生</button>` : ''}
         </div>
         ${ALL_MEMORIES.map((m) => {
           const got = this.save.unlockedMemories.includes(m.id);
           return `<div class="list-card">
-            <h4>${m.code} ${m.titleJa} <span style="font-size:11px;color:#36e4ff;">(${m.titleEn})</span> ${got ? '✅ 回収済' : '🔒 未回収'}</h4>
-            <p>${m.locationJa} — ${m.summaryJa}</p>
-            <div style="margin-top:6px;display:flex;gap:6px;">
-              <button class="botw-btn small primary" data-mem-play="${m.id}" type="button">▶ 記憶を再生</button>
-              <button class="botw-btn small" data-mem-warp="${m.id}" type="button">🌀 発生地へ移動</button>
-            </div>
+            <h4>${m.code} ${got ? m.titleJa : '？？？'} <span style="font-size:11px;color:#36e4ff;">(${got ? m.titleEn : 'Uncollected'})</span> ${got ? '✅ 回収済' : '🔒 未回収'}</h4>
+            <p>${got ? `${m.locationJa} — ${m.summaryJa}` : `手がかり：${m.locationJa}付近に現れる黄金の光を調べよう`}</p>
+            ${
+              got
+                ? `<div style="margin-top:6px;display:flex;gap:6px;">
+                    <button class="botw-btn small primary" data-mem-play="${m.id}" type="button">▶ 記憶を再生</button>
+                  </div>`
+                : ''
+            }
           </div>`;
         }).join('')}`;
     } else if (this.advSubTab === 'main' || this.advSubTab === 'shrine' || this.advSubTab === 'side') {
@@ -1301,19 +1330,11 @@ export class BotWHudAndMenu {
       content = `
         <div class="list-card">
           <h4>DLC第1弾『試練の覇者』剣の試練（全${TRIAL_OF_THE_SWORD_STAGES.length}層：序位12 / 中位16 / 極位23）</h4>
-          <p>クリアでマスターソードが攻撃力60・耐久188へ常時覚醒します！</p>
-          <div style="display:flex;gap:8px;margin-top:8px;">
-            <button class="botw-btn small primary" data-trial="beginning" type="button">⚔ 序位 (12層) に挑む</button>
-            <button class="botw-btn small primary" data-trial="middle" type="button">⚔ 中位 (16層) に挑む</button>
-            <button class="botw-btn small primary" data-trial="final" type="button">⚔ 極位 (23層) に挑む</button>
-          </div>
+          <p>コログの森（中央北西）の台座へマスターソードを手に入れて戻ると試練が開放されます。現在状態: ${this.save.masterSwordAwakened ? '✨ 覚醒済 (攻撃力60 / 耐久188)' : '未覚醒'}</p>
         </div>
         <div class="list-card">
           <h4>DLC第2弾『英傑たちの詩』— 一撃の剣 ＆ 4英傑16祠 ＆ 導師ミィズ・キョシア</h4>
-          <p>${CHAMPIONS_BALLAD_TRIALS.finalTrial.titleJa}（${CHAMPIONS_BALLAD_TRIALS.finalTrial.terminals.length}端末＋ボス：${CHAMPIONS_BALLAD_TRIALS.finalTrial.boss.nameJa}）</p>
-          <div style="margin-top:8px;">
-            <button id="btn-warp-maz" class="botw-btn small primary" type="button">🌀 回生の祠・導師ミィズ・キョシア戦へ</button>
-          </div>
+          <p>${CHAMPIONS_BALLAD_TRIALS.finalTrial.titleJa}（現在 神獣解放: ${this.save.defeatedDivineBeasts.length}/4）— 4体の神獣をすべて解放すると、始まりの台地に4つの新たなEX試練の祠と導師の試練が出現します。</p>
         </div>`;
     }
 
@@ -1333,15 +1354,8 @@ export class BotWHudAndMenu {
     this.elSlateBody.querySelectorAll('[data-mem-play]').forEach((b) =>
       this.bindTap(b, () => {
         const mem = ALL_MEMORIES.find((m) => m.id === (b as HTMLElement).dataset.memPlay);
-        if (mem) this.openMemoryModal(mem);
-      })
-    );
-    this.elSlateBody.querySelectorAll('[data-mem-warp]').forEach((b) =>
-      this.bindTap(b, () => {
-        const mem = ALL_MEMORIES.find((m) => m.id === (b as HTMLElement).dataset.memWarp);
-        if (mem) {
-          this.closeSlate();
-          this.cb.onFastTravel(mem.pos.x, mem.pos.z, mem.locationJa);
+        if (mem && this.save.unlockedMemories.includes(mem.id)) {
+          this.openMemoryModal(mem);
         }
       })
     );
@@ -1352,17 +1366,6 @@ export class BotWHudAndMenu {
         this.openDocumentModal(id);
       })
     );
-    this.elSlateBody.querySelectorAll('[data-trial]').forEach((b) =>
-      this.bindTap(b, () => {
-        const t = (b as HTMLElement).dataset.trial as 'beginning' | 'middle' | 'final';
-        this.closeSlate();
-        this.cb.onEnterTrialOfSword(t);
-      })
-    );
-    this.bindTap(this.elSlateBody.querySelector('#btn-warp-maz'), () => {
-      this.closeSlate();
-      this.cb.onFastTravel(-322, 444, '導師ミィズ・キョシア試練場');
-    });
     this.bindTap(this.elSlateBody.querySelector('#btn-play-true-end'), () => {
       this.closeSlate();
       this.openSubModalHtml(
@@ -1426,12 +1429,10 @@ export class BotWHudAndMenu {
         </div>
       </div>
       <div class="list-card">
-        <h4>モード・物理テクニック・環境操作</h4>
+        <h4>モード・物理テクニック設定</h4>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
           <button id="sys-mode-toggle" class="botw-btn small ${this.save.mode === 'master' ? 'master' : 'primary'}" type="button">モード切替（現在: ${this.save.mode === 'master' ? 'マスターモード' : '通常モード'}）</button>
           <button id="sys-glitch-toggle" class="botw-btn small ${this.save.settings.glitchPhysics ? 'primary' : ''}" type="button">高度物理技 (ウインドボム/BTB/口笛): ${this.save.settings.glitchPhysics ? 'ON' : 'OFF'}</button>
-          <button id="sys-time-6h" class="botw-btn small" type="button">⏱ 時間+6時間進める</button>
-          <button id="sys-bloodmoon" class="botw-btn small master" type="button">🌕 赤い月を発生させる</button>
         </div>
       </div>
       <div class="list-card">
@@ -1451,6 +1452,10 @@ export class BotWHudAndMenu {
             ${sum?.exists ? `<button class="botw-btn small" data-load-slot="${slotId}" type="button">読込</button>` : ''}
           </div>`;
         }).join('')}
+      </div>
+      <div class="list-card">
+        <h4>クレジット</h4>
+        <p style="font-size:13px;color:#e4c465;">製作者:駿 (Created by Shun) — Breath of the Wild Web3D Engine</p>
       </div>
     `;
 
@@ -1485,11 +1490,6 @@ export class BotWHudAndMenu {
       this.save.settings.northFixedMinimap = !this.save.settings.northFixedMinimap;
       this.renderSystemTab();
     });
-    this.bindTap(this.elSlateBody.querySelector('#sys-time-6h'), () => this.cb.onAdvanceTime(6));
-    this.bindTap(this.elSlateBody.querySelector('#sys-bloodmoon'), () => {
-      this.closeSlate();
-      this.cb.onTriggerBloodMoon();
-    });
     this.elSlateBody.querySelectorAll('[data-save-idx]').forEach((b) =>
       this.bindTap(b, () => {
         const idx = Number((b as HTMLElement).dataset.saveIdx) as 1 | 2 | 3;
@@ -1506,7 +1506,7 @@ export class BotWHudAndMenu {
     );
   }
 
-  // ==================== INTERACTIVE MODALS (COOKING, DYE SHOP, GREAT FAIRY, MEMORIES, JOURNALS) ====================
+  // ==================== INTERACTIVE MODALS (COOKING, CAMPFIRE WAIT, GODDESS STATUE, DYE SHOP, GREAT FAIRY, MEMORIES, JOURNALS) ====================
   public openCookingModal(isBloodMoonWindow: boolean): void {
     const selected: string[] = [];
     const render = () => {
@@ -1515,7 +1515,7 @@ export class BotWHudAndMenu {
         `🍲 料理鍋（最大5素材）${isBloodMoonWindow ? ' — 🌕 赤い月100%大成功ボーナス中！' : ''}`,
         `
           <p style="font-size:12px;color:#b8d4e8;margin-bottom:10px;">投入中 (${selected.length}/5): ${selected.map((id) => MATERIAL_MAP[id]?.nameJa).join(' ＋ ') || 'なし'}</p>
-          <div class="inv-grid" style="max-height:300px;">
+          <div class="inv-grid" style="max-height:280px;">
             ${avail
               .map(
                 (m) =>
@@ -1526,9 +1526,17 @@ export class BotWHudAndMenu {
               )
               .join('')}
           </div>
-          <div style="margin-top:12px;display:flex;gap:8px;">
+          <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
             <button id="btn-do-cook" class="botw-btn primary" ${selected.length === 0 ? 'disabled' : ''} type="button">🔥 調理する！</button>
             <button id="btn-cook-clear" class="botw-btn small" type="button">リセット</button>
+          </div>
+          <div class="list-card" style="margin-top:14px;">
+            <h4>🔥 焚き火で暇をつぶす（時間を進める）</h4>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">
+              <button class="botw-btn small" data-wait-hour="5" type="button">🌅 朝まで (05:00)</button>
+              <button class="botw-btn small" data-wait-hour="12" type="button">☀️ 昼まで (12:00)</button>
+              <button class="botw-btn small" data-wait-hour="21" type="button">🌙 夜まで (21:00)</button>
+            </div>
           </div>
         `
       );
@@ -1546,10 +1554,17 @@ export class BotWHudAndMenu {
         selected.length = 0;
         render();
       });
+      this.elSubModal.querySelectorAll('[data-wait-hour]').forEach((el) =>
+        this.bindTap(el, () => {
+          const hour = Number((el as HTMLElement).dataset.waitHour!);
+          this.closeSubModal();
+          this.cb.onWaitAtFire(hour);
+        })
+      );
       this.bindTap(this.elSubModal.querySelector('#btn-do-cook'), () => {
         if (selected.length === 0) return;
         for (const id of selected) {
-          this.save.materials[id] = Math.max(0, (this.save.materials[id] ?? 1) - 1);
+          this.save.materials[id] = Math.max(0, (this.save.materials[id] ?? 0) - 1);
         }
         const meal = cookIngredients(selected, { isBloodMoonWindow });
         this.save.meals.unshift(meal);
@@ -1560,12 +1575,60 @@ export class BotWHudAndMenu {
     render();
   }
 
+  public openCampfireModal(): void {
+    this.openSubModalHtml(
+      '🔥 焚き火 — 暇をつぶす',
+      `
+        <p style="font-size:13px;color:#d6e6f4;margin-bottom:12px;">焚き火にあたって時間を進めますか？</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="botw-btn primary" data-wait-hour="5" type="button">🌅 朝まで暇をつぶす (05:00)</button>
+          <button class="botw-btn primary" data-wait-hour="12" type="button">☀️ 昼まで暇をつぶす (12:00)</button>
+          <button class="botw-btn primary" data-wait-hour="21" type="button">🌙 夜まで暇をつぶす (21:00)</button>
+        </div>
+      `
+    );
+    this.elSubModal.querySelectorAll('[data-wait-hour]').forEach((el) =>
+      this.bindTap(el, () => {
+        const hour = Number((el as HTMLElement).dataset.waitHour!);
+        this.closeSubModal();
+        this.cb.onWaitAtFire(hour);
+      })
+    );
+  }
+
+  public openGoddessStatueModal(): void {
+    this.openSubModalHtml(
+      '🕊️ 女神像 — 克服の証と器の交換',
+      `
+        <div class="list-card">
+          <h4>「多くの試練を乗り越えし者よ……」</h4>
+          <p>所持している<strong>克服の証：${this.save.spiritOrbs} 個</strong>（4個につき1つ器を授けます）</p>
+          <p style="margin-top:4px;color:#b8d4e8;">現在の最大ハート：${this.save.maxHearts} / 30 • 最大がんばり：${this.save.maxStamina} / 300</p>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;">
+          <button id="btn-orb-heart" class="botw-btn primary" ${this.save.spiritOrbs < 4 || this.save.maxHearts >= 30 ? 'disabled' : ''} type="button">❤️ ハートの器をもらう (証4個)</button>
+          <button id="btn-orb-stamina" class="botw-btn primary" ${this.save.spiritOrbs < 4 || this.save.maxStamina >= 300 ? 'disabled' : ''} type="button">💚 がんばりの器をもらう (証4個)</button>
+        </div>
+      `
+    );
+    this.bindTap(this.elSubModal.querySelector('#btn-orb-heart'), () => {
+      const res = exchangeSpiritOrbs(this.save, 'heart');
+      this.showToast(res.messageJa, res.ok ? 'amber' : 'red');
+      if (res.ok) this.openGoddessStatueModal();
+    });
+    this.bindTap(this.elSubModal.querySelector('#btn-orb-stamina'), () => {
+      const res = exchangeSpiritOrbs(this.save, 'stamina');
+      this.showToast(res.messageJa, res.ok ? 'cyan' : 'red');
+      if (res.ok) this.openGoddessStatueModal();
+    });
+  }
+
   public openDyeShopModal(): void {
     const equippedIds = [this.save.equippedArmor.head, this.save.equippedArmor.body, this.save.equippedArmor.legs].filter(Boolean) as string[];
     this.openSubModalHtml(
       '🎨 ハテノ村 染色屋「東風屋」— 全15色染色',
       `
-        <p style="font-size:13px;margin-bottom:10px;">現在装備中の染色可能防具を一括で染色します（費用 20ルピー）</p>
+        <p style="font-size:13px;margin-bottom:10px;">現在装備中の染色可能防具を一括で染色します（費用 20ルピー • 所持 ${this.save.rupees}ルピー）</p>
         <div style="display:flex;flex-wrap:wrap;gap:8px;">
           ${KOCHI_DYE_COLORS.map(
             (d) =>
@@ -1577,13 +1640,13 @@ export class BotWHudAndMenu {
     this.elSubModal.querySelectorAll('[data-dye-pick]').forEach((b) =>
       this.bindTap(b, () => {
         const dyeId = (b as HTMLElement).dataset.dyePick!;
-        for (const id of equippedIds) {
-          if (ARMOR_MAP[id]?.dyeable) {
-            if (dyeId === 'default') delete this.save.armorDyes[id];
-            else this.save.armorDyes[id] = dyeId;
-          }
+        const targets = equippedIds.map((id) => ({ id, dyeable: !!ARMOR_MAP[id]?.dyeable }));
+        const res = purchaseArmorDye(this.save, dyeId, targets, 20);
+        if (!res.ok) {
+          this.showToast(res.messageJa, 'red');
+          return;
         }
-        this.showToast(`防具を「${KOCHI_DYE_MAP[dyeId]?.nameJa}」に染色しました！`, 'cyan');
+        this.showToast(`防具を「${KOCHI_DYE_MAP[dyeId]?.nameJa}」に染色しました！（-20ルピー）`, 'cyan');
         this.closeSubModal();
       })
     );
@@ -1594,7 +1657,7 @@ export class BotWHudAndMenu {
     this.openSubModalHtml(
       '✨ 大妖精の泉 — 防具4段階強化 (★1〜★4)',
       `
-        <p style="font-size:12px;color:#b8d4e8;margin-bottom:10px;">全3部位を★2以上に強化するとセットボーナスが発動します！</p>
+        <p style="font-size:12px;color:#b8d4e8;margin-bottom:10px;">全3部位を★2以上に強化するとセットボーナスが発動します！（所持 ${this.save.rupees}ルピー）</p>
         ${equippedIds
           .map((id) => {
             const p = ARMOR_MAP[id];
@@ -1617,12 +1680,18 @@ export class BotWHudAndMenu {
     this.elSubModal.querySelectorAll('[data-upg-id]').forEach((b) =>
       this.bindTap(b, () => {
         const id = (b as HTMLElement).dataset.upgId!;
+        const piece = ARMOR_MAP[id];
+        if (!piece?.upgradeable) return;
         const cur = this.save.armorStars[id] ?? 0;
-        if (cur < 4) {
-          this.save.armorStars[id] = cur + 1;
-          this.showToast(`${ARMOR_MAP[id]?.nameJa} を ★${cur + 1} へ強化した！`, 'amber');
-          this.openGreatFairyModal();
+        const next = Math.min(4, cur + 1) as 1 | 2 | 3 | 4;
+        const costRupees = GREAT_FAIRY_UPGRADE_COSTS[next].rupees;
+        const res = purchaseGreatFairyUpgrade(this.save, id, piece.upgradeable, costRupees);
+        if (!res.ok) {
+          this.showToast(res.messageJa, 'red');
+          return;
         }
+        this.showToast(`${piece.nameJa} を ★${res.newStar} へ強化した！（-${costRupees}ルピー）`, 'amber');
+        this.openGreatFairyModal();
       })
     );
   }
@@ -1682,6 +1751,8 @@ export class BotWHudAndMenu {
     if (this.elBtnHudSlate.textContent !== slateTxt) this.elBtnHudSlate.textContent = slateTxt;
     const mapTxt = isTouch ? '🗺️ マップ' : '🗺️ マップ (M)';
     if (this.elBtnHudMap.textContent !== mapTxt) this.elBtnHudMap.textContent = mapTxt;
+    const proTxt = isTouch ? '👁️ プロHUD' : '👁️ プロHUD (H)';
+    if (this.elBtnHudPro.textContent !== proTxt) this.elBtnHudPro.textContent = proTxt;
 
     if (this.isSlateOpen && this.currentTab === 'inventory') {
       this.previewYaw += dt * 0.65;
@@ -1948,6 +2019,7 @@ export class BotWHudAndMenu {
         }
       }
       for (const sh of PHYSICAL_SHRINES) {
+        if (sh.category === 'dlc2' && this.save.defeatedDivineBeasts.length < 4) continue;
         const dx = (sh.x - playerPos.x) * scale;
         const dz = (sh.z - playerPos.z) * scale;
         if (dx * dx + dz * dz < 68 * 68) {

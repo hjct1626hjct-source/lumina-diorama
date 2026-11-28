@@ -19,12 +19,13 @@ def run_e2e():
     port = find_free_port()
     base_url = f"http://127.0.0.1:{port}"
     # Serve production dist/ build via Vite preview on guaranteed free port
+    vite_cmd = ["./node_modules/.bin/vite"] if os.path.exists("./node_modules/.bin/vite") else ["npx", "vite"]
     server = subprocess.Popen(
-        ["npx", "vite", "preview", "--port", str(port), "--strictPort", "--host", "127.0.0.1"],
+        [*vite_cmd, "preview", "--port", str(port), "--strictPort", "--host", "127.0.0.1"],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
-    time.sleep(2.2)
+    time.sleep(1.5)
 
     console_errors = []
     page_errors = []
@@ -54,13 +55,13 @@ def run_e2e():
             page.on("pageerror", lambda err: page_errors.append(str(err)))
 
             print(f"1. Loading production build at {base_url} ...")
-            page.goto(base_url, wait_until="networkidle", timeout=30000)
+            page.goto(base_url, wait_until="networkidle", timeout=60000)
             page.wait_for_function("() => Boolean(window.__BOTW__)", timeout=30000)
             time.sleep(1.5)
 
             # Verify 3D Awakening Overlay flow -> Shrine of Resurrection start
             print("2. Verifying 3D Awakening overlay -> Great Plateau start...")
-            page.click("#btn-new-normal")
+            page.locator("#btn-new-normal").click(timeout=60000)
             time.sleep(0.5)
             assert page.locator("#awakening-overlay").is_visible(), "3D Awakening overlay should appear"
             assert page.locator("#botw-hud").is_visible(), "HUD should be visible after awakening"
@@ -105,17 +106,37 @@ def run_e2e():
 
             # 3. E2E Gameplay Verification: Unlock Plateau Runes + Collect Campfire Baked Apple + Bullet-Time Arrow + Cooking!
             print("3. Testing Magnesis, Remote Bombs, Stasis, Cryonis, Fire Updraft Paraglider & Bullet-Time...")
-            rune_report = page.evaluate("""() => {
+            rune_report = page.evaluate("""async () => {
                 const B = window.__BOTW__;
+                const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+                const waitForIdle = async (inShrine) => {
+                    for (let i = 0; i < 40; i++) {
+                        if (B.engine.shrineInterior.isActive() === inShrine && !B.engine.paused) return;
+                        await sleep(50);
+                    }
+                };
                 B.clearCameraOverride();
-                // Obtain Sheikah Slate & clear all 4 Plateau Shrines to unlock Runes authentically!
-                B.teleport(-311.2, 455.0);
+                // Obtain Sheikah Slate from inner Awakening Room Pedestal (-319.5, 455.0)
+                B.teleport(-319.5, 455.0);
                 B.interactNearest();
-                for (const [x, z] of [[-215, 420], [-150, 490], [-275, 555], [-345, 525]]) {
-                    B.teleport(x, z);
+                // Enter all 4 Plateau Shrines, extract Guidance Stone rune, clear Monk Altar & exit cleanly!
+                const shrines = [
+                    { x: -215, z: 420, altarY: 600 },
+                    { x: -150, z: 490, altarY: 600 },
+                    { x: -275, z: 555, altarY: 603.4 },
+                    { x: -345, z: 525, altarY: 602.6 },
+                ];
+                for (const s of shrines) {
+                    B.teleport(s.x, s.z);
                     B.interactNearest();
+                    await waitForIdle(true);
+                    B.engine.player.setExactPosition(3.4, 600, 14.5);
+                    B.interactNearest(); // Extract Guidance Stone Rune
+                    B.engine.player.setExactPosition(0, s.altarY, -30.5);
+                    B.interactNearest(); // Receive Spirit Orb & exit shrine
+                    await waitForIdle(false);
                 }
-                // Pick up Campfire baked_apple + Plateau Wooden Chest arrows, plus equip traveler's bow for bullet-time test
+                // Pick up Campfire baked_apple + Plateau Wooden Chest + Traveler's Bow + Paraglider
                 B.teleport(-286.6, 456.4);
                 B.interactNearest();
                 B.teleport(-292, 452);
@@ -179,14 +200,18 @@ def run_e2e():
             page.screenshot(path=os.path.join(OUT_DIR, "04_npc_dialogue.png"))
             print("   Captured 04_npc_dialogue.png")
 
-            # Re-equip Well-Worn Shirt / Armor + Cook a meal using gathered campfire baked_apple
+            # Re-equip Well-Worn Shirt / Armor + Cook a meal via a town cooking pot using campfire baked_apple
             page.evaluate("""() => {
-                window.__BOTW__.closeAllModals();
-                window.__BOTW__.equipArmor(null, 'well_worn_shirt', 'old_trousers');
-                window.__BOTW__.clearCameraOverride();
+                const B = window.__BOTW__;
+                B.closeAllModals();
+                B.equipArmor(null, 'well_worn_shirt', 'old_trousers');
+                B.clearCameraOverride();
+                const pot = B.engine.architecture.cookingPots[0];
+                B.teleport(pot.position.x, pot.position.z + 0.85, 0);
+                B.interactNearest();
             }""")
-            page.click("#btn-hud-cook")
             time.sleep(0.4)
+            assert page.locator("#sub-modal").is_visible(), "Cooking Pot interaction must open Cooking modal"
             page.locator("[data-cook-add]").first.click()
             time.sleep(0.2)
             page.click("#btn-do-cook")

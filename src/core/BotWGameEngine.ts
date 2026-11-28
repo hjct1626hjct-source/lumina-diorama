@@ -20,6 +20,10 @@ import {
   type WorldTower,
   type WorldWeaponDrop,
 } from '../world/ArchitectureBuilder';
+import {
+  ShrineInteriorManager,
+  PLATEAU_SHRINE_RUNE_MAP as SHRINE_RUNE_INFO,
+} from '../world/ShrineInteriorManager';
 import { getRegionAt, getTerrainHeight } from '../world/TerrainGenerator';
 import { PhysicsChemistryEngine } from '../physics/PhysicsChemistryEngine';
 import { SheikahRuneSystem } from '../gameplay/SheikahRunes';
@@ -27,7 +31,6 @@ import { PlayerController, type InputState } from '../gameplay/PlayerController'
 import { EnemyAndBossSystem, SPECIES_KILL_POINTS, type WorldEnemy } from '../entities/EnemyAndBossSystem';
 import {
   NpcAndKorokSystem,
-  PLATEAU_SHRINE_RUNE_MAP,
   evaluateNpcEventFlow,
   hasCompletedAllPlateauShrines,
   type WorldKorok,
@@ -37,6 +40,8 @@ import { BotWHudAndMenu } from '../ui/BotWHudAndMenu';
 import { TouchControls, isTouchCapableDevice } from '../input/TouchControls';
 import { audioEngine } from '../audio/OpenAirAudioEngine';
 import {
+  canPerformMeleeAttack,
+  canUseSheikahFeatures,
   createDefaultSave,
   getAutoSlotId,
   getManualSlotId,
@@ -48,17 +53,20 @@ import { ARMOR_MAP, computeArmorSummary } from '../data/armors';
 import {
   AUTO_PARRY_LASER_SHIELD_IDS,
   MATERIAL_MAP,
+  SHIELDS,
   WEAPONS,
   computeBotWDamage,
   computeMasterCycleFuel,
 } from '../data/itemsAndCooking';
 import { ALL_MEMORIES, COMPENDIUM_CATALOG } from '../data/storyAndQuests';
-import { LANDMARKS } from '../data/regions';
+import { LANDMARKS, PHYSICAL_SHRINES } from '../data/regions';
 import type { GraphicsQuality, RuneId, SaveSlotData } from '../types/botw';
 
 type NearbyInteractable =
   | { kind: 'slatePedestal'; label: string }
   | { kind: 'sorTerminal'; label: string }
+  | { kind: 'goddess'; label: string }
+  | { kind: 'campfire'; position: THREE.Vector3; label: string }
   | { kind: 'npc'; npc: WorldNpc; label: string }
   | { kind: 'chest'; chest: WorldChest; label: string }
   | { kind: 'weaponDrop'; drop: WorldWeaponDrop; label: string }
@@ -67,7 +75,11 @@ type NearbyInteractable =
   | { kind: 'tower'; tower: WorldTower; label: string }
   | { kind: 'pot'; label: string }
   | { kind: 'memory'; memoryId: string; label: string }
-  | { kind: 'korok'; korok: WorldKorok; label: string };
+  | { kind: 'korok'; korok: WorldKorok; label: string }
+  | { kind: 'shrineInteriorPedestal'; label: string }
+  | { kind: 'shrineInteriorAltar'; label: string }
+  | { kind: 'shrineInteriorChest'; id: string; label: string }
+  | { kind: 'shrineInteriorExit'; label: string };
 
 /**
  * Master 60fps Three.js WebGL2 Open-Air Breath of the Wild Engine (PC & iPad Multi-Touch Ready).
@@ -86,6 +98,7 @@ export class BotWGameEngine {
   public weather!: WeatherClimateSystem;
   public physics!: PhysicsChemistryEngine;
   public architecture!: ArchitectureBuilder;
+  public shrineInterior!: ShrineInteriorManager;
   public runes!: SheikahRuneSystem;
   public player!: PlayerController;
   public enemies!: EnemyAndBossSystem;
@@ -109,13 +122,16 @@ export class BotWGameEngine {
     guard: false,
     aimBow: false,
     whistle: false,
-    cameraYaw: -2.42, // Looks NE from Shrine of Resurrection across Great Plateau, Temple of Time, Tower, Dueling Peaks & Hyrule Castle!
+    cameraYaw: -Math.PI * 0.5, // Looks East inside 2-room Shrine of Resurrection toward Sheikah Slate Pedestal
     cameraPitch: 0.08,
     cameraDist: 5.2,
   };
 
   private paused = false;
   private initialized = false;
+  private isShrineTransitioning = false;
+  private savedOverworldBg: THREE.Color | THREE.Texture | null = null;
+  private savedOverworldFog: THREE.Fog | THREE.FogExp2 | null = null;
   private lastFrameMs = 0;
   private elapsedSec = 0;
   private fps = 60;
@@ -204,6 +220,7 @@ export class BotWGameEngine {
     this.scene.add(this.terrain.group);
 
     this.architecture = new ArchitectureBuilder(this.scene, this.physics);
+    this.shrineInterior = new ShrineInteriorManager(this.scene, this.physics);
     this.runes = new SheikahRuneSystem(this.scene);
     this.player = new PlayerController(this.scene);
     this.enemies = new EnemyAndBossSystem(this.scene);
@@ -217,6 +234,7 @@ export class BotWGameEngine {
 
     this.ui = new BotWHudAndMenu({
       onStartNewGame: (mode, skipIntro) => {
+        if (this.shrineInterior.isActive()) this.exitShrineImmediate();
         this.save = createDefaultSave(mode);
         this.ensureSettingsDefaults();
         this.runes.selectRune(null);
@@ -234,6 +252,9 @@ export class BotWGameEngine {
       },
       onTriggerInteract: () => this.performInteract(),
       onFastTravel: (x, z, labelJa) => {
+        if (this.shrineInterior.isActive()) {
+          this.exitShrineImmediate();
+        }
         this.player.teleportTo(x, z, 0.5);
         this.terrain.update(x, z);
         this.ui.showToast(`🌀 ワープ完了：${labelJa}`, 'cyan');
@@ -246,6 +267,7 @@ export class BotWGameEngine {
       onLoadSlot: async (slotId) => {
         const loaded = await saveManager.load(slotId as SaveSlotId);
         if (loaded) {
+          if (this.shrineInterior.isActive()) this.exitShrineImmediate();
           this.save = loaded;
           this.ensureSettingsDefaults();
           this.applyLoadedSave();
@@ -302,19 +324,11 @@ export class BotWGameEngine {
         audioEngine.playCookingJingle(critical);
         this.ui.showToast(`🍲 料理完成：${mealName}${critical ? ' ✨大成功！' : ''}`, critical ? 'amber' : 'cyan');
       },
-      onTriggerBloodMoon: () => {
-        this.weather.triggerBloodMoon();
-        const revived = this.enemies.triggerBloodMoonRevival(this.save.levelSensorPoints, this.save.mode === 'master');
-        this.ui.showToast(`🌕 赤い月が昇る……魔物 ${revived} 体が復活した！（料理100%大成功時間）`, 'red');
-      },
-      onAdvanceTime: (hours) => {
-        this.weather.advanceTimeHours(hours);
-        this.ui.showToast(`時間を +${hours} 時間進めました`, 'cyan');
-      },
-      onEnterTrialOfSword: (tier) => {
-        this.save.masterSwordAwakened = true;
-        this.ui.showToast(`⚔ 剣の試練（${tier.toUpperCase()}）制覇シミュレーション完了！マスターソード攻撃力60・耐久188へ常時覚醒！`, 'amber');
-        audioEngine.playChestFanfare();
+      onWaitAtFire: (targetHour) => {
+        const diff = ((targetHour - this.weather.timeHours) + 24) % 24 || 24;
+        this.weather.advanceTimeHours(diff);
+        audioEngine.playUiConfirm();
+        this.ui.showToast(`🔥 焚き火で休んで ${String(targetHour).padStart(2, '0')}:00 まで進めました`, 'amber');
       },
       onTogglePause: (p) => {
         this.paused = p;
@@ -339,7 +353,9 @@ export class BotWGameEngine {
         this.player.triggerJumpOrParaglider(this.save, () => audioEngine.playParagliderOpen());
       },
       onDodge: () => this.triggerPlayerDodge(),
-      onGuardStart: () => this.player.triggerGuardStart(),
+      onGuardStart: () => {
+        this.player.triggerGuardStart(this.save, (m) => this.ui.showToast(m, 'amber'));
+      },
       onToggleZL: () => this.toggleZLTarget(),
       onActivateRune: () => this.activateRune(),
       onBowRelease: () => this.firePlayerArrow(),
@@ -461,8 +477,8 @@ export class BotWGameEngine {
 
     this.player.teleportTo(this.save.playerPos.x, this.save.playerPos.z, 0.25);
     const insideSor =
-      this.save.playerPos.x <= -304.5 &&
-      this.save.playerPos.x >= -318.0 &&
+      this.save.playerPos.x <= -303.5 &&
+      this.save.playerPos.x >= -326.5 &&
       this.save.playerPos.z >= 449.0 &&
       this.save.playerPos.z <= 461.0;
     if (insideSor) {
@@ -471,6 +487,7 @@ export class BotWGameEngine {
       this.input.cameraPitch = 0.08;
     }
     this.player.yaw = this.save.playerPos.yaw;
+    this.player.resetSafeLandPos(this.player.position);
     this.runes.bikeFuel = this.save.masterCycleFuel;
     this.runes.selectRune(this.save.unlockedRunes[0] ?? null, this.save.unlockedRunes);
     this.touchControls.setRunesVisible(this.save.unlockedRunes.length > 0);
@@ -488,12 +505,21 @@ export class BotWGameEngine {
   }
 
   private syncSaveFromRuntime(): void {
-    this.save.playerPos = {
-      x: this.player.position.x,
-      y: this.player.position.y,
-      z: this.player.position.z,
-      yaw: this.player.yaw,
-    };
+    if (this.shrineInterior.isActive()) {
+      this.save.playerPos = {
+        x: this.shrineInterior.overworldReturnPos.x,
+        y: this.shrineInterior.overworldReturnPos.y,
+        z: this.shrineInterior.overworldReturnPos.z,
+        yaw: this.shrineInterior.overworldReturnYaw,
+      };
+    } else {
+      this.save.playerPos = {
+        x: this.player.position.x,
+        y: this.player.position.y,
+        z: this.player.position.z,
+        yaw: this.player.yaw,
+      };
+    }
     this.save.inGameTimeHours = this.weather.timeHours;
     this.save.daysElapsed = this.weather.daysElapsed;
     this.save.bloodMoonTimerSec = this.weather.bloodMoonTimerSec;
@@ -516,7 +542,23 @@ export class BotWGameEngine {
         'amber'
       );
       audioEngine.playChestFanfare();
+    } else if (act === 'grant_champions_tunic') {
+      if (this.save.unlockedMemories.length < 1) {
+        this.ui.showToast('まずはウツシエの記憶を1つ取り戻そう', 'amber');
+        return;
+      }
+      if (!this.save.ownedArmorIds.includes('champions_tunic')) {
+        this.save.ownedArmorIds.push('champions_tunic');
+      }
+      this.save.equippedArmor.body = 'champions_tunic';
+      this.player.syncVisuals(this.save);
+      audioEngine.playChestFanfare();
+      this.ui.showToast('👕 インパから『英傑の服』を授かった！', 'amber');
     } else if (act === 'unlock_camera_rune') {
+      if (!this.save.hasSheikahSlate) {
+        this.ui.showToast('シーカーストーンを取得してから来てください', 'amber');
+        return;
+      }
       if (!this.save.unlockedRunes.includes('camera')) {
         this.save.unlockedRunes.push('camera');
       }
@@ -577,6 +619,10 @@ export class BotWGameEngine {
         return;
       }
       if (e.code === 'KeyM') {
+        if (!canUseSheikahFeatures(this.save)) {
+          this.ui.showToast('シーカーストーンを取得するまでマップは使用できません', 'amber');
+          return;
+        }
         this.ui.toggleSlate('map');
         return;
       }
@@ -615,8 +661,9 @@ export class BotWGameEngine {
           this.player.triggerJumpOrParaglider(this.save, () => audioEngine.playParagliderOpen());
           break;
         case 'KeyC':
-          this.input.guard = true;
-          this.player.triggerGuardStart();
+          if (this.player.triggerGuardStart(this.save, (m) => this.ui.showToast(m, 'amber'))) {
+            this.input.guard = true;
+          }
           break;
         case 'KeyR':
           this.input.aimBow = true;
@@ -625,7 +672,7 @@ export class BotWGameEngine {
           this.input.whistle = true;
           break;
         case 'KeyX':
-          this.player.triggerShieldSurf((m) => this.ui.showToast(m, 'cyan'));
+          this.player.triggerShieldSurf(this.save, (m) => this.ui.showToast(m, 'cyan'));
           break;
         case 'KeyG':
           if (this.player.triggerRevalisGale(this.save, (m) => this.ui.showToast(m, 'cyan'))) {
@@ -780,7 +827,7 @@ export class BotWGameEngine {
     fwd.y = 0;
     fwd.normalize();
 
-    const isRaining = this.climate?.weather === 'rain' || this.climate?.weather === 'thunderstorm';
+    const isRaining = !this.shrineInterior.isActive() && (this.climate?.weather === 'rain' || this.climate?.weather === 'thunderstorm');
     audioEngine.playRuneActivate(this.runes.activeRune);
 
     this.runes.activateCurrentRune({
@@ -795,6 +842,13 @@ export class BotWGameEngine {
       onNotify: (n) => this.ui.showToast(n.text, n.accent),
       onExplosionImpact: (pos, radius, damage, impulse, isBomb) => {
         audioEngine.playBombExplode();
+        if (this.shrineInterior.isActive()) {
+          const ex = this.shrineInterior.onExplosion(pos, radius, damage);
+          if (ex.destroyedWalls > 0) {
+            this.ui.showToast('💥 ひび割れた岩壁を粉砕した！', 'amber');
+          }
+          return;
+        }
         // Damage nearby enemies + ragdoll
         for (const e of this.enemies.enemies) {
           if (!e.alive) continue;
@@ -815,7 +869,28 @@ export class BotWGameEngine {
           }
         }
       },
-      onStasisEnemy: (origin, dir, upgraded) => !!this.enemies.tryStasisEnemy(origin, dir, upgraded),
+      onStasisEnemy: (origin, dir, upgraded) => {
+        if (this.shrineInterior.isActive()) {
+          if (!upgraded) return false;
+          for (const g of this.shrineInterior.guardians) {
+            if (g.state === 'dead') continue;
+            if (g.position.distanceTo(origin) < 18 && g.position.clone().sub(origin).normalize().dot(dir) > 0.35) {
+              g.stasisTimer = 4.5;
+              return true;
+            }
+          }
+          return false;
+        }
+        return !!this.enemies.tryStasisEnemy(origin, dir, upgraded);
+      },
+      onCryonisCreated: (pillar) => {
+        if (this.shrineInterior.isActive()) {
+          const res = this.shrineInterior.onCryonisCreated(pillar.body.position);
+          if (res.gateLifted) {
+            this.ui.showToast('🧊 氷柱で巨大鉄格子を押し上げた！', 'cyan');
+          }
+        }
+      },
       onCameraSnap: () => this.captureCompendiumPhoto(),
     });
   }
@@ -873,7 +948,14 @@ export class BotWGameEngine {
   }
 
   private performMeleeAttack(isSpin: boolean): void {
+    if (!canPerformMeleeAttack(this.save)) {
+      this.ui.showToast('武器を装備していません！木の枝や剣を拾って装備しよう', 'amber');
+      return;
+    }
     if (this.player.attackCooldown > 0) return;
+    const wep = this.save.weapons.find((w) => w.id === this.save.equippedWeaponId);
+    if (!wep) return;
+
     this.player.weaponDrawn = true;
     this.player.attackCooldown = this.player.flurryRushTimer > 0 ? 0.14 : 0.34;
     this.player.comboIndex = (this.player.comboIndex + 1) % 4;
@@ -882,12 +964,32 @@ export class BotWGameEngine {
     audioEngine.playSwordSwing();
 
     const armor = computeArmorSummary(this.save.equippedArmor, this.save.armorStars);
-    const wep = this.save.weapons.find((w) => w.id === this.save.equippedWeaponId);
-    const baseAtk = wep ? (wep.isMasterSword && this.save.masterSwordAwakened ? 60 : wep.attack) : 10;
+    const baseAtk = wep.isMasterSword && this.save.masterSwordAwakened ? 60 : wep.attack;
     const fwd = this.player.getForwardDirection();
 
+    // Check Stasis frozen rigid bodies -> add kinetic energy impulse!
+    for (const b of this.physics.bodies) {
+      if (b.isFrozenStasis && b.position.distanceTo(this.player.position) < 4.5) {
+        this.physics.applyStasisHit(b, fwd.clone().multiplyScalar(14));
+        audioEngine.playStasisTick(b.stasisHits);
+        this.ui.showToast(`⏱ ビタロック打撃蓄積 (${b.stasisHits} HIT)`, 'amber');
+      }
+    }
+
+    if (this.shrineInterior.isActive()) {
+      const reach = isSpin ? 4.4 : 3.4;
+      const shrineHit = this.shrineInterior.onPlayerMeleeOrArrowHit(this.player.position, fwd, reach, baseAtk);
+      if (shrineHit.hitGuardian) {
+        audioEngine.playHitImpact(false);
+        if (shrineHit.hitGuardian.state === 'dead') {
+          this.ui.showToast(`⚔ ${shrineHit.hitGuardian.nameJa} を撃破！`, 'amber');
+        }
+      }
+      return;
+    }
+
     // Flameblade / Torch / Fire weapon ignites world torches & dry grass right in front of Link -> Fire Updraft!
-    if (wep?.element === 'Fire') {
+    if (wep.element === 'Fire') {
       const igniteSpot = this.player.position.clone().addScaledVector(fwd, 2.2);
       igniteSpot.y = getTerrainHeight(igniteSpot.x, igniteSpot.z);
       const isRaining = this.climate?.weather === 'rain' || this.climate?.weather === 'thunderstorm';
@@ -900,15 +1002,6 @@ export class BotWGameEngine {
         if (litTorches === 0) {
           this.ui.showToast('🔥 炎の武器で草原に着火！上昇気流が発生！', 'amber');
         }
-      }
-    }
-
-    // Check Stasis frozen rigid bodies -> add kinetic energy impulse!
-    for (const b of this.physics.bodies) {
-      if (b.isFrozenStasis && b.position.distanceTo(this.player.position) < 4.5) {
-        this.physics.applyStasisHit(b, fwd.clone().multiplyScalar(14));
-        audioEngine.playStasisTick(b.stasisHits);
-        this.ui.showToast(`⏱ ビタロック打撃蓄積 (${b.stasisHits} HIT)`, 'amber');
       }
     }
 
@@ -945,15 +1038,15 @@ export class BotWGameEngine {
           attackUpLevel: armor.attackUpLevel,
           ancientProficiency: armor.ancientProficiency,
           boneProficiency: armor.boneProficiency,
-          weaponIsAncient: wep?.isAncient,
-          weaponIsBone: wep?.isBone,
-          element: urbosaTriggered ? 'Electricity' : wep?.element,
+          weaponIsAncient: wep.isAncient,
+          weaponIsBone: wep.isBone,
+          element: urbosaTriggered ? 'Electricity' : wep.element,
           targetShockImmune: e.isShockImmune,
         }) + (urbosaTriggered ? 150 : 0);
 
       audioEngine.playHitImpact(isSneakstrike || this.player.comboIndex === 0);
       this.enemies.damageEnemy(e, dmg, toE, {
-        freeze: wep?.element === 'Ice',
+        freeze: wep.element === 'Ice',
         ragdoll: this.player.comboIndex === 0 || isSpin,
         onDeath: (dead) => this.onEnemyKilled(dead),
       });
@@ -989,6 +1082,10 @@ export class BotWGameEngine {
       }
       this.ui.showToast(`✨ ${e.nameJa} 撃破！神獣解放 ＆ 英傑の加護を授かった！`, 'amber');
       audioEngine.playChestFanfare();
+      if (this.save.defeatedDivineBeasts.length >= 4) {
+        this.architecture.syncDlc2ShrinesVisibility(true);
+        this.ui.showToast('🏛 4体の神獣解放により、始まりの台地に『英傑たちの詩』の試練が出現した！', 'amber');
+      }
     } else if (e.species === 'monk_maz_koshia') {
       if (!this.save.unlockedRunes.includes('master_cycle')) {
         this.save.unlockedRunes.push('master_cycle');
@@ -1058,16 +1155,21 @@ export class BotWGameEngine {
         this.ui.showToast('💧 ミファーの祈り発動！体力全快＋一時ハート＋5！', 'cyan');
         audioEngine.playChestFanfare();
       } else {
-        // Record Hero's Path death marker & revive safely at Shrine of Resurrection
+        // Record Hero's Path death marker & revive safely
         recordHeroPathSample(this.save, this.player.position.x, this.player.position.y, this.player.position.z, true);
         this.save.hearts = this.save.maxHearts;
-        if (this.architecture.sorDoorOpened) {
+        if (this.shrineInterior.isActive()) {
+          const sp = this.shrineInterior.getSpawnPos();
+          this.player.setExactPosition(sp.x, sp.y + 0.05, sp.z);
+          this.ui.showToast('祠の入り口へ戻されました', 'red');
+        } else if (this.architecture.sorDoorOpened) {
           this.player.teleportTo(-298, 454, 0.5);
+          this.ui.showToast('回生の祠で復活しました', 'red');
         } else {
-          this.player.teleportTo(-314.8, 455, 0.25);
+          this.player.teleportTo(-323.5, 455, 0.25);
           this.player.position.y = Math.max(this.player.position.y, this.architecture.shrineFloorY);
+          this.ui.showToast('回生の祠で復活しました', 'red');
         }
-        this.ui.showToast('回生の祠で復活しました', 'red');
       }
     }
   }
@@ -1075,11 +1177,24 @@ export class BotWGameEngine {
   private findNearestInteractable(): NearbyInteractable | null {
     const p = this.player.position;
 
+    if (this.shrineInterior.isActive()) {
+      const hit = this.shrineInterior.getNearestInteractable(p, this.save);
+      if (!hit) return null;
+      if (hit.kind === 'pedestal') return { kind: 'shrineInteriorPedestal', label: hit.label };
+      if (hit.kind === 'altar') return { kind: 'shrineInteriorAltar', label: hit.label };
+      if (hit.kind === 'chest') return { kind: 'shrineInteriorChest', id: hit.id, label: hit.label };
+      return { kind: 'shrineInteriorExit', label: hit.label };
+    }
+
     if (!this.architecture.sheikahSlateCollected && this.architecture.sheikahPedestalPos.distanceTo(p) < 3.4) {
       return { kind: 'slatePedestal', label: 'シーカーストーンを調べる' };
     }
     if (!this.architecture.sorDoorOpened && this.architecture.sorExitTerminalPos.distanceTo(p) < 3.6) {
       return { kind: 'sorTerminal', label: '端末にシーカーストーンをかざす' };
+    }
+    // Temple of Time Goddess Statue (-245, 504.5) Spirit Orb exchange!
+    if (Math.hypot(p.x - (-245), p.z - 504.5) < 4.5) {
+      return { kind: 'goddess', label: '女神像に祈る（克服の証を交換）' };
     }
     for (const npc of this.npcs.npcs) {
       if (!npc.root.visible) continue;
@@ -1097,14 +1212,17 @@ export class BotWGameEngine {
         return { kind: 'weaponDrop', drop, label: `${drop.nameJa} を拾う` };
       }
     }
+    for (const pot of this.architecture.cookingPots) {
+      if (pot.position.distanceTo(p) < 3.8) {
+        return { kind: 'pot', label: `${pot.nameJa} で料理・休息する` };
+      }
+    }
     for (const torch of this.architecture.torches) {
       if (!torch.lit && torch.position.distanceTo(p) < 3.5) {
         return { kind: 'torch', torch, label: `${torch.nameJa} に火を灯す` };
       }
-    }
-    for (const pot of this.architecture.cookingPots) {
-      if (pot.position.distanceTo(p) < 3.8) {
-        return { kind: 'pot', label: `${pot.nameJa} で料理する` };
+      if (torch.lit && (torch.nameJa.includes('焚き火') || torch.nameJa.includes('篝火')) && torch.position.distanceTo(p) < 3.4) {
+        return { kind: 'campfire', position: torch.position.clone(), label: `${torch.nameJa} で暇をつぶす` };
       }
     }
     for (const k of this.npcs.koroks) {
@@ -1118,8 +1236,9 @@ export class BotWGameEngine {
       }
     }
     for (const sh of this.architecture.shrines) {
+      if (!sh.root.visible) continue;
       if (sh.position.distanceTo(p) < 7.5) {
-        return { kind: 'shrine', shrine: sh, label: `${sh.nameJa}（${sh.subtitleJa}）に挑む` };
+        return { kind: 'shrine', shrine: sh, label: `${sh.nameJa}（${sh.subtitleJa}）に入る` };
       }
     }
     for (const tw of this.architecture.towers) {
@@ -1135,12 +1254,67 @@ export class BotWGameEngine {
     this.nearestInteract = target;
     if (!target) return;
 
+    if (target.kind === 'shrineInteriorPedestal') {
+      const sh = this.shrineInterior.activeShrine;
+      if (!sh) return;
+      const info = SHRINE_RUNE_INFO[sh.id];
+      if (!info) return;
+      const newlyAdded: RuneId[] = [];
+      for (const r of info.runes) {
+        if (!this.save.unlockedRunes.includes(r)) {
+          this.save.unlockedRunes.push(r);
+          newlyAdded.push(r);
+        }
+      }
+      if (newlyAdded.length > 0) {
+        this.runes.selectRune(newlyAdded[0], this.save.unlockedRunes);
+        this.touchControls.setRunesVisible(true);
+        audioEngine.playChestFanfare();
+        this.ui.showToast(`📱 新しいシーカーアイテム解放：【${info.labelJa}】！`, 'cyan');
+      } else {
+        this.ui.showToast('シーカーアイテムはすでに抽出されています', 'cyan');
+      }
+      return;
+    }
+
+    if (target.kind === 'shrineInteriorAltar') {
+      const sh = this.shrineInterior.activeShrine;
+      if (!sh) return;
+      if (this.save.completedShrines.includes(sh.id)) {
+        this.ui.showToast('導師はすでに祝福を授け、光となって消えている（克服の証 取得済み）', 'cyan');
+        this.exitShrineWithFade();
+        return;
+      }
+      this.save.completedShrines.push(sh.id);
+      this.save.spiritOrbs += 1;
+      this.architecture.completeShrine(sh.id);
+      audioEngine.playChestFanfare();
+      this.ui.showToast(`🔷 ${sh.nameJa} 試練達成！『克服の証』を手に入れた！（計 ${this.save.spiritOrbs}個）`, 'amber');
+      this.exitShrineWithFade();
+      return;
+    }
+
+    if (target.kind === 'shrineInteriorChest') {
+      const chest = this.shrineInterior.openChest(target.id, this.save);
+      if (chest) {
+        this.player.syncVisuals(this.save);
+        audioEngine.playChestFanfare();
+        this.ui.showToast(`🎁 試練の宝箱を開けた！ ${chest.rewardTextJa} を手に入れた！`, 'amber');
+      }
+      return;
+    }
+
+    if (target.kind === 'shrineInteriorExit') {
+      this.exitShrineWithFade();
+      return;
+    }
+
     if (target.kind === 'slatePedestal') {
       this.architecture.collectSheikahSlate();
       this.save.hasSheikahSlate = true;
       this.player.syncVisuals(this.save);
       audioEngine.playShrineChime();
-      this.ui.showToast('📱 シーカーストーンを手に入れた！出口の端末へかざして外へ出よう', 'cyan');
+      this.ui.showToast('📱 シーカーストーンを手に入れた！奥の部屋の扉が開いた！', 'cyan');
     } else if (target.kind === 'sorTerminal') {
       if (!this.save.hasSheikahSlate) {
         this.ui.showToast('シーカーストーンが反応しない…まずは台座からシーカーストーンを入手しよう', 'amber');
@@ -1150,6 +1324,10 @@ export class BotWGameEngine {
       this.save.storyFlags['sor_door_opened'] = true;
       audioEngine.playShrineChime();
       this.ui.showToast('🚪 封印の石扉が開かれた！台地の崖へ向かおう', 'cyan');
+    } else if (target.kind === 'goddess') {
+      this.ui.openGoddessStatueModal();
+    } else if (target.kind === 'campfire') {
+      this.ui.openCampfireModal();
     } else if (target.kind === 'npc') {
       const armor = computeArmorSummary(this.save.equippedArmor, this.save.armorStars);
       const dlg = evaluateNpcEventFlow(target.npc, {
@@ -1163,6 +1341,7 @@ export class BotWGameEngine {
         hasParaglider: this.save.hasParaglider,
         plateauShrinesDone: hasCompletedAllPlateauShrines(this.save.completedShrines),
         hasCameraRune: this.save.unlockedRunes.includes('camera'),
+        hasChampionsTunic: this.save.ownedArmorIds.includes('champions_tunic'),
         tarreyTownStage: this.save.tarreyTownStage,
         thunderHelmRecovered: !!this.save.storyFlags['Electric_Relic_GetBack'],
       });
@@ -1171,6 +1350,25 @@ export class BotWGameEngine {
     } else if (target.kind === 'chest') {
       this.architecture.openChest(target.chest);
       if (!this.save.openedChests.includes(target.chest.id)) this.save.openedChests.push(target.chest.id);
+      if (target.chest.id === 'chest_plateau_wood') {
+        const sw = WEAPONS.find((w) => w.id === 'travelers_sword');
+        if (sw && !this.save.weapons.some((w) => w.id === sw.id)) {
+          this.save.weapons.push({ ...sw, currentDurability: sw.durability });
+          if (!this.save.equippedWeaponId) {
+            this.save.equippedWeaponId = sw.id;
+            this.player.syncVisuals(this.save);
+          }
+        }
+      } else if (target.chest.id === 'chest_hyrule_castle') {
+        const hs = SHIELDS.find((s) => s.id === 'hylian_shield');
+        if (hs && !this.save.shields.some((s) => s.id === hs.id)) {
+          this.save.shields.push({ ...hs, currentDurability: hs.durability });
+          if (!this.save.equippedShieldId) {
+            this.save.equippedShieldId = hs.id;
+            this.player.syncVisuals(this.save);
+          }
+        }
+      }
       if (target.chest.rewardType === 'rupees') {
         this.save.rupees += target.chest.rewardAmount;
       } else if (target.chest.rewardType === 'arrow') {
@@ -1186,9 +1384,6 @@ export class BotWGameEngine {
         }
       } else {
         this.save.materials[target.chest.rewardId] = (this.save.materials[target.chest.rewardId] ?? 0) + target.chest.rewardAmount;
-        if (target.chest.id === 'chest_plateau_ancient' && !this.save.ownedArmorIds.includes('champions_tunic')) {
-          this.save.ownedArmorIds.push('champions_tunic');
-        }
       }
       audioEngine.playChestFanfare();
       this.ui.showToast(`🎁 宝箱を開けた！ ${target.chest.rewardTextJa} を手に入れた！`, 'amber');
@@ -1234,30 +1429,19 @@ export class BotWGameEngine {
         this.ui.openMemoryModal(mem);
       }
     } else if (target.kind === 'shrine') {
-      this.architecture.completeShrine(target.shrine.id);
-      if (!this.save.completedShrines.includes(target.shrine.id)) {
-        this.save.completedShrines.push(target.shrine.id);
-        this.save.spiritOrbs += 1;
+      if (!canUseSheikahFeatures(this.save)) {
+        this.ui.showToast('シーカーストーンを持っていないため台座が反応しません！', 'amber');
+        return;
       }
-      const unlockedHere = PLATEAU_SHRINE_RUNE_MAP[target.shrine.id] ?? [];
-      const newlyAdded: RuneId[] = [];
-      for (const r of unlockedHere) {
-        if (!this.save.unlockedRunes.includes(r)) {
-          this.save.unlockedRunes.push(r);
-          newlyAdded.push(r);
-        }
+      if (!this.save.discoveredShrines.includes(target.shrine.id)) {
+        this.save.discoveredShrines.push(target.shrine.id);
       }
-      if (newlyAdded.length > 0 && !this.runes.activeRune) {
-        this.runes.selectRune(newlyAdded[0], this.save.unlockedRunes);
-      }
-      audioEngine.playShrineChime();
-      this.ui.showToast(
-        newlyAdded.length > 0
-          ? `🔷 ${target.shrine.nameJa} クリア！克服の証とシーカーアイテム解放！`
-          : `🔷 ${target.shrine.nameJa} クリア！克服の証を手に入れた（シーカー回路がシアン発光！）`,
-        'cyan'
-      );
+      this.enterShrineWithFade(target.shrine);
     } else if (target.kind === 'tower') {
+      if (!canUseSheikahFeatures(this.save)) {
+        this.ui.showToast('シーカーストーンがないためタワーを起動できません！', 'amber');
+        return;
+      }
       this.architecture.activateTower(target.tower.regionId);
       if (!this.save.activatedTowers.includes(target.tower.regionId)) {
         this.save.activatedTowers.push(target.tower.regionId);
@@ -1265,6 +1449,73 @@ export class BotWGameEngine {
       audioEngine.playShrineChime();
       this.ui.showToast(`📡 ${target.tower.nameJa} 起動！周辺エリアのシーカーマップ情報を入手！`, 'cyan');
     }
+  }
+
+  public enterShrineWithFade(shrine: WorldShrine): void {
+    const def = PHYSICAL_SHRINES.find((s) => s.id === shrine.id);
+    if (!def || this.isShrineTransitioning) return;
+    this.isShrineTransitioning = true;
+    this.paused = true;
+    this.ui.setShrineFade(true, shrine.nameJa, shrine.subtitleJa);
+    audioEngine.playShrineChime();
+
+    window.setTimeout(() => {
+      this.savedOverworldBg = this.scene.background;
+      this.savedOverworldFog = this.scene.fog;
+      this.terrain.group.visible = false;
+      this.architecture.group.visible = false;
+      this.npcs.group.visible = false;
+      this.enemies.group.visible = false;
+      this.weather.sunLight.visible = false;
+      this.scene.background = new THREE.Color('#07131e');
+      this.scene.fog = new THREE.FogExp2('#07131e', 0.011);
+
+      this.runes.clearTransientRunes(this.physics);
+      const returnSpot = new THREE.Vector3(shrine.position.x, shrine.position.y + 0.25, shrine.position.z + 7.2);
+      const res = this.shrineInterior.enterShrine(def, this.save, returnSpot, 0);
+      this.player.setExactPosition(res.spawnPos.x, res.spawnPos.y + 0.05, res.spawnPos.z);
+      this.player.yaw = Math.PI;
+      this.input.cameraYaw = 0;
+      this.input.cameraPitch = 0.1;
+
+      window.setTimeout(() => {
+        this.ui.setShrineFade(false);
+        this.paused = false;
+        this.isShrineTransitioning = false;
+      }, 220);
+    }, 320);
+  }
+
+  public exitShrineWithFade(): void {
+    if (!this.shrineInterior.isActive() || this.isShrineTransitioning) return;
+    this.isShrineTransitioning = true;
+    this.paused = true;
+    this.ui.setShrineFade(true, '地上へ戻る', 'RETURNING TO HYRULE');
+    audioEngine.playShrineChime();
+
+    window.setTimeout(() => {
+      this.exitShrineImmediate();
+      window.setTimeout(() => {
+        this.ui.setShrineFade(false);
+        this.paused = false;
+        this.isShrineTransitioning = false;
+      }, 220);
+    }, 320);
+  }
+
+  private exitShrineImmediate(): void {
+    this.runes.clearTransientRunes(this.physics);
+    const out = this.shrineInterior.exitShrine();
+    this.terrain.group.visible = true;
+    this.architecture.group.visible = true;
+    this.npcs.group.visible = true;
+    this.enemies.group.visible = true;
+    this.weather.sunLight.visible = true;
+    this.scene.background = this.savedOverworldBg ?? new THREE.Color('#8ec8ec');
+    this.scene.fog = this.savedOverworldFog;
+    this.terrain.update(out.returnPos.x, out.returnPos.z);
+    this.player.teleportTo(out.returnPos.x, out.returnPos.z, 0.25);
+    this.player.yaw = out.returnYaw;
   }
 
   private updateArrows(dt: number, isRaining: boolean): void {
@@ -1279,30 +1530,38 @@ export class BotWGameEngine {
       const gy = getTerrainHeight(a.position.x, a.position.z);
       let hit = a.position.y <= gy;
 
-      // Check Enemy Hit (Headshot / Elemental Bonus!)
-      for (const e of this.enemies.enemies) {
-        if (!e.alive) continue;
-        if (a.position.distanceTo(e.position.clone().add(new THREE.Vector3(0, 1.3, 0))) < e.radius + 0.65) {
-          const isHeadshot = a.position.y > e.position.y + 1.45;
-          const dmg = computeBotWDamage({
-            baseAttack: a.attack,
-            isHeadshotOrCrit: isHeadshot,
-            element: a.type === 'fire' ? 'Fire' : a.type === 'ice' ? 'Ice' : a.type === 'shock' ? 'Electricity' : undefined,
-            targetShockImmune: e.isShockImmune,
-          });
-          this.enemies.damageEnemy(e, dmg, a.velocity.clone().normalize(), {
-            freeze: a.type === 'ice',
-            ragdoll: isHeadshot || a.type === 'bomb',
-            onDeath: (dead) => this.onEnemyKilled(dead),
-          });
-          audioEngine.playHitImpact(isHeadshot);
+      if (this.shrineInterior.isActive()) {
+        const shHit = this.shrineInterior.onPlayerMeleeOrArrowHit(a.position, a.velocity.clone().normalize(), 1.25, a.attack);
+        if (shHit.hitGuardian || shHit.hitStasisBody) {
+          audioEngine.playHitImpact(false);
           hit = true;
-          break;
+        }
+      } else {
+        // Check Enemy Hit (Headshot / Elemental Bonus!)
+        for (const e of this.enemies.enemies) {
+          if (!e.alive) continue;
+          if (a.position.distanceTo(e.position.clone().add(new THREE.Vector3(0, 1.3, 0))) < e.radius + 0.65) {
+            const isHeadshot = a.position.y > e.position.y + 1.45;
+            const dmg = computeBotWDamage({
+              baseAttack: a.attack,
+              isHeadshotOrCrit: isHeadshot,
+              element: a.type === 'fire' ? 'Fire' : a.type === 'ice' ? 'Ice' : a.type === 'shock' ? 'Electricity' : undefined,
+              targetShockImmune: e.isShockImmune,
+            });
+            this.enemies.damageEnemy(e, dmg, a.velocity.clone().normalize(), {
+              freeze: a.type === 'ice',
+              ragdoll: isHeadshot || a.type === 'bomb',
+              onDeath: (dead) => this.onEnemyKilled(dead),
+            });
+            audioEngine.playHitImpact(isHeadshot);
+            hit = true;
+            break;
+          }
         }
       }
 
       if (hit) {
-        if (a.type === 'fire') {
+        if (a.type === 'fire' && !this.shrineInterior.isActive()) {
           this.architecture.igniteTorchesNear(a.position, 4.5);
           if (!isRaining) {
             this.physics.spawnFireUpdraft(new THREE.Vector3(a.position.x, gy, a.position.z), 4.6, 25, 28);
@@ -1310,6 +1569,9 @@ export class BotWGameEngine {
           }
         } else if (a.type === 'bomb') {
           this.physics.triggerExplosion(a.position, 6.5, 22, isRaining);
+          if (this.shrineInterior.isActive()) {
+            this.shrineInterior.onExplosion(a.position, 6.5, 40);
+          }
           audioEngine.playBombExplode();
         }
         this.player.arrowsGroup.remove(a.mesh);
@@ -1440,27 +1702,48 @@ export class BotWGameEngine {
       this.elapsedSec += worldDt;
       this.save.playTimeSec += rawDt;
 
+      const inShrine = this.shrineInterior.isActive();
+
       // 1. Weather, Climate, Sky Dome & Blood Moon
       const activeWep = this.save.weapons.find((w) => w.id === this.save.equippedWeaponId);
-      const nearFire =
-        this.physics.isNearFire(this.player.position) ||
-        this.architecture.isNearLitTorch(this.player.position) ||
-        (activeWep?.element === 'Fire' && this.player.weaponDrawn);
-      this.climate = this.weather.update(worldDt, this.player.position, {
-        nearFire,
-        holdingIceWeapon: activeWep?.element === 'Ice',
-        wearingMetal: activeWep?.material === 'Metal',
-        onBloodMoonMidnight: () => {
-          const revived = this.enemies.triggerBloodMoonRevival(this.save.levelSensorPoints, this.save.mode === 'master');
-          this.ui.showToast(`🌕 赤い月が満ちた……ハイラルの魔物 ${revived} 体が復活した！`, 'red');
-        },
-      });
+      if (!inShrine || !this.climate) {
+        const nearFire =
+          this.physics.isNearFire(this.player.position) ||
+          this.architecture.isNearLitTorch(this.player.position) ||
+          (activeWep?.element === 'Fire' && this.player.weaponDrawn);
+        this.climate = this.weather.update(worldDt, this.player.position, {
+          nearFire,
+          holdingIceWeapon: activeWep?.element === 'Ice',
+          wearingMetal: activeWep?.material === 'Metal',
+          onBloodMoonMidnight: () => {
+            const revived = this.enemies.triggerBloodMoonRevival(this.save.levelSensorPoints, this.save.mode === 'master');
+            this.ui.showToast(`🌕 赤い月が満ちた……ハイラルの魔物 ${revived} 体が復活した！`, 'red');
+          },
+        });
+      }
+      if (inShrine) {
+        this.climate = {
+          ...this.climate,
+          weather: 'sunny',
+          temperatureC: 19,
+          temperatureF: 66,
+          isVolcanicError: false,
+          coldHazardLevel: 0,
+          heatHazardLevel: 0,
+          flameHazardLevel: 0,
+          freezingWater: false,
+          windStrength: 0,
+          lightningWarning: false,
+        };
+      }
 
-      const isRaining = this.climate.weather === 'rain' || this.climate.weather === 'thunderstorm';
+      const isRaining = !inShrine && (this.climate.weather === 'rain' || this.climate.weather === 'thunderstorm');
       const isNight = this.climate.timeHours >= 20 || this.climate.timeHours < 5;
 
-      // 2. Terrain LOD Streaming + Wind Grass + Trees/Rocks + Prop Colliders
-      this.terrain.update(this.player.position.x, this.player.position.z);
+      // 2. Terrain LOD Streaming + Wind Grass + Trees/Rocks + Prop Colliders (overworld only)
+      if (!inShrine) {
+        this.terrain.update(this.player.position.x, this.player.position.z);
+      }
 
       // 3. Player Controller & Substepped CCD Movement Physics (merges keyboard + multi-touch analog stick & holds!)
       const tc = this.touchControls.state;
@@ -1479,10 +1762,32 @@ export class BotWGameEngine {
         onFootstep: (s) => audioEngine.playFootstep(s),
         onBulletTimeEnter: () => audioEngine.playBulletTimeEnter(),
         onNotify: (m) => this.ui.showToast(m, 'amber'),
+        onFallDamage: (hearts) => {
+          this.applyPlayerDamage(hearts);
+          audioEngine.playHitImpact(false);
+          this.ui.showToast(`💥 高所からの落下ダメージ！ (-${hearts} ハート)`, 'red');
+        },
+        onDrown: (safePos) => {
+          this.applyPlayerDamage(1.0);
+          this.player.setExactPosition(safePos.x, safePos.y + 0.15, safePos.z);
+          this.ui.showToast('🌊 スタミナ切れで溺れてしまった！陸地へ戻された (-1 ハート)', 'red');
+        },
       });
 
+      // Pre-Paraglider Great Plateau mist boundary guard: prevent leaving plateau before receiving Paraglider
+      if (
+        !inShrine &&
+        !this.save.hasParaglider &&
+        this.player.position.y < 28 &&
+        Math.hypot(this.player.position.x - (-245), this.player.position.z - 480) > 195
+      ) {
+        this.applyPlayerDamage(1.0);
+        this.player.teleportTo(-252, 488, 0.3);
+        this.ui.showToast('🌫 深い霧が立ち込めている……パラセールなしでは台地から降りられない！', 'amber');
+      }
+
       // 4. BTB (Bullet Time Bounce): Landing on a ragdolled enemy with Shield Surfing triggers massive 19x velocity bounce!
-      if (this.save.settings.glitchPhysics && this.player.shieldSurfing && !this.player.grounded) {
+      if (!inShrine && this.save.settings.glitchPhysics && this.player.shieldSurfing && !this.player.grounded) {
         for (const e of this.enemies.enemies) {
           if (e.alive && e.ragdollTimer > 0 && e.position.distanceTo(this.player.position) < 2.4) {
             const launch = this.player.getForwardDirection().multiplyScalar(58);
@@ -1493,7 +1798,7 @@ export class BotWGameEngine {
         }
       }
 
-      // 5. Physics & Chemistry Engine + Sheikah Runes + Arrows + Architecture
+      // 5. Physics & Chemistry Engine + Sheikah Runes + Arrows + Architecture / Shrine Interior
       this.physics.update(worldDt, this.elapsedSec, isRaining);
       const fwd = this.player.getForwardDirection();
       const runeOut = this.runes.update(
@@ -1501,7 +1806,7 @@ export class BotWGameEngine {
         this.player.position,
         fwd,
         this.physics,
-        this.climate.weather === 'thunderstorm',
+        !inShrine && this.climate.weather === 'thunderstorm',
         this.climate.windStrength
       );
       if (runeOut.magnesisShockedPlayer && !armor.lightningProof) {
@@ -1513,39 +1818,71 @@ export class BotWGameEngine {
       }
 
       this.updateArrows(rawDt, isRaining);
-      this.architecture.update(worldDt, this.elapsedSec);
 
-      // 6. Enemies, Bosses, Guardians & 3 Sky Dragons
-      const combatStatus = this.enemies.update(worldDt, this.elapsedSec, this.player.position, {
-        masterMode: this.save.mode === 'master',
-        stealthLevel: armor.stealthLevel,
-        disguises: armor.disguises,
-        onEnemyAttackPlayer: (en, dmg, isLaser) => this.handleEnemyAttackPlayer(en, dmg, isLaser),
-        onReflectBeamHitEnemy: (en, dmg) => {
-          this.enemies.damageEnemy(en, dmg, new THREE.Vector3(0, 1, 0), { onDeath: (dead) => this.onEnemyKilled(dead) });
-          this.ui.showToast(`💥 反射ビーム命中！${en.nameJa} に ${dmg} ダメージ！`, 'amber');
-        },
-      });
+      let combatStatus: { inCombat: boolean; guardianLocked: boolean; activeBoss: WorldEnemy | null } = {
+        inCombat: false,
+        guardianLocked: false,
+        activeBoss: null,
+      };
+      let npcOut: { nearbyKorokDistance: number } = { nearbyKorokDistance: Infinity };
 
-      // 7. NPCs (24h/Rain AI), Koroks & Wildlife
-      const npcOut = this.npcs.update(worldDt, this.elapsedSec, this.climate.timeHours, this.climate.weather, this.player.position);
-
-      // 8. Climate Hazards (Cold / Heat / Volcanic Flame / Freezing Water!)
-      this.hazardTickTimer += rawDt;
-      if (this.hazardTickTimer >= 3.2) {
-        this.hazardTickTimer = 0;
-        if (this.climate.freezingWater) {
+      if (inShrine) {
+        const shOut = this.shrineInterior.update(worldDt, this.player.position, this.player.grounded);
+        if (shOut.fellInPit) {
           this.applyPlayerDamage(1.0);
-          this.ui.showToast('❄️ 極寒水域！防具・薬では防げない急激な冷気ダメージ！', 'red');
-        } else if (this.climate.flameHazardLevel > armor.flameGuard && !armor.fireproof) {
-          this.applyPlayerDamage(0.5);
-          this.ui.showToast('🔥 灼熱火山圏！耐火装備（耐火シリーズ/燃えず薬）が必要！', 'red');
-        } else if (this.climate.coldHazardLevel > armor.coldResist) {
-          this.applyPlayerDamage(0.5);
-          this.ui.showToast('❄️ 極寒地帯！防寒装備（リトの羽毛/防寒着）が必要！', 'cyan');
-        } else if (this.climate.heatHazardLevel > armor.heatResist) {
-          this.applyPlayerDamage(0.5);
-          this.ui.showToast('☀️ 猛暑地帯！耐暑装備（熱砂/淑女シリーズ）が必要！', 'amber');
+          this.player.velocity.set(0, 0, 0);
+          this.ui.showToast('⚠️ 奈落に落ちた！足場へ戻された (-1 ハート)', 'amber');
+        }
+        if (shOut.switchUnlocked) {
+          audioEngine.playChestFanfare();
+          this.ui.showToast('⚙️ 試練の扉が開いた！', 'cyan');
+        }
+        if (shOut.playerHit && this.player.invulnTimer <= 0) {
+          const hit = shOut.playerHit;
+          if (this.player.guarding && this.player.perfectGuardWindow > 0) {
+            audioEngine.playParryClang();
+            this.ui.showToast('🛡 ジャストガード！ガーディアンの攻撃を弾いた！', 'amber');
+          } else {
+            const dmgHearts = Math.max(0.25, (hit.damage - armor.totalDefense * 0.55) / 4);
+            this.applyPlayerDamage(dmgHearts);
+          }
+        }
+      } else {
+        this.architecture.update(worldDt, this.elapsedSec);
+
+        // 6. Enemies, Bosses, Guardians & 3 Sky Dragons
+        combatStatus = this.enemies.update(worldDt, this.elapsedSec, this.player.position, {
+          masterMode: this.save.mode === 'master',
+          stealthLevel: armor.stealthLevel,
+          disguises: armor.disguises,
+          physics: this.physics,
+          onEnemyAttackPlayer: (en, dmg, isLaser) => this.handleEnemyAttackPlayer(en, dmg, isLaser),
+          onReflectBeamHitEnemy: (en, dmg) => {
+            this.enemies.damageEnemy(en, dmg, new THREE.Vector3(0, 1, 0), { onDeath: (dead) => this.onEnemyKilled(dead) });
+            this.ui.showToast(`💥 反射ビーム命中！${en.nameJa} に ${dmg} ダメージ！`, 'amber');
+          },
+        });
+
+        // 7. NPCs (24h/Rain AI), Koroks & Wildlife
+        npcOut = this.npcs.update(worldDt, this.elapsedSec, this.climate.timeHours, this.climate.weather, this.player.position);
+
+        // 8. Climate Hazards (Cold / Heat / Volcanic Flame / Freezing Water!)
+        this.hazardTickTimer += rawDt;
+        if (this.hazardTickTimer >= 3.2) {
+          this.hazardTickTimer = 0;
+          if (this.climate.freezingWater) {
+            this.applyPlayerDamage(1.0);
+            this.ui.showToast('❄️ 極寒水域！防具・薬では防げない急激な冷気ダメージ！', 'red');
+          } else if (this.climate.flameHazardLevel > armor.flameGuard && !armor.fireproof) {
+            this.applyPlayerDamage(0.5);
+            this.ui.showToast('🔥 灼熱火山圏！耐火装備（耐火シリーズ/燃えず薬）が必要！', 'red');
+          } else if (this.climate.coldHazardLevel > armor.coldResist) {
+            this.applyPlayerDamage(0.5);
+            this.ui.showToast('❄️ 極寒地帯！防寒装備（リトの羽毛/防寒着）が必要！', 'cyan');
+          } else if (this.climate.heatHazardLevel > armor.heatResist) {
+            this.applyPlayerDamage(0.5);
+            this.ui.showToast('☀️ 猛暑地帯！耐暑装備（熱砂/淑女シリーズ）が必要！', 'amber');
+          }
         }
       }
 
@@ -1576,21 +1913,25 @@ export class BotWGameEngine {
 
       // 10. Open-Air Web Audio Update (CEDEC 2017 spatial wind, insects, birds, 3-layer dynamic BGM!)
       const reg = getRegionAt(this.player.position.x, this.player.position.z);
-      const nearSettlement = LANDMARKS.find(
-        (l) => (l.type === 'settlement' || l.type === 'stable') && Math.hypot(l.x - this.player.position.x, l.z - this.player.position.z) < l.radius + 25
-      );
+      const nearSettlement = !inShrine
+        ? LANDMARKS.find(
+            (l) =>
+              (l.type === 'settlement' || l.type === 'stable') &&
+              Math.hypot(l.x - this.player.position.x, l.z - this.player.position.z) < l.radius + 25
+          )
+        : undefined;
       audioEngine.update(rawDt, {
         regionId: reg.id,
         timeHours: this.climate.timeHours,
         weather: this.climate.weather,
-        altitude: this.player.position.y,
+        altitude: inShrine ? 50 : this.player.position.y,
         speed: moveSpeed,
         isParagliding: this.player.paragliding,
         inSettlement: nearSettlement?.id ?? null,
         inCombat: combatStatus.inCombat,
         guardianLocked: combatStatus.guardianLocked,
-        bloodMoon: this.climate.isBloodMoonRising,
-        inHyruleCastle: Math.hypot(this.player.position.x - (-80), this.player.position.z - (-260)) < 140,
+        bloodMoon: !inShrine && this.climate.isBloodMoonRising,
+        inHyruleCastle: !inShrine && Math.hypot(this.player.position.x - (-80), this.player.position.z - (-260)) < 140,
         windStrength: this.climate.windStrength,
         inBossFight: !!combatStatus.activeBoss,
       });

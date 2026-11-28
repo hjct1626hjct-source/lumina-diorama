@@ -34,6 +34,7 @@ export interface EventFlowContext {
   hasParaglider: boolean;
   plateauShrinesDone?: boolean;
   hasCameraRune?: boolean;
+  hasChampionsTunic?: boolean;
   tarreyTownStage: number;
   thunderHelmRecovered: boolean;
 }
@@ -310,17 +311,26 @@ export function evaluateNpcEventFlow(npc: WorldNpc, ctx: EventFlowContext): NpcD
   }
 
   if (npc.id === 'npc_impa') {
+    const choices: Array<{ label: string; action: string }> = [
+      { label: 'ウツシエの記憶と三層歴史を聞く', action: 'open_adventure_log' },
+      { label: '『ゼルダの日記』の記録を確認', action: 'read_zelda_diary' },
+    ];
+    if (ctx.memoriesCount >= 1 && !ctx.hasChampionsTunic) {
+      choices.unshift({
+        label: 'ウツシエの記憶の証として『英傑の服』を受け取る',
+        action: 'grant_champions_tunic',
+      });
+    }
     return {
       speakerName: 'インパ',
       roleTitle: 'カカリコ村 長老',
       lines: [
         `リンクよ、よくぞ参った。現在取り戻したウツシエの記憶は ${ctx.memoriesCount} / 23 じゃ。`,
-        '1万年前の厄災、そして100年前の大厄災の真実……4体の神獣を解放し、ハイラル城のゼルダ姫を救い出すのじゃ！',
+        ctx.memoriesCount >= 1 && !ctx.hasChampionsTunic
+          ? 'ウツシエの場所を1つ思い出したな……約束通り、100年前に姫様から預かっていた「英傑の服」をそなたに返そう！'
+          : '1万年前の厄災、そして100年前の大厄災の真実……4体の神獣を解放し、ハイラル城のゼルダ姫を救い出すのじゃ！',
       ],
-      choices: [
-        { label: 'ウツシエの記憶と三層歴史を聞く', action: 'open_adventure_log' },
-        { label: '『ゼルダの日記』の記録を確認', action: 'read_zelda_diary' },
-      ],
+      choices,
     };
   }
 
