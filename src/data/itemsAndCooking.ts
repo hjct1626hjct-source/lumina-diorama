@@ -385,6 +385,17 @@ export const BOWS: WeaponDef[] = [
     color: '#c8a64e',
     accentColor: '#fff2a6',
   },
+  {
+    id: 'bow_of_light',
+    nameJa: '光の弓矢',
+    nameEn: 'Bow of Light',
+    category: 'bow',
+    attack: 100,
+    durability: 9999,
+    material: 'Stone',
+    color: '#ffe678',
+    accentColor: '#ffffff',
+  },
 ];
 
 // ===========================================================================

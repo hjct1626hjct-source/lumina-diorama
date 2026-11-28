@@ -102,7 +102,7 @@ interface BeastTorch {
   flameMesh: THREE.Mesh;
 }
 
-interface BlightProjectile {
+export interface BlightProjectile {
   id: string;
   kind: 'ice_block' | 'fireball' | 'laser' | 'tornado';
   mesh: THREE.Group;
@@ -111,6 +111,7 @@ interface BlightProjectile {
   damage: number;
   life: number;
   reflected?: boolean;
+  wasFrozenStasis?: boolean;
   physicsBody?: PhysicsBody;
 }
 
@@ -190,20 +191,24 @@ export class DivineBeastInteriorManager {
   public overworldReturnPos = new THREE.Vector3();
   public overworldReturnYaw = 0;
 
-  // Pose state (unit-testable & UI-readable)
+  // Pose & puzzle state (unit-testable & UI-readable)
   public poseIndex = 0;
   public naborisDrumAngles: [number, number, number] = [90, 180, 270];
   public naborisCircuitConnected = false;
+  public naborisConductorConnected = false;
   public rudaniaTorchesLit = 0;
+  public rudaniaSwitchUnlocked = false;
+  public medohSwitchUnlocked = false;
+  public rutaSluiceOpen = false;
 
   public activeBoss: ActiveBlightBoss | null = null;
   public bossDefeatedInSession = false;
+  public projectiles: BlightProjectile[] = [];
 
   private dungeonGroup = new THREE.Group();
   private physics: PhysicsChemistryEngine;
   private terminals: BeastTerminal[] = [];
   private torches: BeastTorch[] = [];
-  private projectiles: BlightProjectile[] = [];
   private mainUnitPos = new THREE.Vector3(0, DIVINE_BEAST_BASE_Y, -26);
   private mainUnitBeacon: THREE.Mesh | null = null;
   private exitPos = new THREE.Vector3(0, DIVINE_BEAST_BASE_Y, 22);
@@ -218,21 +223,26 @@ export class DivineBeastInteriorManager {
   private rutaSmallWheel: THREE.Group | null = null;
   private rutaTrunkStream: THREE.Mesh | null = null;
   private rutaSluiceGate: THREE.Group | null = null;
-  private rutaSluiceOpen = false;
   private rutaWaterMesh: THREE.Mesh | null = null;
 
   private rudaniaTiltPivot: THREE.Group | null = null;
   private rudaniaTiltAngle = 0;
   private rudaniaMagBox: PhysicsBody | null = null;
+  private rudaniaSwitchMesh: THREE.Mesh | null = null;
+  private rudaniaT5GateMesh: THREE.Mesh | null = null;
 
   private medohWingPivot: THREE.Group | null = null;
   private medohWingAngle = 0;
   private medohGondola: PhysicsBody | null = null;
   private medohMetalBall: PhysicsBody | null = null;
+  private medohSwitchMesh: THREE.Mesh | null = null;
+  private medohT5GateMesh: THREE.Mesh | null = null;
 
   private naborisDrums: THREE.Group[] = [];
   private naborisCircuitStrip: THREE.Mesh | null = null;
   private naborisConductor: PhysicsBody | null = null;
+  private naborisElectrodes: THREE.Mesh[] = [];
+  private naborisT4GateMesh: THREE.Mesh | null = null;
   private naborisGateMesh: THREE.Mesh | null = null;
   private naborisGateOpen = false;
 
@@ -347,7 +357,11 @@ export class DivineBeastInteriorManager {
     this.poseIndex = beastId === 'vah_medoh' ? 1 : 0;
     this.naborisDrumAngles = [90, 180, 270];
     this.naborisCircuitConnected = false;
+    this.naborisConductorConnected = false;
     this.rudaniaTorchesLit = 0;
+    this.rudaniaSwitchUnlocked = false;
+    this.medohSwitchUnlocked = false;
+    this.rutaSluiceOpen = false;
     this.activeBoss = null;
     this.bossDefeatedInSession = false;
 
@@ -401,13 +415,22 @@ export class DivineBeastInteriorManager {
     this.rudaniaTiltPivot = null;
     this.rudaniaTiltAngle = 0;
     this.rudaniaMagBox = null;
+    this.rudaniaSwitchMesh = null;
+    this.rudaniaT5GateMesh = null;
+    this.rudaniaSwitchUnlocked = false;
     this.medohWingPivot = null;
     this.medohWingAngle = 0;
     this.medohGondola = null;
     this.medohMetalBall = null;
+    this.medohSwitchMesh = null;
+    this.medohT5GateMesh = null;
+    this.medohSwitchUnlocked = false;
     this.naborisDrums = [];
     this.naborisCircuitStrip = null;
     this.naborisConductor = null;
+    this.naborisElectrodes = [];
+    this.naborisT4GateMesh = null;
+    this.naborisConductorConnected = false;
     this.naborisGateMesh = null;
     this.naborisGateOpen = false;
     this.bossWaterMesh = null;
@@ -679,7 +702,8 @@ export class DivineBeastInteriorManager {
       this.dungeonGroup.add(stream);
       this.rutaTrunkStream = stream;
 
-      // Cryonis-liftable Sluice Gate guarding Terminal t3 at (x=-19, z=-15)
+      // Cryonis-liftable Sluice Gate guarding Terminal t3 at (x=0, z=-10.5)
+      // Ceiling-height bulkhead walls seal the left/right/back so player MUST lift gate with Cryonis!
       const gateGrp = new THREE.Group();
       const gateMesh = new THREE.Mesh(new THREE.BoxGeometry(5.6, 4.2, 0.8), this.metalMat);
       gateMesh.position.y = 2.1;
@@ -688,6 +712,9 @@ export class DivineBeastInteriorManager {
       this.dungeonGroup.add(gateGrp);
       this.rutaSluiceGate = gateGrp;
       this.physics.addBoxCollider('ruta_sluice_gate', 0, -5.8, 5.6, 0.9, y0, y0 + 4.4);
+      this.addStaticBox('ruta_sluice_wall_w', -8.4, -5.8, 11.2, 1.0, y0, y0 + 18, this.darkWallMat);
+      this.addStaticBox('ruta_sluice_wall_e', 8.4, -5.8, 11.2, 1.0, y0, y0 + 18, this.darkWallMat);
+      this.addStaticBox('ruta_sluice_wall_back', 0, -14.0, 24.0, 1.0, y0, y0 + 18, this.darkWallMat);
 
       this.addControlTerminal('t1', '制御端末 1（下層貯水ホール）', 8.5, y0, 11.5, has('t1'));
       this.addControlTerminal('t2', '制御端末 2（西側・小水車横）', -18.5, y0 + 4.5, 4.0, has('t2'));
@@ -698,12 +725,25 @@ export class DivineBeastInteriorManager {
     }
 
     if (beastId === 'vah_rudania') {
-      // Darkened interior with Blue Flame Torches + 90-degree Tiltable Interior Corridor
+      // Darkened interior with Blue Flame Torches + Dramatic 90-degree Tiltable Hull Ribs & Lava Ducts
       const pivot = new THREE.Group();
       pivot.position.set(0, y0 + 6, -4);
-      const rib = new THREE.Mesh(new THREE.BoxGeometry(34, 1.2, 46), this.darkWallMat);
-      rib.position.set(0, 8, 0);
-      pivot.add(rib);
+      const lavaMat = createBotWToonMaterial({ color: '#ff5218', emissive: '#ff3400', emissiveIntensity: 1.5 });
+      for (let rz = -18; rz <= 18; rz += 9) {
+        const archTop = new THREE.Mesh(new THREE.BoxGeometry(36, 1.3, 1.8), this.darkWallMat);
+        archTop.position.set(0, 9.5, rz);
+        const archL = new THREE.Mesh(new THREE.BoxGeometry(1.5, 16, 1.8), this.darkWallMat);
+        archL.position.set(-17.5, 2.0, rz);
+        const archR = new THREE.Mesh(new THREE.BoxGeometry(1.5, 16, 1.8), this.darkWallMat);
+        archR.position.set(17.5, 2.0, rz);
+        pivot.add(archTop, archL, archR);
+      }
+      // Twin glowing magma ducts that swing 90° around the player when tilting Rudania!
+      const ductL = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.4, 42), lavaMat);
+      ductL.position.set(-16.2, 6.5, 0);
+      const ductR = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.4, 42), lavaMat);
+      ductR.position.set(16.2, 6.5, 0);
+      pivot.add(ductL, ductR);
       this.dungeonGroup.add(pivot);
       this.rudaniaTiltPivot = pivot;
 
@@ -730,14 +770,14 @@ export class DivineBeastInteriorManager {
         this.torches.push({ id: tid, position: new THREE.Vector3(tx, y0, tz), lit: false, flameMesh: flame });
       }
 
-      // Magnesis Iron Cube on central corridor
+      // Magnesis Iron Cube on central corridor — slides right into Pressure Switch when tilted 90°!
       const boxGrp = new THREE.Group();
       const boxMesh = new THREE.Mesh(new THREE.BoxGeometry(2.2, 2.2, 2.2), this.metalMat.clone());
       boxMesh.position.y = 1.1;
       boxGrp.add(boxMesh);
       boxGrp.position.set(-4.5, y0, -2.0);
       this.dungeonGroup.add(boxGrp);
-      this.rudaniaMagBox = this.addDynamicBody('rudania_mag_box', '鉄のブロック（マグネキャッチ）', boxGrp, new THREE.Vector3(-4.5, y0, -2.0), {
+      this.rudaniaMagBox = this.addDynamicBody('rudania_mag_box', '鉄のブロック（マグネキャッチ／90°傾斜でスライド）', boxGrp, new THREE.Vector3(-4.5, y0, -2.0), {
         mass: 4.5,
         radius: 1.4,
         halfWidth: 1.1,
@@ -750,11 +790,26 @@ export class DivineBeastInteriorManager {
         highlightMesh: boxMesh,
       });
 
+      // Floor Pressure Switch at (8.5, y0, -2.0) + Blast Door sealing t5
+      const rSwitch = new THREE.Mesh(
+        new THREE.CylinderGeometry(1.6, 1.8, 0.25, 16),
+        createBotWToonMaterial({ color: '#ff8a24', emissive: '#ff5210', emissiveIntensity: 0.9 })
+      );
+      rSwitch.position.set(8.5, y0 + 0.13, -2.0);
+      this.dungeonGroup.add(rSwitch);
+      this.rudaniaSwitchMesh = rSwitch;
+
+      const rGate = new THREE.Mesh(new THREE.BoxGeometry(12.0, 5.5, 0.9), this.amberMat.clone());
+      rGate.position.set(0, y0 + 2.75, -13.0);
+      this.dungeonGroup.add(rGate);
+      this.rudaniaT5GateMesh = rGate;
+      this.physics.addBoxCollider('rudania_t5_gate', 0, -13.0, 12.0, 1.0, y0, y0 + 6.0);
+
       this.addControlTerminal('t1', '制御端末 1（暗闇の入口ホール）', -9.0, y0, 12.0, has('t1'));
       this.addControlTerminal('t2', '制御端末 2（青い炎の祭壇）', 9.0, y0, 4.0, has('t2'));
       this.addControlTerminal('t3', '制御端末 3（西側面・90°傾斜回廊）', -17.0, y0 + 3.6, -4.0, has('t3'));
       this.addControlTerminal('t4', '制御端末 4（東側面・鉄箱の奥）', 17.0, y0 + 3.6, -10.0, has('t4'));
-      this.addControlTerminal('t5', '制御端末 5（背びれ最奥デッキ）', 0, y0, -16.0, has('t5'));
+      this.addControlTerminal('t5', '制御端末 5（背びれ最奥・傾斜スイッチ隔壁奥）', 0, y0, -16.0, has('t5'));
       return;
     }
 
@@ -802,7 +857,7 @@ export class DivineBeastInteriorManager {
       ballGrp.add(ballMesh);
       ballGrp.position.set(0, y0, -11.0);
       this.dungeonGroup.add(ballGrp);
-      this.medohMetalBall = this.addDynamicBody('medoh_ball', '鉄球（翼傾斜でスライド）', ballGrp, new THREE.Vector3(0, y0, -11.0), {
+      this.medohMetalBall = this.addDynamicBody('medoh_ball', '鉄球（翼傾斜でスイッチへ転がす）', ballGrp, new THREE.Vector3(0, y0, -11.0), {
         mass: 5,
         radius: 1.1,
         halfHeight: 1.1,
@@ -812,11 +867,26 @@ export class DivineBeastInteriorManager {
         highlightMesh: ballMesh,
       });
 
+      // Pressure Switch Depression at (9.5, y0, -11.0) + Lattice Gate sealing t5 on Right Wing
+      const mSwitch = new THREE.Mesh(
+        new THREE.CylinderGeometry(1.65, 1.9, 0.25, 16),
+        createBotWToonMaterial({ color: '#ff9a24', emissive: '#ff6410', emissiveIntensity: 0.9 })
+      );
+      mSwitch.position.set(9.5, y0 + 0.13, -11.0);
+      this.dungeonGroup.add(mSwitch);
+      this.medohSwitchMesh = mSwitch;
+
+      const mGate = new THREE.Mesh(new THREE.BoxGeometry(15.0, 5.0, 0.8), this.amberMat.clone());
+      mGate.position.set(18.5, y0 + 6.7, -8.5);
+      this.dungeonGroup.add(mGate);
+      this.medohT5GateMesh = mGate;
+      this.physics.addBoxCollider('medoh_t5_gate', 18.5, -8.5, 15.0, 1.0, y0 + 4.2, y0 + 9.4);
+
       this.addControlTerminal('t1', '制御端末 1（中央気流ホール）', 0, y0, 10.0, has('t1'));
       this.addControlTerminal('t2', '制御端末 2（左翼・ゴンドラ先）', -18.5, y0 + 4.2, 4.0, has('t2'));
       this.addControlTerminal('t3', '制御端末 3（左翼先端デッキ）', -18.5, y0 + 4.2, -12.0, has('t3'));
       this.addControlTerminal('t4', '制御端末 4（右翼・気流ダクト上）', 18.5, y0 + 4.2, 4.0, has('t4'));
-      this.addControlTerminal('t5', '制御端末 5（右翼最奥デッキ）', 18.5, y0 + 4.2, -12.0, has('t5'));
+      this.addControlTerminal('t5', '制御端末 5（右翼最奥・鉄球スイッチ格子奥）', 18.5, y0 + 4.2, -12.0, has('t5'));
       return;
     }
 
@@ -846,7 +916,7 @@ export class DivineBeastInteriorManager {
     this.dungeonGroup.add(strip);
     this.naborisCircuitStrip = strip;
 
-    // Magnesis Metal Conductor Block to bridge side electrodes
+    // Magnesis Metal Conductor Block to bridge 2-pole Electrode Socket at (11.0, y0, -4.0)
     const condGrp = new THREE.Group();
     const condMesh = new THREE.Mesh(new THREE.BoxGeometry(2.0, 2.0, 2.0), this.metalMat.clone());
     condMesh.position.y = 1.0;
@@ -864,6 +934,23 @@ export class DivineBeastInteriorManager {
       isMetalBox: true,
       highlightMesh: condMesh,
     });
+
+    // 2-Pole Electrode Socket at (11.0, y0, -4.0) + Dedicated Gate blocking t4
+    this.naborisElectrodes = [];
+    for (const ez of [-5.3, -2.7]) {
+      const pole = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.35, 0.45, 2.6, 10),
+        createBotWToonMaterial({ color: '#ff9a24', emissive: '#ff6410', emissiveIntensity: 0.9 })
+      );
+      pole.position.set(11.0, y0 + 1.3, ez);
+      this.dungeonGroup.add(pole);
+      this.naborisElectrodes.push(pole);
+    }
+    const t4Gate = new THREE.Mesh(new THREE.BoxGeometry(0.9, 5.2, 8.0), this.amberMat.clone());
+    t4Gate.position.set(13.2, y0 + 5.8, -4.0);
+    this.dungeonGroup.add(t4Gate);
+    this.naborisT4GateMesh = t4Gate;
+    this.physics.addBoxCollider('naboris_t4_gate', 13.2, -4.0, 1.0, 8.0, y0 + 3.2, y0 + 8.6);
 
     // Rear sanctum gate unlocked when all 3 drums align to 0°!
     const nGate = new THREE.Mesh(new THREE.BoxGeometry(10.0, 5.0, 0.8), this.amberMat.clone());
@@ -967,6 +1054,18 @@ export class DivineBeastInteriorManager {
     const term = this.terminals.find((t) => t.id === termId);
     if (!term) return { ok: false, allActivated: false, messageJa: '' };
     if (term.activated) return { ok: false, allActivated: this.areAllTerminalsActivated(), messageJa: 'この制御端末はすでに起動済みです' };
+    if (this.activeBeastId === 'vah_ruta' && term.id === 't3' && !this.rutaSluiceOpen) {
+      return { ok: false, allActivated: false, messageJa: '水門が閉まっています！アイスメイカーで水門を持ち上げよう' };
+    }
+    if (this.activeBeastId === 'vah_rudania' && term.id === 't5' && !this.rudaniaSwitchUnlocked) {
+      return { ok: false, allActivated: false, messageJa: '隔壁が閉まっています！胴体を90°横倒しにして鉄箱をスイッチへ滑らせよう' };
+    }
+    if (this.activeBeastId === 'vah_medoh' && term.id === 't5' && !this.medohSwitchUnlocked) {
+      return { ok: false, allActivated: false, messageJa: '格子扉が閉まっています！翼を右へ傾けて鉄球をスイッチへ転がそう' };
+    }
+    if (this.activeBeastId === 'vah_naboris' && term.id === 't4' && !this.naborisConductorConnected) {
+      return { ok: false, allActivated: false, messageJa: '電極が通電していません！マグネキャッチで通電ブロックを電極へ運ぼう' };
+    }
     if (term.requiresPower && !this.naborisCircuitConnected) {
       return { ok: false, allActivated: false, messageJa: '送電回路が繋がっていません！神獣操作で3連ドラムを揃えよう' };
     }
@@ -1357,7 +1456,7 @@ export class DivineBeastInteriorManager {
       this.mainUnitBeacon.rotation.y += dt * 1.3;
     }
 
-    // Beast-specific animations
+    // Beast-specific animations & puzzle unlock checks
     if (this.activeBeastId === 'vah_ruta') {
       const dir = this.poseIndex === 2 ? -1 : 1;
       if (this.rutaBigWheel && !this.rutaBigWheel.isFrozenStasis) {
@@ -1370,10 +1469,74 @@ export class DivineBeastInteriorManager {
       const targetAngle = this.poseIndex === 1 ? Math.PI * 0.5 : 0;
       this.rudaniaTiltAngle += (targetAngle - this.rudaniaTiltAngle) * Math.min(1, dt * 3.5);
       this.rudaniaTiltPivot.rotation.z = this.rudaniaTiltAngle;
+      if (this.ambientLight) {
+        this.ambientLight.color.set(this.poseIndex === 1 ? '#ff9c66' : '#82a8c4');
+      }
+      if (this.rudaniaMagBox && !this.rudaniaMagBox.magnesisGrabbed) {
+        if (this.poseIndex === 1) {
+          this.rudaniaMagBox.velocity.x = Math.min(12.0, this.rudaniaMagBox.velocity.x + 18.0 * dt);
+          this.rudaniaMagBox.position.x = THREE.MathUtils.clamp(
+            this.rudaniaMagBox.position.x + this.rudaniaMagBox.velocity.x * dt * 0.35,
+            -9.5,
+            9.2
+          );
+          this.rudaniaMagBox.mesh.position.copy(this.rudaniaMagBox.position);
+        }
+        if (!this.rudaniaSwitchUnlocked && Math.hypot(this.rudaniaMagBox.position.x - 8.5, this.rudaniaMagBox.position.z - -2.0) < 2.6) {
+          this.rudaniaSwitchUnlocked = true;
+          if (this.rudaniaSwitchMesh) {
+            const mat = this.rudaniaSwitchMesh.material as THREE.MeshToonMaterial;
+            mat.color.set('#3ce6ff');
+            mat.emissive.set('#18d4ff');
+          }
+          if (this.rudaniaT5GateMesh) this.rudaniaT5GateMesh.visible = false;
+          this.physics.removeCollider('rudania_t5_gate');
+        }
+      }
     } else if (this.activeBeastId === 'vah_medoh' && this.medohWingPivot) {
       const targetAngle = this.poseIndex === 0 ? 0.31 : this.poseIndex === 2 ? -0.31 : 0;
       this.medohWingAngle += (targetAngle - this.medohWingAngle) * Math.min(1, dt * 3.5);
       this.medohWingPivot.rotation.z = this.medohWingAngle;
+      const tiltDir = this.poseIndex === 0 ? -1 : this.poseIndex === 2 ? 1 : 0;
+      if (tiltDir !== 0) {
+        if (this.medohGondola && !this.medohGondola.magnesisGrabbed) {
+          this.medohGondola.position.x = THREE.MathUtils.clamp(this.medohGondola.position.x + tiltDir * 8.5 * dt, -10.5, 10.5);
+          this.medohGondola.mesh.position.copy(this.medohGondola.position);
+        }
+        if (this.medohMetalBall && !this.medohMetalBall.magnesisGrabbed) {
+          this.medohMetalBall.position.x = THREE.MathUtils.clamp(this.medohMetalBall.position.x + tiltDir * 11.5 * dt, -10.2, 10.2);
+          this.medohMetalBall.mesh.position.copy(this.medohMetalBall.position);
+        }
+      }
+      if (
+        !this.medohSwitchUnlocked &&
+        this.medohMetalBall &&
+        Math.hypot(this.medohMetalBall.position.x - 9.5, this.medohMetalBall.position.z - -11.0) < 2.4
+      ) {
+        this.medohSwitchUnlocked = true;
+        if (this.medohSwitchMesh) {
+          const mat = this.medohSwitchMesh.material as THREE.MeshToonMaterial;
+          mat.color.set('#3ce6ff');
+          mat.emissive.set('#18d4ff');
+        }
+        if (this.medohT5GateMesh) this.medohT5GateMesh.visible = false;
+        this.physics.removeCollider('medoh_t5_gate');
+      }
+    } else if (this.activeBeastId === 'vah_naboris') {
+      if (
+        !this.naborisConductorConnected &&
+        this.naborisConductor &&
+        Math.hypot(this.naborisConductor.position.x - 11.0, this.naborisConductor.position.z - -4.0) < 2.6
+      ) {
+        this.naborisConductorConnected = true;
+        for (const pole of this.naborisElectrodes) {
+          const mat = pole.material as THREE.MeshToonMaterial;
+          mat.color.set('#42ff88');
+          mat.emissive.set('#22e86c');
+        }
+        if (this.naborisT4GateMesh) this.naborisT4GateMesh.visible = false;
+        this.physics.removeCollider('naboris_t4_gate');
+      }
     }
 
     // Boss AI Update (Phase 1 + Phase 2 bespoke patterns!)
@@ -1466,20 +1629,49 @@ export class DivineBeastInteriorManager {
       }
     }
 
-    // Update Boss Projectiles (Ice Blocks, Fireballs, Lasers, Tornadoes)
+    // Update Boss Projectiles (Ice Blocks with Stasis reflection, Fireballs, Lasers, Tornadoes)
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const p = this.projectiles[i];
       p.life -= dt;
-      if (p.physicsBody?.isFrozenStasis) continue;
+
+      if (p.physicsBody?.isFrozenStasis) {
+        p.wasFrozenStasis = true;
+        // Keep physics body frozen at current projectile position while Stasis holds it
+        p.physicsBody.position.copy(p.position);
+        continue;
+      }
+
+      // Detect Stasis release with launched impulse -> reflect Ice Block right back at Waterblight!
+      if (p.kind === 'ice_block' && p.wasFrozenStasis && p.physicsBody) {
+        p.wasFrozenStasis = false;
+        const launchedSpeed = p.physicsBody.velocity.length();
+        if (launchedSpeed > 1.0) {
+          p.reflected = true;
+          p.life = Math.max(p.life, 4.5);
+          if (boss && boss.state !== 'dead') {
+            const toBoss = boss.position.clone().add(new THREE.Vector3(0, 1.8, 0)).sub(p.position).normalize();
+            p.velocity.copy(toBoss.multiplyScalar(Math.max(20.0, launchedSpeed)));
+          } else {
+            p.velocity.copy(p.physicsBody.velocity);
+          }
+          p.physicsBody.velocity.copy(p.velocity);
+        }
+      }
+
       p.position.addScaledVector(p.velocity, dt);
       p.mesh.position.copy(p.position);
-      if (p.physicsBody) p.physicsBody.position.copy(p.position);
+      if (p.physicsBody && !p.reflected) {
+        p.physicsBody.position.copy(p.position);
+      } else if (p.physicsBody && p.reflected) {
+        p.physicsBody.position.copy(p.position);
+        p.physicsBody.velocity.copy(p.velocity);
+      }
 
-      if (p.reflected && boss && boss.state !== 'dead' && p.position.distanceTo(boss.position) < 3.5) {
+      if (p.reflected && boss && boss.state !== 'dead' && p.position.distanceTo(boss.position.clone().add(new THREE.Vector3(0, 1.5, 0))) < 4.2) {
         boss.state = 'downed';
         boss.downedTimer = 5.0;
-        this.damageBoss(boss, 130, false);
-        bossDownedByGimmick = '❄️ 氷塊を跳ね返して命中！水のカースガノンがダウンした！！';
+        this.damageBoss(boss, 150, false);
+        bossDownedByGimmick = '❄️ ビタロックで氷塊を跳ね返して命中！水のカースガノンがダウンした！！';
         this.dungeonGroup.remove(p.mesh);
         if (p.physicsBody) this.physics.removeBody(p.physicsBody.id);
         this.projectiles.splice(i, 1);
@@ -1504,7 +1696,7 @@ export class DivineBeastInteriorManager {
     return { fellInPit: false, bossHitPlayer, bossDownedByGimmick };
   }
 
-  private spawnBossProjectile(kind: BlightProjectile['kind'], from: THREE.Vector3, target: THREE.Vector3, damage: number): void {
+  public spawnBossProjectile(kind: BlightProjectile['kind'], from: THREE.Vector3, target: THREE.Vector3, damage: number): BlightProjectile {
     const start = from.clone().add(new THREE.Vector3(0, 2.2, 0));
     const dir = target.clone().add(new THREE.Vector3(0, 1.0, 0)).sub(start).normalize();
     const grp = new THREE.Group();
@@ -1535,7 +1727,7 @@ export class DivineBeastInteriorManager {
       });
     }
 
-    this.projectiles.push({
+    const proj: BlightProjectile = {
       id: `bp_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
       kind,
       mesh: grp,
@@ -1544,6 +1736,8 @@ export class DivineBeastInteriorManager {
       damage,
       life: 4.5,
       physicsBody: body,
-    });
+    };
+    this.projectiles.push(proj);
+    return proj;
   }
 }

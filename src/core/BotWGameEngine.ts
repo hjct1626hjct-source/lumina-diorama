@@ -30,6 +30,16 @@ import {
   applyDivineBeastLiberationRewards,
   type DivineBeastId,
 } from '../world/DivineBeastInteriorManager';
+import {
+  HyruleCastleInteriorManager,
+  applyGanonDefeatedEnding,
+} from '../world/HyruleCastleInteriorManager';
+import {
+  TrialOfSwordManager,
+  getMasterSwordAwakeningStats,
+  pullMasterSword,
+  type TrialTier,
+} from '../world/TrialOfSwordManager';
 import { getRegionAt, getTerrainHeight } from '../world/TerrainGenerator';
 import { PhysicsChemistryEngine } from '../physics/PhysicsChemistryEngine';
 import { SheikahRuneSystem } from '../gameplay/SheikahRunes';
@@ -39,6 +49,7 @@ import {
   NpcAndKorokSystem,
   evaluateNpcEventFlow,
   hasCompletedAllPlateauShrines,
+  type WildlifeEntity,
   type WorldKorok,
   type WorldNpc,
 } from '../entities/NpcAndKorokSystem';
@@ -90,7 +101,15 @@ type NearbyInteractable =
   | { kind: 'beastTerminal'; id: string; label: string }
   | { kind: 'beastMainUnit'; label: string }
   | { kind: 'beastTorch'; id: string; label: string }
-  | { kind: 'beastExit'; label: string };
+  | { kind: 'beastExit'; label: string }
+  | { kind: 'hyruleCastleEnter'; label: string }
+  | { kind: 'hyruleCastleExit'; label: string }
+  | { kind: 'masterSwordPedestal'; label: string }
+  | { kind: 'trialPickup'; id: string; label: string }
+  | { kind: 'trialWarpNext'; label: string }
+  | { kind: 'trialExit'; label: string }
+  | { kind: 'horseMount'; horse: WildlifeEntity; label: string }
+  | { kind: 'horseSootheOrDismount'; horse: WildlifeEntity; label: string };
 
 /**
  * Master 60fps Three.js WebGL2 Open-Air Breath of the Wild Engine (PC & iPad Multi-Touch Ready).
@@ -111,12 +130,16 @@ export class BotWGameEngine {
   public architecture!: ArchitectureBuilder;
   public shrineInterior!: ShrineInteriorManager;
   public divineBeastInterior!: DivineBeastInteriorManager;
+  public hyruleCastleInterior!: HyruleCastleInteriorManager;
+  public trialOfSword!: TrialOfSwordManager;
   public runes!: SheikahRuneSystem;
   public player!: PlayerController;
   public enemies!: EnemyAndBossSystem;
   public npcs!: NpcAndKorokSystem;
   public ui!: BotWHudAndMenu;
   public touchControls!: TouchControls;
+  public mountedHorse: WildlifeEntity | null = null;
+  private lastWhistleTime = -10;
 
   public save: SaveSlotData;
   public climate!: ClimateStatus;
@@ -234,6 +257,8 @@ export class BotWGameEngine {
     this.architecture = new ArchitectureBuilder(this.scene, this.physics);
     this.shrineInterior = new ShrineInteriorManager(this.scene, this.physics);
     this.divineBeastInterior = new DivineBeastInteriorManager(this.scene, this.physics);
+    this.hyruleCastleInterior = new HyruleCastleInteriorManager(this.scene, this.physics);
+    this.trialOfSword = new TrialOfSwordManager(this.scene, this.physics);
     this.runes = new SheikahRuneSystem(this.scene);
     this.player = new PlayerController(this.scene);
     this.enemies = new EnemyAndBossSystem(this.scene);
@@ -249,6 +274,9 @@ export class BotWGameEngine {
       onStartNewGame: (mode, skipIntro) => {
         if (this.shrineInterior.isActive()) this.exitShrineImmediate();
         if (this.divineBeastInterior.isActive()) this.exitDivineBeastImmediate();
+        if (this.hyruleCastleInterior.isActive()) this.exitHyruleCastleImmediate();
+        if (this.trialOfSword.isActive()) this.exitTrialOfSwordImmediate(false);
+        this.dismountHorseIfMounted();
         this.save = createDefaultSave(mode);
         this.ensureSettingsDefaults();
         this.runes.selectRune(null);
@@ -272,6 +300,13 @@ export class BotWGameEngine {
         if (this.divineBeastInterior.isActive()) {
           this.exitDivineBeastImmediate();
         }
+        if (this.hyruleCastleInterior.isActive()) {
+          this.exitHyruleCastleImmediate();
+        }
+        if (this.trialOfSword.isActive()) {
+          this.exitTrialOfSwordImmediate(false);
+        }
+        this.dismountHorseIfMounted();
         this.player.teleportTo(x, z, 0.5);
         this.terrain.update(x, z);
         this.ui.showToast(`🌀 ワープ完了：${labelJa}`, 'cyan');
@@ -279,13 +314,17 @@ export class BotWGameEngine {
       },
       onSaveManual: (idx) => {
         this.syncSaveFromRuntime();
-        void saveManager.save(getManualSlotId(this.save.mode, idx), this.save);
+        const safeSave = this.trialOfSword.getSafeSaveForPersistence(this.save);
+        void saveManager.save(getManualSlotId(safeSave.mode, idx), safeSave);
       },
       onLoadSlot: async (slotId) => {
         const loaded = await saveManager.load(slotId as SaveSlotId);
         if (loaded) {
           if (this.shrineInterior.isActive()) this.exitShrineImmediate();
           if (this.divineBeastInterior.isActive()) this.exitDivineBeastImmediate();
+          if (this.hyruleCastleInterior.isActive()) this.exitHyruleCastleImmediate();
+          if (this.trialOfSword.isActive()) this.exitTrialOfSwordImmediate(false);
+          this.dismountHorseIfMounted();
           this.save = loaded;
           this.ensureSettingsDefaults();
           this.applyLoadedSave();
@@ -537,6 +576,20 @@ export class BotWGameEngine {
         y: this.divineBeastInterior.overworldReturnPos.y,
         z: this.divineBeastInterior.overworldReturnPos.z,
         yaw: this.divineBeastInterior.overworldReturnYaw,
+      };
+    } else if (this.hyruleCastleInterior.isActive()) {
+      this.save.playerPos = {
+        x: this.hyruleCastleInterior.overworldReturnPos.x,
+        y: this.hyruleCastleInterior.overworldReturnPos.y,
+        z: this.hyruleCastleInterior.overworldReturnPos.z,
+        yaw: this.hyruleCastleInterior.overworldReturnYaw,
+      };
+    } else if (this.trialOfSword.isActive()) {
+      this.save.playerPos = {
+        x: this.trialOfSword.overworldReturnPos.x,
+        y: this.trialOfSword.overworldReturnPos.y,
+        z: this.trialOfSword.overworldReturnPos.z,
+        yaw: this.trialOfSword.overworldReturnYaw,
       };
     } else {
       this.save.playerPos = {
@@ -1015,7 +1068,8 @@ export class BotWGameEngine {
     audioEngine.playSwordSwing();
 
     const armor = computeArmorSummary(this.save.equippedArmor, this.save.armorStars);
-    const baseAtk = wep.isMasterSword && this.save.masterSwordAwakened ? 60 : wep.attack;
+    const msStats = getMasterSwordAwakeningStats(this.save);
+    const baseAtk = wep.isMasterSword ? msStats.attack : wep.attack;
     const fwd = this.player.getForwardDirection();
 
     // Check Stasis frozen rigid bodies -> add kinetic energy impulse!
@@ -1050,6 +1104,58 @@ export class BotWGameEngine {
         if (hit.defeated) {
           audioEngine.playChestFanfare();
           this.ui.showToast('✨ カースガノン撃破！中央のメイン制御端末を起動して神獣を解放しよう！', 'amber');
+        }
+      }
+      return;
+    }
+
+    if (this.hyruleCastleInterior.isActive()) {
+      // Urbosa's Fury or Flurry Rush shatters Calamity Ganon's Phase 2 Golden Invulnerable Shield!
+      if (
+        isSpin &&
+        this.save.champions.urbosa.unlocked &&
+        this.save.champions.urbosa.enabled &&
+        this.save.champions.urbosa.charges > 0
+      ) {
+        this.save.champions.urbosa.charges -= 1;
+        if (this.save.champions.urbosa.charges === 0) {
+          this.save.champions.urbosa.cooldown = this.save.champions.urbosa.upgraded ? 240 : 720;
+        }
+        const br = this.hyruleCastleInterior.breakGoldenShield('urbosa');
+        audioEngine.playHitImpact(true);
+        if (br.messageJa) this.ui.showToast(br.messageJa, 'amber');
+        if (br.calamityDefeated) this.transitionToDarkBeastGanon();
+        return;
+      }
+      if (this.player.flurryRushTimer > 0 && this.hyruleCastleInterior.calamityBoss?.goldenShieldActive) {
+        const br = this.hyruleCastleInterior.breakGoldenShield('flurry_rush');
+        audioEngine.playHitImpact(true);
+        if (br.messageJa) this.ui.showToast(br.messageJa, 'amber');
+        if (br.calamityDefeated) this.transitionToDarkBeastGanon();
+        return;
+      }
+      const reach = isSpin ? 5.4 : 4.2;
+      const hit = this.hyruleCastleInterior.onPlayerAttack(this.player.position, fwd, reach, baseAtk, false, false);
+      if (hit.blockedByShield) {
+        audioEngine.playParryClang();
+        this.ui.showToast('🛡️ 黄金の無敵障壁に弾かれた！ガードジャスト・ラッシュ・ウルボザの怒りで破壊せよ！', 'amber');
+      } else if (hit.hit) {
+        audioEngine.playHitImpact(false);
+        if (hit.calamityDefeated) {
+          this.transitionToDarkBeastGanon();
+        }
+      }
+      return;
+    }
+
+    if (this.trialOfSword.isActive()) {
+      const reach = isSpin ? 4.8 : 3.6;
+      const hit = this.trialOfSword.onPlayerAttack(this.player.position, fwd, reach, baseAtk, false);
+      if (hit.hit) {
+        audioEngine.playHitImpact(false);
+        if (hit.floorClearedNow) {
+          audioEngine.playShrineChime();
+          this.ui.showToast('✨ 魔物を殲滅した！奥のワープ陣から次の階層へ進もう！', 'cyan');
         }
       }
       return;
@@ -1233,6 +1339,12 @@ export class BotWGameEngine {
           const sp = this.divineBeastInterior.getSpawnPos();
           this.player.setExactPosition(sp.x, sp.y + 0.05, sp.z);
           this.ui.showToast('神獣の入り口へ戻されました', 'red');
+        } else if (this.hyruleCastleInterior.isActive()) {
+          this.exitHyruleCastleImmediate();
+          this.ui.showToast('ハイラル城の入口へ戻されました', 'red');
+        } else if (this.trialOfSword.isActive()) {
+          this.exitTrialOfSwordImmediate(false);
+          this.ui.showToast('剣の試練失敗……コログの森へ戻り、所持品が全復元されました', 'red');
         } else if (this.architecture.sorDoorOpened) {
           this.player.teleportTo(-298, 454, 0.5);
           this.ui.showToast('回生の祠で復活しました', 'red');
@@ -1264,6 +1376,53 @@ export class BotWGameEngine {
       if (hit.kind === 'mainUnit') return { kind: 'beastMainUnit', label: hit.label };
       if (hit.kind === 'torch') return { kind: 'beastTorch', id: hit.id, label: hit.label };
       return { kind: 'beastExit', label: hit.label };
+    }
+
+    if (this.hyruleCastleInterior.isActive()) {
+      const hit = this.hyruleCastleInterior.getNearestInteractable(p);
+      if (!hit) return null;
+      return { kind: 'hyruleCastleExit', label: hit.label };
+    }
+
+    if (this.trialOfSword.isActive()) {
+      const hit = this.trialOfSword.getNearestInteractable(p);
+      if (!hit) return null;
+      if (hit.kind === 'pickup') return { kind: 'trialPickup', id: hit.id, label: hit.label };
+      if (hit.kind === 'warp_next') return { kind: 'trialWarpNext', label: hit.label };
+      return { kind: 'trialExit', label: hit.label };
+    }
+
+    if (this.mountedHorse) {
+      const lbl =
+        this.mountedHorse.tameState === 'bucking'
+          ? `🐎 なだめる（${this.mountedHorse.sootheProgress ?? 0}%）`
+          : '🐎 馬から降りる';
+      return { kind: 'horseSootheOrDismount', horse: this.mountedHorse, label: lbl };
+    }
+
+    // Hyrule Castle Sanctum Entrance (-80, -260)
+    if (Math.hypot(p.x - (-80), p.z - (-260)) < 16.0) {
+      return { kind: 'hyruleCastleEnter', label: '⚔️ ハイラル城・本丸へ突入（厄災ガノン決戦）' };
+    }
+
+    // Korok Forest Master Sword Pedestal (60, -682)
+    if (Math.hypot(p.x - 60, p.z - (-682)) < 5.2) {
+      const hasMs = this.save.hasMasterSword || this.save.weapons.some((w) => w.id === 'master_sword');
+      return {
+        kind: 'masterSwordPedestal',
+        label: hasMs ? '⚔️ 剣の試練（DLC 1）に挑戦する' : '⚔️ マスターソードを引き抜く（要ハート13）',
+      };
+    }
+
+    // Nearby Wild or Tamed Horse to Mount
+    for (const w of this.npcs.wildlife) {
+      if (w.type === 'horse' && !w.ridden && w.position.distanceTo(p) < 3.6) {
+        return {
+          kind: 'horseMount',
+          horse: w,
+          label: w.tamed ? '🐎 愛馬に乗る' : '🐎 野生馬に乗る（なだめて手なずける）',
+        };
+      }
     }
 
     if (!this.architecture.sheikahSlateCollected && this.architecture.sheikahPedestalPos.distanceTo(p) < 3.4) {
@@ -1459,6 +1618,89 @@ export class BotWGameEngine {
       return;
     }
 
+    if (target.kind === 'hyruleCastleEnter') {
+      this.dismountHorseIfMounted();
+      this.enterHyruleCastleSanctum();
+      return;
+    }
+
+    if (target.kind === 'hyruleCastleExit') {
+      this.exitHyruleCastleImmediate();
+      this.ui.showToast('ハイラル城・本丸から撤退しました', 'amber');
+      return;
+    }
+
+    if (target.kind === 'masterSwordPedestal') {
+      const hasMs = this.save.hasMasterSword || this.save.weapons.some((w) => w.id === 'master_sword');
+      if (!hasMs) {
+        const res = pullMasterSword(this.save);
+        if (res.pulled) {
+          this.player.syncVisuals(this.save);
+          audioEngine.playChestFanfare();
+        }
+        this.ui.showToast(res.messageJa, res.pulled ? 'cyan' : 'amber');
+      } else {
+        this.ui.openTrialSelector(this.save, (tier: TrialTier) => {
+          this.enterTrialOfSword(tier);
+        });
+      }
+      return;
+    }
+
+    if (target.kind === 'trialPickup') {
+      const msg = this.trialOfSword.collectPickup(target.id, this.save);
+      this.player.syncVisuals(this.save);
+      audioEngine.playChestFanfare();
+      if (msg) this.ui.showToast(msg, 'amber');
+      return;
+    }
+
+    if (target.kind === 'trialWarpNext') {
+      const adv = this.trialOfSword.advanceFloor(this.save);
+      if (adv.completed) {
+        this.terrain.group.visible = true;
+        this.architecture.group.visible = true;
+        this.enemies.group.visible = true;
+        this.npcs.group.visible = true;
+        this.player.setExactPosition(adv.spawnPos.x, adv.spawnPos.y + 0.25, adv.spawnPos.z);
+        this.player.syncVisuals(this.save);
+        audioEngine.playChestFanfare();
+        this.ui.showToast(adv.awakeningMessage ?? '⚔️ 剣の試練 制覇！', 'cyan');
+      } else {
+        this.player.setExactPosition(adv.spawnPos.x, adv.spawnPos.y + 0.1, adv.spawnPos.z);
+        audioEngine.playShrineChime();
+        this.ui.showToast(`🌀 ${this.trialOfSword.getFloorLabel()} へ到達！`, 'cyan');
+      }
+      return;
+    }
+
+    if (target.kind === 'trialExit') {
+      this.exitTrialOfSwordImmediate(false);
+      this.ui.showToast('コログの森へ戻り、所持品をすべて復元しました', 'cyan');
+      return;
+    }
+
+    if (target.kind === 'horseMount') {
+      const res = this.npcs.mountHorse(target.horse);
+      this.mountedHorse = target.horse;
+      this.player.paragliding = false;
+      this.player.climbing = false;
+      audioEngine.playUiConfirm();
+      this.ui.showToast(res.messageJa, res.state === 'tamed' ? 'cyan' : 'amber');
+      return;
+    }
+
+    if (target.kind === 'horseSootheOrDismount') {
+      if (target.horse.tameState === 'bucking') {
+        const res = this.npcs.sootheHorse(target.horse);
+        audioEngine.playUiConfirm();
+        this.ui.showToast(res.messageJa, res.tamedNow ? 'cyan' : 'amber');
+      } else {
+        this.dismountHorseIfMounted();
+      }
+      return;
+    }
+
     if (target.kind === 'slatePedestal') {
       this.architecture.collectSheikahSlate();
       this.save.hasSheikahSlate = true;
@@ -1564,14 +1806,12 @@ export class BotWGameEngine {
     } else if (target.kind === 'pot') {
       this.ui.openCookingModal(this.climate.isBloodMoonCookWindow);
     } else if (target.kind === 'korok') {
-      target.korok.found = true;
-      target.korok.korokMesh.visible = true;
-      if (!this.save.foundKoroks.includes(target.korok.id)) {
-        this.save.foundKoroks.push(target.korok.id);
-        this.save.korokSeeds += 1;
+      const res = this.npcs.tryInteractKorok(target.korok.id);
+      if (res.solved && res.korok) {
+        this.grantKorokReward(res.korok, res.hintJa);
+      } else if (res.hintJa) {
+        this.ui.showToast(res.hintJa, 'cyan');
       }
-      audioEngine.playKorokYahaha();
-      this.ui.showToast(`🌿 ヤハハ！見つかっちゃった！コログのミ獲得（${target.korok.puzzleNameJa}）`, 'amber');
     } else if (target.kind === 'memory') {
       const mem = ALL_MEMORIES.find((m) => m.id === target.memoryId);
       if (mem) {
@@ -1761,11 +2001,134 @@ export class BotWGameEngine {
     });
   }
 
+  private grantKorokReward(korok: WorldKorok, msgJa?: string): void {
+    if (!this.save.foundKoroks.includes(korok.id)) {
+      this.save.foundKoroks.push(korok.id);
+      this.save.korokSeeds += 1;
+    }
+    audioEngine.playKorokYahaha();
+    this.ui.showToast(
+      msgJa ?? `🌿 ヤハハ！見つかっちゃった！コログのミ獲得（${korok.puzzleNameJa}）`,
+      'amber'
+    );
+  }
+
+  private enterHyruleCastleSanctum(): void {
+    this.terrain.group.visible = false;
+    this.architecture.group.visible = false;
+    this.enemies.group.visible = false;
+    this.npcs.group.visible = false;
+    const entered = this.hyruleCastleInterior.enterSanctum(this.save, this.player.position, this.player.yaw);
+    this.player.setExactPosition(entered.spawnPos.x, entered.spawnPos.y + 0.1, entered.spawnPos.z);
+    this.player.yaw = entered.spawnYaw;
+    this.player.velocity.set(0, 0, 0);
+    audioEngine.playShrineChime();
+    const beamMsg =
+      entered.freedBeasts > 0
+        ? `⚡ 解放した${entered.freedBeasts}体の神獣が赤い光線を照射！厄災ガノンのHPが ${entered.startingHp} まで減少！！`
+        : '⚔️ ハイラル城・本丸へ突入！厄災ガノン（HP 4000）との決戦開始！';
+    this.ui.showToast(beamMsg, 'red');
+  }
+
+  private transitionToDarkBeastGanon(): void {
+    const entered = this.hyruleCastleInterior.enterDarkBeastArena(this.save);
+    this.player.setExactPosition(entered.spawnPos.x, entered.spawnPos.y + 0.15, entered.spawnPos.z);
+    this.player.yaw = entered.spawnYaw;
+    this.player.velocity.set(0, 0, 0);
+    this.player.syncVisuals(this.save);
+    audioEngine.playChestFanfare();
+    this.ui.showToast(
+      '✨ 魔獣ガノン出現！ゼルダ姫から【光の弓矢（攻撃力100・無限直進）】を授かった！6つの光の紋章を射抜け！',
+      'amber'
+    );
+  }
+
+  private triggerDarkBeastEnding(): void {
+    const summary = applyGanonDefeatedEnding(this.save);
+    this.exitHyruleCastleImmediate();
+    this.syncSaveFromRuntime();
+    void saveManager.save(getAutoSlotId(this.save.mode), this.save);
+    audioEngine.playChestFanfare();
+    this.paused = true;
+    this.ui.showEndingCredits(summary, () => {
+      this.paused = false;
+      this.player.syncVisuals(this.save);
+      this.ui.showToast('★ 厄災ガノン討伐記録を保存しました！ハイラルの旅は続きます。', 'amber');
+    });
+  }
+
+  private exitHyruleCastleImmediate(): void {
+    const out = this.hyruleCastleInterior.exitCastle();
+    this.terrain.group.visible = true;
+    this.architecture.group.visible = true;
+    this.enemies.group.visible = true;
+    this.npcs.group.visible = true;
+    this.player.setExactPosition(out.returnPos.x, out.returnPos.y + 0.25, out.returnPos.z);
+    this.player.yaw = out.returnYaw;
+    this.player.velocity.set(0, 0, 0);
+  }
+
+  private enterTrialOfSword(tier: TrialTier): void {
+    this.dismountHorseIfMounted();
+    this.terrain.group.visible = false;
+    this.architecture.group.visible = false;
+    this.enemies.group.visible = false;
+    this.npcs.group.visible = false;
+    const entered = this.trialOfSword.enterTrial(tier, this.save, this.player.position, this.player.yaw);
+    this.player.setExactPosition(entered.spawnPos.x, entered.spawnPos.y + 0.1, entered.spawnPos.z);
+    this.player.yaw = entered.spawnYaw;
+    this.player.velocity.set(0, 0, 0);
+    this.player.syncVisuals(this.save);
+    audioEngine.playShrineChime();
+    this.ui.showToast(`⚔️ ${entered.meta.nameJa} 開始！身一つで全${entered.meta.totalFloors}層を制覇せよ！`, 'cyan');
+  }
+
+  private exitTrialOfSwordImmediate(cleared: boolean): void {
+    const out = this.trialOfSword.exitTrial(this.save, cleared);
+    this.terrain.group.visible = true;
+    this.architecture.group.visible = true;
+    this.enemies.group.visible = true;
+    this.npcs.group.visible = true;
+    this.player.setExactPosition(out.returnPos.x, out.returnPos.y + 0.25, out.returnPos.z);
+    this.player.yaw = out.returnYaw;
+    this.player.velocity.set(0, 0, 0);
+    this.player.syncVisuals(this.save);
+  }
+
+  private dismountHorseIfMounted(): void {
+    if (!this.mountedHorse) return;
+    const h = this.mountedHorse;
+    h.ridden = false;
+    this.mountedHorse = null;
+    this.player.position.x += 1.6;
+    this.player.position.y = getTerrainHeight(this.player.position.x, this.player.position.z) + 0.1;
+
+    // Auto-register tamed horse if dismounting near a Stable!
+    if (h.tamed && h.tameState !== 'registered') {
+      const nearStable = LANDMARKS.find(
+        (l) => l.type === 'stable' && Math.hypot(l.x - h.position.x, l.z - h.position.z) < l.radius + 24
+      );
+      if (nearStable) {
+        const reg = this.npcs.registerHorseAtStable(h);
+        if (reg.registered) {
+          audioEngine.playChestFanfare();
+          this.ui.showToast(reg.messageJa, 'amber');
+          return;
+        }
+      }
+    }
+    this.ui.showToast('🐎 馬から降りた', 'cyan');
+  }
+
   private updateArrows(dt: number, isRaining: boolean): void {
+    const isBowOfLight = this.save.equippedBowId === 'bow_of_light';
     for (let i = this.player.arrows.length - 1; i >= 0; i--) {
       const a = this.player.arrows[i];
       a.life -= dt;
-      a.velocity.y -= 9.5 * dt;
+      // Bow of Light arrows fly completely straight with zero gravity drop!
+      if (!isBowOfLight) {
+        a.velocity.y -= 9.5 * dt;
+      }
       a.position.addScaledVector(a.velocity, dt);
       a.mesh.position.copy(a.position);
       a.mesh.lookAt(a.position.clone().add(a.velocity));
@@ -1795,10 +2158,51 @@ export class BotWGameEngine {
           }
           hit = true;
         }
+      } else if (this.hyruleCastleInterior.isActive()) {
+        const cHit = this.hyruleCastleInterior.onPlayerAttack(
+          a.position,
+          a.velocity.clone().normalize(),
+          2.2,
+          isBowOfLight ? 100 : a.attack,
+          true,
+          isBowOfLight
+        );
+        if (cHit.blockedByShield) {
+          audioEngine.playParryClang();
+          hit = true;
+        } else if (cHit.hit) {
+          audioEngine.playHitImpact(true);
+          if (cHit.calamityDefeated) {
+            this.transitionToDarkBeastGanon();
+          } else if (cHit.darkBeastDefeated) {
+            this.triggerDarkBeastEnding();
+          } else if (cHit.finalEyeExposed) {
+            this.ui.showToast('👁️ 全6紋章破壊！魔獣ガノンの頭頂に【怨念の目】が露出！上昇気流で跳び射抜け！！', 'amber');
+          } else if (cHit.crestDestroyed) {
+            this.ui.showToast(`✨ 光の紋章を射抜いた！（${this.hyruleCastleInterior.darkBeastBoss?.crestsDestroyed ?? 0}/6）`, 'cyan');
+          }
+          hit = true;
+        }
+      } else if (this.trialOfSword.isActive()) {
+        const tHit = this.trialOfSword.onPlayerAttack(a.position, a.velocity.clone().normalize(), 1.6, a.attack, true);
+        if (tHit.hit) {
+          audioEngine.playHitImpact(false);
+          if (tHit.floorClearedNow) {
+            audioEngine.playShrineChime();
+            this.ui.showToast('✨ 魔物を殲滅した！奥のワープ陣から次の階層へ進もう！', 'cyan');
+          }
+          hit = true;
+        }
       } else {
+        // Korok shoot_target balloon check!
+        const shotKorok = this.npcs.tryShootKorokTarget(a.position, 1.85);
+        if (shotKorok) {
+          this.grantKorokReward(shotKorok, '🏹 風船的を射抜いた！……「ヤハハ！見つかっちゃった！」');
+          hit = true;
+        }
         // Check Enemy Hit (Headshot / Elemental Bonus!)
         for (const e of this.enemies.enemies) {
-          if (!e.alive) continue;
+          if (hit || !e.alive) continue;
           if (a.position.distanceTo(e.position.clone().add(new THREE.Vector3(0, 1.3, 0))) < e.radius + 0.65) {
             const isHeadshot = a.position.y > e.position.y + 1.45;
             const dmg = computeBotWDamage({
@@ -1963,7 +2367,9 @@ export class BotWGameEngine {
 
       const inShrine = this.shrineInterior.isActive();
       const inBeast = this.divineBeastInterior.isActive();
-      const inInterior = inShrine || inBeast;
+      const inCastle = this.hyruleCastleInterior.isActive();
+      const inTrial = this.trialOfSword.isActive();
+      const inInterior = inShrine || inBeast || inCastle || inTrial;
 
       // 1. Weather, Climate, Sky Dome & Blood Moon
       const activeWep = this.save.weapons.find((w) => w.id === this.save.equippedWeaponId);
@@ -2141,6 +2547,40 @@ export class BotWGameEngine {
         if (this.divineBeastInterior.activeBoss && this.divineBeastInterior.activeBoss.state !== 'dead') {
           combatStatus.inCombat = true;
         }
+      } else if (inCastle) {
+        const hcOut = this.hyruleCastleInterior.update(worldDt, this.player.position);
+        if (hcOut.bossHitPlayer && this.player.invulnTimer <= 0) {
+          const hit = hcOut.bossHitPlayer;
+          if (this.player.guarding && this.player.perfectGuardWindow > 0) {
+            audioEngine.playParryClang();
+            const br = this.hyruleCastleInterior.breakGoldenShield('perfect_guard');
+            this.ui.showToast(
+              br.messageJa || '🛡️ ガードジャスト成功！厄災ガノンの攻撃を跳ね返した！！',
+              'amber'
+            );
+            if (br.calamityDefeated) this.transitionToDarkBeastGanon();
+          } else {
+            const dmgHearts = Math.max(0.25, (hit.damage - armor.totalDefense * 0.55) / 4);
+            this.applyPlayerDamage(dmgHearts);
+            this.ui.showToast(`💥 ${hit.labelJa}`, 'red');
+          }
+        }
+        combatStatus.inCombat = true;
+      } else if (inTrial) {
+        const trOut = this.trialOfSword.update(worldDt, this.player.position);
+        if (trOut.enemyHitPlayer && this.player.invulnTimer <= 0) {
+          const hit = trOut.enemyHitPlayer;
+          if (this.player.guarding && this.player.perfectGuardWindow > 0) {
+            audioEngine.playParryClang();
+            this.ui.showToast('🛡️ ガードジャスト成功！', 'amber');
+          } else {
+            const dmgHearts = Math.max(0.25, (hit.damage - armor.totalDefense * 0.55) / 4);
+            this.applyPlayerDamage(dmgHearts);
+          }
+        }
+        if (this.trialOfSword.enemies.some((e) => !e.dead)) {
+          combatStatus.inCombat = true;
+        }
       } else {
         this.architecture.update(worldDt, this.elapsedSec);
 
@@ -2160,6 +2600,74 @@ export class BotWGameEngine {
         // 7. NPCs (24h/Rain AI), Koroks & Wildlife
         npcOut = this.npcs.update(worldDt, this.elapsedSec, this.climate.timeHours, this.climate.weather, this.player.position);
 
+        // 7b. Real Korok Dive Ring & Magnesis Block Checks
+        const diveKorok = this.npcs.checkDiveRingKoroks(this.player.position, this.player.velocity.y, this.player.grounded);
+        if (diveKorok) {
+          this.grantKorokReward(diveKorok, '💧 水連の輪へダイブ成功！……「ヤハハ！見つかっちゃった！」');
+        }
+        if (this.runes.magnesisTarget) {
+          const magKorok = this.npcs.tryMagnesisSolveKorok(this.runes.magnesisTarget.position);
+          if (magKorok) {
+            this.grantKorokReward(magKorok, '🧲 鉄ブロックを枠にはめた！……「ヤハハ！見つかっちゃった！」');
+          }
+        }
+
+        // 7c. Mounted Horse Riding, Bucking Stamina Drain & Spur Regeneration
+        if (this.mountedHorse) {
+          const h = this.mountedHorse;
+          if (h.tameState === 'bucking') {
+            this.save.stamina = Math.max(0, this.save.stamina - 0.32 * rawDt);
+            h.yaw += Math.sin(this.elapsedSec * 14) * 2.2 * rawDt;
+            this.player.position.set(h.position.x, h.position.y + 1.35, h.position.z);
+            this.player.yaw = h.yaw;
+            if (this.save.stamina <= 0.02) {
+              h.ridden = false;
+              h.tameState = 'wild';
+              this.mountedHorse = null;
+              this.ui.showToast('🐎 スタミナが尽きて振り落とされた！', 'red');
+            }
+          } else {
+            // Tamed / Registered Horse Gallop + 3 Regenerating Spurs!
+            const spurBoost = this.input.sprint && (h.spurs ?? 0) > 0 ? 1.55 : 1.0;
+            if (this.input.sprint && (h.spurs ?? 0) > 0) {
+              h.spurRegenTimer = (h.spurRegenTimer ?? 0) + rawDt;
+              if (h.spurRegenTimer >= 2.2) {
+                h.spurs = Math.max(0, (h.spurs ?? 3) - 1);
+                h.spurRegenTimer = 0;
+              }
+            } else if ((h.spurs ?? 3) < 3) {
+              h.spurRegenTimer = (h.spurRegenTimer ?? 0) + rawDt;
+              if (h.spurRegenTimer >= 4.0) {
+                h.spurs = Math.min(3, (h.spurs ?? 0) + 1);
+                h.spurRegenTimer = 0;
+              }
+            }
+            const rideSpeed = 14.5 * spurBoost;
+            const moveFwd = (this.input.forward ? 1 : 0) - (this.input.backward ? 1 : 0);
+            const turnDir = (this.input.left ? 1 : 0) - (this.input.right ? 1 : 0);
+            h.yaw += turnDir * 2.2 * worldDt;
+            if (Math.abs(moveFwd) > 0.01) {
+              h.position.x += Math.sin(h.yaw) * moveFwd * rideSpeed * worldDt;
+              h.position.z += Math.cos(h.yaw) * moveFwd * rideSpeed * worldDt;
+              h.position.y = getTerrainHeight(h.position.x, h.position.z);
+            }
+            this.player.position.set(h.position.x, h.position.y + 1.3, h.position.z);
+            this.player.yaw = h.yaw;
+          }
+        }
+
+        // 7d. Whistle summons Registered/Tamed Horse in Overworld (blocked in interiors!)
+        if (this.input.whistle && this.elapsedSec - this.lastWhistleTime > 2.5) {
+          this.lastWhistleTime = this.elapsedSec;
+          const summoned = this.npcs.summonRegisteredHorse(this.player.position, this.player.yaw);
+          if (summoned) {
+            audioEngine.playUiConfirm();
+            this.ui.showToast('🐎 口笛に応えて愛馬が駆けつけた！', 'cyan');
+          } else {
+            this.ui.showToast('🐎 呼べる愛馬がいません（野生馬を手なずけて馬宿で登録しよう）', 'amber');
+          }
+        }
+
         // 8. Climate Hazards (Cold / Heat / Volcanic Flame / Freezing Water!)
         this.hazardTickTimer += rawDt;
         if (this.hazardTickTimer >= 3.2) {
@@ -2178,6 +2686,12 @@ export class BotWGameEngine {
             this.ui.showToast('☀️ 猛暑地帯！耐暑装備（熱砂/淑女シリーズ）が必要！', 'amber');
           }
         }
+      }
+
+      // Block Whistle inside Shrines / Divine Beasts / Hyrule Castle / Trial of the Sword
+      if (inInterior && this.input.whistle && this.elapsedSec - this.lastWhistleTime > 2.5) {
+        this.lastWhistleTime = this.elapsedSec;
+        this.ui.showToast('🐎 ここでは愛馬を呼ぶことができない！', 'amber');
       }
 
       // 9. Champions' Ability Cooldowns & RevivalRandom (60s 1% grid check) & Hero's Path + Auto-save
@@ -2202,13 +2716,16 @@ export class BotWGameEngine {
       if (this.autoSaveTimer >= 45) {
         this.autoSaveTimer = 0;
         this.syncSaveFromRuntime();
-        void saveManager.save(getAutoSlotId(this.save.mode), this.save);
+        const safeSave = this.trialOfSword.getSafeSaveForPersistence(this.save);
+        void saveManager.save(getAutoSlotId(safeSave.mode), safeSave);
       }
 
       const beastBoss =
         inBeast && this.divineBeastInterior.activeBoss && this.divineBeastInterior.activeBoss.state !== 'dead'
           ? this.divineBeastInterior.activeBoss
-          : null;
+          : inCastle
+            ? this.hyruleCastleInterior.getActiveBossHud()
+            : null;
 
       // 10. Open-Air Web Audio Update (CEDEC 2017 spatial wind, insects, birds, 3-layer dynamic BGM!)
       const reg = getRegionAt(this.player.position.x, this.player.position.z);

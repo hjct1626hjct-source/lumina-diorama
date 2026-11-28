@@ -38,6 +38,8 @@ import {
 } from '../save/SaveManager';
 import type { ClimateStatus } from '../world/WeatherClimateSystem';
 import type { NpcDialoguePayload } from '../entities/NpcAndKorokSystem';
+import type { EndingSummary } from '../world/HyruleCastleInteriorManager';
+import { TRIAL_TIER_METAS, type TrialTier } from '../world/TrialOfSwordManager';
 import type { ArrowType, MemoryDef, RegionId, RuneId, SaveSlotData } from '../types/botw';
 
 export interface HudUpdateContext {
@@ -244,6 +246,7 @@ export class BotWHudAndMenu {
           <h1 class="title-main">BREATH OF THE WILD</h1>
           <div class="title-sub">ゼルダの伝説 ブレス オブ ザ ワイルド — Web 3D 完全再現エディション</div>
           <div style="margin-top:8px;font-size:13px;letter-spacing:0.12em;color:#e4c465;">製作者:駿 (Created by Shun)</div>
+          <div id="title-clear-badge" style="margin-top:6px;font-size:13px;font-weight:700;color:#ffd84c;display:none;">★ 厄災ガノン討伐済み — HYRULE SAVED ★</div>
           <div class="title-btn-group">
             <button id="btn-continue" class="botw-btn primary" type="button">▶ つづきから冒険する</button>
             <button id="btn-new-normal" class="botw-btn primary" type="button">✦ はじめから（通常モード）</button>
@@ -365,6 +368,12 @@ export class BotWHudAndMenu {
     `;
 
     this.elTitle = document.getElementById('botw-title')!;
+    void Promise.all([saveManager.getLatestSlot('normal'), saveManager.getLatestSlot('master')]).then(([n, m]) => {
+      if (n?.data.storyFlags?.ganon_defeated || m?.data.storyFlags?.ganon_defeated) {
+        const badge = document.getElementById('title-clear-badge');
+        if (badge) badge.style.display = '';
+      }
+    });
     this.elAwakening = document.getElementById('awakening-overlay')!;
     this.elAwakeningText = document.getElementById('awakening-subtitle')!;
     this.elPanoramaTitle = document.getElementById('panorama-title-overlay')!;
@@ -1856,7 +1865,8 @@ export class BotWHudAndMenu {
         .join('');
     }
 
-    const rupeeHtml = `💎 ${ctx.save.rupees} ルピー &nbsp;|&nbsp; 🌿 ${ctx.save.korokSeeds} &nbsp;|&nbsp; ✦ 証 ${ctx.save.spiritOrbs} ${ctx.korokMaskRattle ? '<span style="color:#66ff7a;">🍃コログ反応！</span>' : ''}`;
+    const clearStar = ctx.save.storyFlags.ganon_defeated ? '<span style="color:#ffd84c;font-weight:700;">★</span> ' : '';
+    const rupeeHtml = `${clearStar}💎 ${ctx.save.rupees} ルピー &nbsp;|&nbsp; 🌿 ${ctx.save.korokSeeds} &nbsp;|&nbsp; ✦ 証 ${ctx.save.spiritOrbs} ${ctx.korokMaskRattle ? '<span style="color:#66ff7a;">🍃コログ反応！</span>' : ''}`;
     if (this.elRupees.dataset.sig !== rupeeHtml) {
       this.elRupees.dataset.sig = rupeeHtml;
       this.elRupees.innerHTML = rupeeHtml;
@@ -2112,5 +2122,97 @@ export class BotWHudAndMenu {
     ctx.closePath();
     ctx.fill();
     ctx.restore();
+  }
+
+  /**
+   * Displays the Ending Credits Screen after defeating Dark Beast Ganon!
+   */
+  public showEndingCredits(summary: EndingSummary, onClose: () => void): void {
+    const existing = document.getElementById('botw-ending-credits');
+    if (existing) existing.remove();
+
+    const mins = Math.floor(summary.playtimeSeconds / 60);
+    const secs = summary.playtimeSeconds % 60;
+    const overlay = document.createElement('div');
+    overlay.id = 'botw-ending-credits';
+    overlay.style.cssText =
+      'position:fixed;inset:0;z-index:90;background:radial-gradient(circle at 50% 35%, rgba(28,22,42,0.96), rgba(6,8,16,0.99));display:flex;align-items:center;justify-content:center;padding:24px;color:#f5ebd2;font-family:inherit;pointer-events:auto;';
+    overlay.innerHTML = `
+      <div style="max-width:560px;width:100%;text-align:center;border:1px solid rgba(228,196,101,0.45);border-radius:16px;padding:32px 28px;background:rgba(12,16,28,0.88);box-shadow:0 24px 64px rgba(0,0,0,0.72);">
+        <div style="font-size:12px;letter-spacing:0.26em;color:#ffd84c;">★ HYRULE SAVED — ENDING CREDITS ★</div>
+        <h2 style="margin:10px 0 6px;font-size:28px;letter-spacing:0.12em;color:#fff7df;">BREATH OF THE WILD</h2>
+        <div style="font-size:14px;color:#e4c465;margin-bottom:18px;letter-spacing:0.12em;">${summary.creatorCredit}</div>
+        <p style="font-size:13px;line-height:1.8;color:#d6e4f0;margin-bottom:20px;">
+          ゼルダ姫の封印の光が厄災を浄化し、ハイラルに百年ぶりの静寂と光が戻った。<br/>
+          あなたの勇気は伝説として語り継がれる――。
+        </p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;text-align:left;background:rgba(255,255,255,0.05);padding:14px 16px;border-radius:10px;margin-bottom:22px;font-size:13px;">
+          <div>⏱ プレイ時間: <strong>${mins}分 ${secs}秒</strong></div>
+          <div>⚡ 解放した神獣: <strong>${summary.freedBeasts} / 4</strong></div>
+          <div>🔷 攻略した祠: <strong>${summary.clearedShrines}</strong></div>
+          <div>🌿 見つけたコログ: <strong>${summary.foundKoroks}</strong></div>
+        </div>
+        <button id="btn-ending-return" class="botw-btn primary" type="button" style="width:100%;">★ クリア記録を保存してハイラルへ戻る</button>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    const titleBadge = document.getElementById('title-clear-badge');
+    if (titleBadge) titleBadge.style.display = '';
+
+    document.getElementById('btn-ending-return')?.addEventListener('click', () => {
+      overlay.remove();
+      onClose();
+    });
+  }
+
+  /**
+   * Opens the DLC 1 Trial of the Sword Tier Selector modal at the Master Sword Pedestal.
+   */
+  public openTrialSelector(save: SaveSlotData, onSelect: (tier: TrialTier) => void): void {
+    const existing = document.getElementById('botw-trial-selector');
+    if (existing) existing.remove();
+
+    const tiers: TrialTier[] = ['beginning', 'middle', 'final'];
+    const overlay = document.createElement('div');
+    overlay.id = 'botw-trial-selector';
+    overlay.style.cssText =
+      'position:fixed;inset:0;z-index:85;background:rgba(6,10,18,0.82);display:flex;align-items:center;justify-content:center;padding:20px;color:#f4ecd8;pointer-events:auto;';
+    const btnsHtml = tiers
+      .map((tier) => {
+        const m = TRIAL_TIER_METAS[tier];
+        const done =
+          (tier === 'beginning' && save.storyFlags.trial_beginning_cleared) ||
+          (tier === 'middle' && save.storyFlags.trial_middle_cleared) ||
+          (tier === 'final' && save.storyFlags.trial_final_cleared);
+        return `<button data-trial="${tier}" class="botw-btn ${done ? '' : 'primary'}" type="button" style="width:100%;margin-bottom:10px;text-align:left;padding:12px 14px;">
+          <div style="font-weight:700;">⚔️ ${m.nameJa}（全${m.totalFloors}層）${done ? ' ✅クリア済' : ''}</div>
+          <div style="font-size:12px;opacity:0.86;margin-top:2px;">${m.rewardLabelJa}</div>
+        </button>`;
+      })
+      .join('');
+    overlay.innerHTML = `
+      <div style="max-width:460px;width:100%;border:1px solid rgba(58,230,255,0.45);border-radius:14px;padding:24px;background:rgba(12,20,32,0.95);">
+        <div style="font-size:12px;color:#4be8ff;letter-spacing:0.18em;">DLC 1 • TRIAL OF THE SWORD</div>
+        <h3 style="margin:6px 0 8px;font-size:20px;">剣の試練に挑戦する</h3>
+        <p style="font-size:12px;color:#c2d8ea;line-height:1.6;margin-bottom:16px;">
+          装備・アイテムを一時的にすべて預け、身一つ（シーカーストーンのみ）で試練の階層に挑みます。<br/>
+          ※ 中断・全滅・クリア時はすべての所持品が100%復元されます。
+        </p>
+        ${btnsHtml}
+        <button id="btn-trial-cancel" class="botw-btn" type="button" style="width:100%;margin-top:4px;">やめる</button>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    overlay.querySelectorAll<HTMLButtonElement>('[data-trial]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const tier = btn.dataset.trial as TrialTier;
+        overlay.remove();
+        onSelect(tier);
+      });
+    });
+    document.getElementById('btn-trial-cancel')?.addEventListener('click', () => {
+      overlay.remove();
+    });
   }
 }

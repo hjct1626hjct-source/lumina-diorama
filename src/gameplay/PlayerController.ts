@@ -254,17 +254,20 @@ export class PlayerController {
   fireArrow(save: SaveSlotData, aimDir: THREE.Vector3): ActiveArrow | null {
     const aType = save.equippedArrow;
     if (!save.equippedBowId) return null;
-    if ((save.arrows[aType] ?? 0) <= 0) return null;
     const bow = save.bows.find((b) => b.id === save.equippedBowId);
     if (!bow) return null;
-    save.arrows[aType] -= 1;
+    const isBowOfLight = bow.id === 'bow_of_light';
+    if (!isBowOfLight) {
+      if ((save.arrows[aType] ?? 0) <= 0) return null;
+      save.arrows[aType] -= 1;
+    }
 
     const atk = bow.attack;
 
     const grp = new THREE.Group();
     const shaft = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.025, 0.025, 0.95, 6),
-      new THREE.MeshBasicMaterial({ color: '#8a5d36' })
+      new THREE.CylinderGeometry(isBowOfLight ? 0.05 : 0.025, isBowOfLight ? 0.05 : 0.025, isBowOfLight ? 1.45 : 0.95, 6),
+      new THREE.MeshBasicMaterial({ color: isBowOfLight ? '#fff2a0' : '#8a5d36' })
     );
     shaft.rotation.x = Math.PI / 2;
     const tipColor =

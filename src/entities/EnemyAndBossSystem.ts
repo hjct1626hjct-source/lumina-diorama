@@ -186,7 +186,7 @@ export class EnemyAndBossSystem {
       { id: 'guard_hc_1', species: 'guardian_stalker', nameJa: 'ガーディアン（歩行型）', tier: 'boss', x: -110, z: 120, baseHp: 1500, atk: 38, isBoss: true },
       { id: 'guard_hc_2', species: 'guardian_stalker', nameJa: 'ガーディアン（歩行型）', tier: 'boss', x: -80, z: -120, baseHp: 1500, atk: 38, isBoss: true },
       { id: 'moblin_ch_1', species: 'moblin', nameJa: 'モリブリン', tier: 'blue', x: -140, z: 220, baseHp: 75, atk: 16 },
-      { id: 'calamity_ganon', species: 'calamity_ganon', nameJa: '厄災ガノン', tier: 'boss', x: -80, z: -200, baseHp: 4000, atk: 44, isBoss: true },
+      // Calamity Ganon is now exclusively fought inside Hyrule Castle Sanctum (Y=1200) via HyruleCastleInteriorManager!
       // Regional signature monsters, Wizzrobes, Lynels & Hinoxes
       { id: 'lizal_lan', species: 'lizalfos', nameJa: 'リザルフォス', tier: 'blue', x: 820, z: -60, baseHp: 70, atk: 18 },
       { id: 'wizzrobe_lan_elec', species: 'wizzrobe', nameJa: 'ボルトウィズローブ', tier: 'blue', x: 780, z: -110, baseHp: 180, atk: 22, casterElement: 'shock' },

@@ -31,12 +31,30 @@ import {
   type DivineBeastId,
 } from '../src/world/DivineBeastInteriorManager';
 import {
+  HyruleCastleInteriorManager,
+  HYRULE_CASTLE_SANCTUM_Y,
+  DARK_BEAST_ARENA_Y,
+  applyGanonDefeatedEnding,
+  computeCalamityGanonStartingHp,
+} from '../src/world/HyruleCastleInteriorManager';
+import {
+  TrialOfSwordManager,
+  TRIAL_OF_SWORD_BASE_Y,
+  getMasterSwordAwakeningStats,
+  pullMasterSword,
+} from '../src/world/TrialOfSwordManager';
+import {
   ALL_MODEL_KEYS,
   DEFERRED_CHARACTER_MODELS,
   ESSENTIAL_PLATEAU_MODELS,
 } from '../src/rendering/ModelLoader';
 import { computeBlightGanonHp, computeScaledEnemyTier } from '../src/entities/EnemyAndBossSystem';
-import { KOROK_33_PUZZLE_TYPES, evaluateNpcEventFlow, type WorldNpc } from '../src/entities/NpcAndKorokSystem';
+import {
+  KOROK_33_PUZZLE_TYPES,
+  NpcAndKorokSystem,
+  evaluateNpcEventFlow,
+  type WorldNpc,
+} from '../src/entities/NpcAndKorokSystem';
 import { computeCompletionPercent, createDefaultSave, recordHeroPathSample } from '../src/save/SaveManager';
 import * as THREE from 'three';
 
@@ -505,6 +523,9 @@ describe('v7 Hotfixes & Phase B: 4 Divine Beasts 3D Interiors & Blight Ganon Bat
     // Re-enter Vah Ruta -> 2 terminals must remain activated!
     manager.enterBeast('vah_ruta', save, new THREE.Vector3(1120, 20, -180), 0);
     expect(manager.getTerminalProgress()).toEqual({ activated: 2, total: 5 });
+    // t3 is sealed behind the Cryonis sluice gate until lifted!
+    expect(manager.activateTerminal('t3', save).ok).toBe(false);
+    expect(manager.onCryonisCreated(new THREE.Vector3(0, DIVINE_BEAST_BASE_Y, -5.8)).liftedGate).toBe(true);
     expect(manager.activateTerminal('t3', save).ok).toBe(true);
     expect(manager.activateTerminal('t4', save).ok).toBe(true);
     const r5 = manager.activateTerminal('t5', save);
@@ -586,6 +607,252 @@ describe('v7 Hotfixes & Phase B: 4 Divine Beasts 3D Interiors & Blight Ganon Bat
 
     expect(save.defeatedDivineBeasts).toEqual(['vah_ruta', 'vah_rudania', 'vah_medoh', 'vah_naboris']);
     expect(save.maxHearts).toBe(7); // 3 base + 4 Heart Containers!
+  });
+});
+
+describe('v8 PART 1: Divine Beast Bug Fixes (Stasis Ice Reflection, Bulkheads, Electrodes, Ball Switch)', () => {
+  it('reflects Waterblight Phase 2 ice_block via Stasis release and downs Waterblight on impact', () => {
+    const scene = new THREE.Scene();
+    const physics = new PhysicsChemistryEngine(scene);
+    const manager = new DivineBeastInteriorManager(scene, physics);
+    const save = createDefaultSave('normal');
+    save.hasSheikahSlate = true;
+
+    manager.enterBeast('vah_ruta', save, new THREE.Vector3(0, 10, 0), 0);
+    const boss = manager.startBlightBossBattle(save)!;
+    const startHp = boss.hp;
+    const playerPos = new THREE.Vector3(0, DIVINE_BEAST_BASE_Y, 4);
+
+    // Spawn an ice_block projectile and freeze it with Stasis
+    const proj = manager.spawnBossProjectile('ice_block', boss.position, playerPos, 10);
+    expect(proj.physicsBody).toBeDefined();
+    proj.physicsBody!.isFrozenStasis = true;
+    manager.update(0.05, playerPos, true);
+    expect(proj.wasFrozenStasis).toBe(true);
+
+    // Release Stasis with launched velocity from melee hits -> must flip reflected = true and hit boss!
+    proj.physicsBody!.isFrozenStasis = false;
+    proj.physicsBody!.velocity.set(0, 0, -24);
+    let downedMsg: string | undefined;
+    for (let step = 0; step < 30; step++) {
+      const out = manager.update(0.05, playerPos, true);
+      if (out.bossDownedByGimmick) {
+        downedMsg = out.bossDownedByGimmick;
+        break;
+      }
+    }
+    expect(downedMsg).toBeDefined();
+    expect(boss.state).toBe('downed');
+    expect(boss.hp).toBeLessThan(startHp);
+    manager.exitBeast();
+  });
+
+  it('enforces Vah Ruta bulkheads, Vah Naboris electrode socket for t4, and Vah Medoh ball switch for t5', () => {
+    const scene = new THREE.Scene();
+    const physics = new PhysicsChemistryEngine(scene);
+    const manager = new DivineBeastInteriorManager(scene, physics);
+    const save = createDefaultSave('normal');
+    save.hasSheikahSlate = true;
+
+    // 1. Vah Ruta bulkhead colliders exist around sluice gate
+    manager.enterBeast('vah_ruta', save, new THREE.Vector3(0, 10, 0), 0);
+    const colliderIds = physics.staticColliders.map((c) => c.id);
+    expect(colliderIds).toContain('ruta_sluice_wall_w');
+    expect(colliderIds).toContain('ruta_sluice_wall_e');
+    expect(manager.activateTerminal('t3', save).ok).toBe(false);
+    manager.exitBeast();
+
+    // 2. Vah Naboris conductor placed in 2-pole electrode socket unlocks t4 independently of t5 drum circuit
+    manager.enterBeast('vah_naboris', save, new THREE.Vector3(0, 10, 0), 0);
+    expect(manager.naborisConductorConnected).toBe(false);
+    expect(manager.activateTerminal('t4', save).ok).toBe(false);
+    const cond = physics.bodies.find((b) => b.id === 'naboris_conductor')!;
+    cond.position.set(11.0, DIVINE_BEAST_BASE_Y, -4.0);
+    manager.update(0.05, new THREE.Vector3(0, DIVINE_BEAST_BASE_Y, 10), true);
+    expect(manager.naborisConductorConnected).toBe(true);
+    expect(manager.activateTerminal('t4', save).ok).toBe(true);
+    expect(manager.activateTerminal('t5', save).ok).toBe(false); // 3-drum circuit still independently required!
+    manager.exitBeast();
+
+    // 3. Vah Medoh Wing Tilt rolls metal ball into pressure switch unlocking t5
+    manager.enterBeast('vah_medoh', save, new THREE.Vector3(0, 10, 0), 0);
+    expect(manager.medohSwitchUnlocked).toBe(false);
+    expect(manager.activateTerminal('t5', save).ok).toBe(false);
+    manager.applyPoseAction(2); // Tilt Right (+18°)
+    for (let i = 0; i < 25; i++) {
+      manager.update(0.1, new THREE.Vector3(0, DIVINE_BEAST_BASE_Y, 10), true);
+    }
+    expect(manager.medohSwitchUnlocked).toBe(true);
+    expect(manager.activateTerminal('t5', save).ok).toBe(true);
+    manager.exitBeast();
+  });
+});
+
+describe('v8 PART 2.1: Hyrule Castle Sanctum (Y=1200) & Dark Beast Ganon (Y=1350)', () => {
+  it('reduces Calamity Ganon HP by 12.5% per freed Divine Beast (50% for all 4)', () => {
+    expect(computeCalamityGanonStartingHp(0)).toBe(4000);
+    expect(computeCalamityGanonStartingHp(1)).toBe(3500);
+    expect(computeCalamityGanonStartingHp(2)).toBe(3000);
+    expect(computeCalamityGanonStartingHp(3)).toBe(2500);
+    expect(computeCalamityGanonStartingHp(4)).toBe(2000);
+  });
+
+  it('activates Phase 2 Golden Shield blocking normal attacks and shattering only on Perfect Guard / Flurry Rush / Urbosa, then defeats Dark Beast Ganon for Ending', () => {
+    const scene = new THREE.Scene();
+    const physics = new PhysicsChemistryEngine(scene);
+    const castle = new HyruleCastleInteriorManager(scene, physics);
+    const save = createDefaultSave('normal');
+    save.defeatedDivineBeasts = ['vah_ruta', 'vah_rudania', 'vah_medoh', 'vah_naboris'];
+
+    const entered = castle.enterSanctum(save, new THREE.Vector3(-80, 10, -260), 0);
+    expect(entered.spawnPos.y).toBe(HYRULE_CASTLE_SANCTUM_Y);
+    expect(entered.startingHp).toBe(2000);
+    expect(castle.calamityBoss!.hp).toBe(2000);
+
+    // Damage down to Phase 2 threshold (<= 1000) -> Golden Shield activates!
+    const atkOrigin = castle.calamityBoss!.position.clone().add(new THREE.Vector3(0, 1, 3));
+    const atkDir = new THREE.Vector3(0, 0, -1);
+    castle.onPlayerAttack(atkOrigin, atkDir, 5, 1100, false, false);
+    expect(castle.calamityBoss!.phase).toBe(2);
+    expect(castle.calamityBoss!.goldenShieldActive).toBe(true);
+
+    // Normal attack is blocked by Golden Shield (0 damage!)
+    const hpBeforeBlocked = castle.calamityBoss!.hp;
+    const blocked = castle.onPlayerAttack(atkOrigin, atkDir, 5, 100, false, false);
+    expect(blocked.blockedByShield).toBe(true);
+    expect(castle.calamityBoss!.hp).toBe(hpBeforeBlocked);
+
+    // Perfect Guard / Flurry Rush / Urbosa breaks Golden Shield into downed state!
+    const br = castle.breakGoldenShield('perfect_guard');
+    expect(br.broken).toBe(true);
+    expect(castle.calamityBoss!.goldenShieldActive).toBe(false);
+    expect(castle.calamityBoss!.state).toBe('downed');
+
+    // Transition to Dark Beast Ganon (Y=1350) -> grants Bow of Light (ATK 100)
+    const dbEnter = castle.enterDarkBeastArena(save);
+    expect(dbEnter.spawnPos.y).toBe(DARK_BEAST_ARENA_Y);
+    expect(save.equippedBowId).toBe('bow_of_light');
+    expect(save.bows.some((b) => b.id === 'bow_of_light' && b.attack === 100)).toBe(true);
+
+    // Shoot all 6 glowing crests sequentially -> exposes final top Malice Eye
+    const db = castle.darkBeastBoss!;
+    for (let i = 0; i < 6; i++) {
+      const active = db.crests.find((c) => c.active)!;
+      const res = castle.onPlayerAttack(active.worldPos, new THREE.Vector3(0, 0, -1), 3, 100, true, true);
+      expect(res.crestDestroyed).toBe(true);
+    }
+    expect(db.finalEyeExposed).toBe(true);
+
+    // Shoot final Malice Eye -> Dark Beast Ganon defeated -> Ending summary & ganon_defeated flag!
+    const finalRes = castle.onPlayerAttack(db.finalEyePos, new THREE.Vector3(0, 0, -1), 3, 100, true, true);
+    expect(finalRes.darkBeastDefeated).toBe(true);
+    const summary = applyGanonDefeatedEnding(save);
+    expect(save.storyFlags.ganon_defeated).toBe(true);
+    expect(summary.creatorCredit).toBe('製作者:駿 (Created by Shun)');
+    castle.exitCastle();
+  });
+});
+
+describe('v8 PART 2.2: Trial of the Sword (Y=1500) Inventory Isolation & Master Sword Awakening', () => {
+  it('enforces 13-heart Master Sword pull, isolates inventory during Trial, restores 100% on exit/clear, and awakens Master Sword to ATK 60', () => {
+    const scene = new THREE.Scene();
+    const physics = new PhysicsChemistryEngine(scene);
+    const trial = new TrialOfSwordManager(scene, physics);
+    const save = createDefaultSave('normal');
+
+    // Blocked at 3 hearts
+    expect(pullMasterSword(save).pulled).toBe(false);
+    // Pull succeeds at 13 hearts
+    save.maxHearts = 13;
+    save.hearts = 13;
+    expect(pullMasterSword(save).pulled).toBe(true);
+    expect(save.hasMasterSword).toBe(true);
+    expect(getMasterSwordAwakeningStats(save).attack).toBe(30);
+
+    // Give player custom overworld items to verify 100% snapshot & restore!
+    save.materials.apple = 17;
+    save.equippedArmor = { head: 'hylian_hood', body: 'champions_tunic', legs: 'hylian_trousers' };
+    const origWeaponCount = save.weapons.length;
+
+    // Enter Final Trials -> stripped naked & unarmed
+    const entered = trial.enterTrial('final', save, new THREE.Vector3(60, 15, -682), 0);
+    expect(entered.spawnPos.y).toBe(TRIAL_OF_SWORD_BASE_Y);
+    expect(save.weapons).toHaveLength(0);
+    expect(save.equippedArmor.body).toBeNull();
+    expect(save.materials.apple).toBeUndefined();
+
+    // Auto-save persistence protection MUST keep real overworld inventory intact!
+    const persisted = trial.getSafeSaveForPersistence(save);
+    expect(persisted.weapons).toHaveLength(origWeaponCount);
+    expect(persisted.materials.apple).toBe(17);
+    expect(persisted.equippedArmor.body).toBe('champions_tunic');
+
+    // Exit with cleared=true -> restores 100% overworld inventory + awakens Master Sword to ATK 60 / dur 188!
+    trial.exitTrial(save, true);
+    expect(save.weapons).toHaveLength(origWeaponCount);
+    expect(save.materials.apple).toBe(17);
+    expect(save.equippedArmor.body).toBe('champions_tunic');
+    expect(save.masterSwordAwakened).toBe(true);
+    const awakened = getMasterSwordAwakeningStats(save);
+    expect(awakened.attack).toBe(60);
+    expect(awakened.durability).toBe(188);
+  });
+});
+
+describe('v8 PART 2.3: 33 Real Korok Puzzles & Wild Horse Taming', () => {
+  it('blocks solving non-interact Korok puzzles with E alone and solves each puzzle family via its real mechanic', () => {
+    const scene = new THREE.Scene();
+    const npcs = new NpcAndKorokSystem(scene);
+    npcs.populateAll([]);
+
+    expect(npcs.koroks).toHaveLength(33);
+    const liftK = npcs.koroks.find((k) => k.puzzleFamily === 'lift_rock')!;
+    const magK = npcs.koroks.find((k) => k.puzzleFamily === 'magnesis_block')!;
+    const shootK = npcs.koroks.find((k) => k.puzzleFamily === 'shoot_target')!;
+    const diveK = npcs.koroks.find((k) => k.puzzleFamily === 'dive_ring')!;
+    const offerK = npcs.koroks.find((k) => k.puzzleFamily === 'offering_or_boulder')!;
+
+    // Pressing E alone MUST NOT solve magnesis_block, shoot_target, or dive_ring!
+    expect(npcs.tryInteractKorok(magK.id).solved).toBe(false);
+    expect(npcs.tryInteractKorok(shootK.id).solved).toBe(false);
+    expect(npcs.tryInteractKorok(diveK.id).solved).toBe(false);
+    expect(magK.found).toBe(false);
+    expect(shootK.found).toBe(false);
+    expect(diveK.found).toBe(false);
+
+    // Solving each family via its real mechanic sets found = true!
+    expect(npcs.tryInteractKorok(liftK.id).solved).toBe(true);
+    expect(npcs.tryInteractKorok(offerK.id).solved).toBe(true);
+    expect(npcs.tryMagnesisSolveKorok(magK.targetPos)).toBe(magK);
+    expect(npcs.tryShootKorokTarget(shootK.targetPos)).toBe(shootK);
+    expect(npcs.checkDiveRingKoroks(diveK.targetPos, -4.5, false)).toBe(diveK);
+    expect([liftK, magK, shootK, diveK, offerK].every((k) => k.found)).toBe(true);
+  });
+
+  it('transitions wild horse through wild -> bucking -> tamed -> registered at Stable', () => {
+    const scene = new THREE.Scene();
+    const npcs = new NpcAndKorokSystem(scene);
+    npcs.populateAll([]);
+
+    const horse = npcs.wildlife.find((w) => w.type === 'horse')!;
+    expect(horse.tameState).toBe('wild');
+    expect(horse.tamed).toBe(false);
+
+    // Mount wild horse -> bucking
+    expect(npcs.mountHorse(horse).state).toBe('bucking');
+    expect(horse.tameState).toBe('bucking');
+
+    // Soothe 3 times -> tamed!
+    npcs.sootheHorse(horse);
+    npcs.sootheHorse(horse);
+    const finalSoothe = npcs.sootheHorse(horse);
+    expect(finalSoothe.tamedNow).toBe(true);
+    expect(horse.tamed).toBe(true);
+    expect(horse.tameState).toBe('tamed');
+
+    // Register at Stable -> registered!
+    expect(npcs.registerHorseAtStable(horse).registered).toBe(true);
+    expect(horse.tameState).toBe('registered');
   });
 });
 

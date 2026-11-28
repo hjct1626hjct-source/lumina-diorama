@@ -76,14 +76,24 @@ export interface WorldNpc {
   behaviorLabel: string;
 }
 
+export type KorokPuzzleFamily =
+  | 'lift_rock'
+  | 'magnesis_block'
+  | 'shoot_target'
+  | 'dive_ring'
+  | 'offering_or_boulder';
+
 export interface WorldKorok {
   id: string;
   puzzleType: string;
+  puzzleFamily: KorokPuzzleFamily;
   puzzleNameJa: string;
   region: RegionId;
   position: THREE.Vector3;
+  targetPos: THREE.Vector3;
   found: boolean;
   root: THREE.Group;
+  propMesh: THREE.Object3D;
   korokMesh: THREE.Group;
 }
 
@@ -96,6 +106,11 @@ export interface WildlifeEntity {
   yaw: number;
   speed: number;
   tamed?: boolean;
+  tameState?: 'wild' | 'bucking' | 'tamed' | 'registered';
+  sootheProgress?: number;
+  spurs?: number;
+  spurRegenTimer?: number;
+  ridden?: boolean;
   bond?: number;
   root: THREE.Group;
   glb: NormalizedInstance | null;
@@ -758,7 +773,6 @@ export class NpcAndKorokSystem {
   private spawnKoroks(foundIds: string[]): void {
     const leafMat = createBotWToonMaterial({ color: '#68b842', rimStrength: 0.45 });
     const woodMat = createBotWToonMaterial({ color: '#8f6a44' });
-    const sparkleMat = new THREE.MeshBasicMaterial({ color: '#fff07a', transparent: true, opacity: 0.85 });
 
     KOROK_33_PUZZLE_TYPES.forEach((ptype, idx) => {
       // Place first 3 on Great Plateau for immediate discovery, rest distributed across all 15 Regions
@@ -791,17 +805,77 @@ export class NpcAndKorokSystem {
       const y = getTerrainHeight(x, z);
       const found = foundIds.includes(id);
 
+      const families: KorokPuzzleFamily[] = [
+        'lift_rock',
+        'magnesis_block',
+        'shoot_target',
+        'dive_ring',
+        'offering_or_boulder',
+      ];
+      const puzzleFamily = families[idx % families.length];
+      const familyLabels: Record<KorokPuzzleFamily, string> = {
+        lift_rock: '石を持ち上げる',
+        magnesis_block: 'マグネキャッチ鉄ブロック合わせ',
+        shoot_target: '風船的を弓で射抜く',
+        dive_ring: '水連の輪へダイブ',
+        offering_or_boulder: 'お供え地蔵／大岩落とし',
+      };
+
       const root = new THREE.Group();
       root.position.set(x, y, z);
 
-      // Puzzle visual prop (stone ring / pinwheel / sparkle flower)
-      const marker = new THREE.Mesh(
-        idx % 3 === 0 ? new THREE.DodecahedronGeometry(0.52, 0) : idx % 3 === 1 ? new THREE.TorusGeometry(0.9, 0.12, 6, 12) : new THREE.OctahedronGeometry(0.38, 0),
-        idx % 3 === 0 ? createBotWToonMaterial({ color: '#8c867a' }) : sparkleMat
-      );
-      marker.position.y = idx % 3 === 1 ? 0.18 : 0.45;
-      if (idx % 3 === 1) marker.rotation.x = Math.PI / 2;
-      root.add(marker);
+      // Build distinct 3D puzzle prop per family!
+      let propMesh: THREE.Object3D;
+      const targetPos = new THREE.Vector3(x, y, z);
+      if (puzzleFamily === 'lift_rock') {
+        const rock = new THREE.Mesh(
+          new THREE.DodecahedronGeometry(0.58, 0),
+          createBotWToonMaterial({ color: '#8c867a' })
+        );
+        rock.position.y = 0.42;
+        propMesh = rock;
+      } else if (puzzleFamily === 'magnesis_block') {
+        const grp = new THREE.Group();
+        const frame = new THREE.Mesh(
+          new THREE.BoxGeometry(1.5, 1.5, 1.5),
+          new THREE.MeshBasicMaterial({ color: '#5c4e3c', wireframe: true })
+        );
+        frame.position.y = 0.75;
+        const cube = new THREE.Mesh(
+          new THREE.BoxGeometry(1.3, 1.3, 1.3),
+          createBotWToonMaterial({ color: '#8e7448', emissive: '#382210', emissiveIntensity: 0.35, metalHighlight: true })
+        );
+        cube.position.set(3.2, 0.65, 0);
+        grp.add(frame, cube);
+        propMesh = grp;
+        targetPos.set(x, y + 0.75, z);
+      } else if (puzzleFamily === 'shoot_target') {
+        const balloon = new THREE.Mesh(
+          new THREE.SphereGeometry(0.62, 10, 8),
+          createBotWToonMaterial({ color: '#ff5244', emissive: '#d82818', emissiveIntensity: 0.55 })
+        );
+        balloon.position.y = 4.2;
+        propMesh = balloon;
+        targetPos.set(x, y + 4.2, z);
+      } else if (puzzleFamily === 'dive_ring') {
+        const ring = new THREE.Mesh(
+          new THREE.TorusGeometry(1.45, 0.16, 8, 18),
+          createBotWToonMaterial({ color: '#58c448', emissive: '#226a1c', emissiveIntensity: 0.45 })
+        );
+        ring.rotation.x = Math.PI / 2;
+        ring.position.y = 0.25;
+        propMesh = ring;
+        targetPos.set(x, y + 0.25, z);
+      } else {
+        const statue = new THREE.Mesh(
+          new THREE.ConeGeometry(0.55, 1.35, 7),
+          createBotWToonMaterial({ color: '#7a7870' })
+        );
+        statue.position.y = 0.68;
+        propMesh = statue;
+      }
+      propMesh.visible = !found;
+      root.add(propMesh);
 
       // Cute Korok popping up when found ("Yahaha!")
       const korokMesh = new THREE.Group();
@@ -818,14 +892,99 @@ export class NpcAndKorokSystem {
       this.koroks.push({
         id,
         puzzleType: ptype.code,
-        puzzleNameJa: ptype.nameJa,
+        puzzleFamily,
+        puzzleNameJa: `${ptype.nameJa}（${familyLabels[puzzleFamily]}）`,
         region: regId,
         position: new THREE.Vector3(x, y, z),
+        targetPos,
         found,
         root,
+        propMesh,
         korokMesh,
       });
     });
+  }
+
+  /**
+   * Solves a Korok puzzle cleanly and reveals the Korok!
+   */
+  public revealKorok(korok: WorldKorok): boolean {
+    if (korok.found) return false;
+    korok.found = true;
+    korok.propMesh.visible = false;
+    korok.korokMesh.visible = true;
+    return true;
+  }
+
+  /**
+   * Interact (E / A button) on a Korok spot:
+   * - ONLY solves `lift_rock` and `offering_or_boulder`.
+   * - Refuses to solve `magnesis_block`, `shoot_target`, and `dive_ring` by pressing E alone!
+   */
+  public tryInteractKorok(korokId: string): { solved: boolean; korok?: WorldKorok; hintJa: string } {
+    const k = this.koroks.find((x) => x.id === korokId);
+    if (!k || k.found) return { solved: false, hintJa: '' };
+
+    if (k.puzzleFamily === 'lift_rock') {
+      this.revealKorok(k);
+      return { solved: true, korok: k, hintJa: '🪨 石を持ち上げたら……「ヤハハ！見つかっちゃった！」' };
+    }
+    if (k.puzzleFamily === 'offering_or_boulder') {
+      this.revealKorok(k);
+      return { solved: true, korok: k, hintJa: '🍎 お供えを捧げたら……「ヤハハ！見つかっちゃった！」' };
+    }
+    if (k.puzzleFamily === 'magnesis_block') {
+      return { solved: false, hintJa: '🧲 鉄のキューブがズレている！マグネキャッチで枠にはめよう' };
+    }
+    if (k.puzzleFamily === 'shoot_target') {
+      return { solved: false, hintJa: '🏹 上空に赤い風船的が浮かんでいる！弓矢で射抜こう' };
+    }
+    return { solved: false, hintJa: '💧 葉っぱの輪がある！ジャンプして輪の中へ飛び込もう' };
+  }
+
+  /**
+   * Arrow hit check for `shoot_target` Korok balloons.
+   */
+  public tryShootKorokTarget(arrowPos: THREE.Vector3, hitRadius = 1.6): WorldKorok | null {
+    for (const k of this.koroks) {
+      if (k.found || k.puzzleFamily !== 'shoot_target') continue;
+      if (arrowPos.distanceTo(k.targetPos) <= hitRadius) {
+        this.revealKorok(k);
+        return k;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Magnesis metal block placement check for `magnesis_block` Korok puzzles.
+   */
+  public tryMagnesisSolveKorok(blockPos: THREE.Vector3, snapRadius = 2.4): WorldKorok | null {
+    for (const k of this.koroks) {
+      if (k.found || k.puzzleFamily !== 'magnesis_block') continue;
+      if (Math.hypot(blockPos.x - k.targetPos.x, blockPos.z - k.targetPos.z) <= snapRadius) {
+        this.revealKorok(k);
+        return k;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Dive check for `dive_ring` Korok puzzles (Link must jump/dive into the ring!).
+   */
+  public checkDiveRingKoroks(playerPos: THREE.Vector3, verticalVel: number, isGrounded: boolean): WorldKorok | null {
+    if (isGrounded || verticalVel >= -1.0) return null;
+    for (const k of this.koroks) {
+      if (k.found || k.puzzleFamily !== 'dive_ring') continue;
+      const horiz = Math.hypot(playerPos.x - k.targetPos.x, playerPos.z - k.targetPos.z);
+      const vert = Math.abs(playerPos.y - k.targetPos.y);
+      if (horiz <= 2.2 && vert <= 3.0) {
+        this.revealKorok(k);
+        return k;
+      }
+    }
+    return null;
   }
 
   /**
@@ -863,12 +1022,90 @@ export class NpcAndKorokSystem {
         homePos: new THREE.Vector3(sp.x, y, sp.z),
         yaw: Math.random() * Math.PI * 2,
         speed: sp.speed,
-        tamed: i === 0,
-        bond: i === 0 ? 100 : 30,
+        tamed: false,
+        tameState: sp.type === 'horse' ? 'wild' : undefined,
+        sootheProgress: 0,
+        spurs: 3,
+        spurRegenTimer: 0,
+        ridden: false,
+        bond: 0,
         root,
         glb,
       });
     });
+  }
+
+  /**
+   * Mounts a wild or tamed horse:
+   * - Wild horses enter `bucking` state (draining stamina until player soothes them!)
+   * - Already tamed/registered horses allow immediate riding!
+   */
+  public mountHorse(horse: WildlifeEntity): { state: 'bucking' | 'tamed'; messageJa: string } {
+    horse.ridden = true;
+    if (horse.tamed || horse.tameState === 'tamed' || horse.tameState === 'registered') {
+      return { state: 'tamed', messageJa: '🐎 愛馬に騎乗した！（ダッシュで拍車加速・調べるで降りる）' };
+    }
+    horse.tameState = 'bucking';
+    horse.sootheProgress = horse.sootheProgress ?? 0;
+    return {
+      state: 'bucking',
+      messageJa: '🐎 野生馬が暴れている！スタミナが尽きる前に【L / 調べる】を連打してなだめよう！',
+    };
+  }
+
+  /**
+   * Soothes a bucking wild horse (+35% per tap -> tamed at 100%).
+   */
+  public sootheHorse(horse: WildlifeEntity): { tamedNow: boolean; progress: number; messageJa: string } {
+    if (horse.tamed || horse.tameState === 'tamed' || horse.tameState === 'registered') {
+      horse.bond = Math.min(100, (horse.bond ?? 60) + 10);
+      return { tamedNow: false, progress: 100, messageJa: '🐎 愛馬をなでた！（懐き度が上がった）' };
+    }
+    horse.sootheProgress = Math.min(100, (horse.sootheProgress ?? 0) + 35);
+    if (horse.sootheProgress >= 100) {
+      horse.tamed = true;
+      horse.tameState = 'tamed';
+      horse.bond = 60;
+      horse.spurs = 3;
+      return {
+        tamedNow: true,
+        progress: 100,
+        messageJa: '✨ 野生馬を手なずけた！馬宿の近くで降りると愛馬として登録できます！',
+      };
+    }
+    return {
+      tamedNow: false,
+      progress: horse.sootheProgress,
+      messageJa: `🐎 なだめ中…（${horse.sootheProgress}%）もう一度【L / 調べる】！`,
+    };
+  }
+
+  public registerHorseAtStable(horse: WildlifeEntity): { registered: boolean; messageJa: string } {
+    if (!horse.tamed) {
+      return { registered: false, messageJa: '先に馬を手なずけてください！' };
+    }
+    horse.tameState = 'registered';
+    horse.bond = 100;
+    return {
+      registered: true,
+      messageJa: '🏠 馬宿に愛馬を登録した！地上で口笛を吹くといつでも駆けつけます！',
+    };
+  }
+
+  public summonRegisteredHorse(playerPos: THREE.Vector3, yaw: number): WildlifeEntity | null {
+    const horse =
+      this.wildlife.find((w) => w.type === 'horse' && w.tameState === 'registered') ??
+      this.wildlife.find((w) => w.type === 'horse' && w.tamed);
+    if (!horse) return null;
+    const spawnX = playerPos.x - Math.sin(yaw) * 4.5;
+    const spawnZ = playerPos.z - Math.cos(yaw) * 4.5;
+    const spawnY = getTerrainHeight(spawnX, spawnZ);
+    horse.position.set(spawnX, spawnY, spawnZ);
+    horse.homePos.copy(horse.position);
+    horse.yaw = yaw;
+    horse.root.position.copy(horse.position);
+    horse.root.rotation.y = horse.yaw;
+    return horse;
   }
 
   /**
@@ -940,9 +1177,14 @@ export class NpcAndKorokSystem {
       npc.root.rotation.y = npc.yaw;
     }
 
-    // Wildlife & Birds wandering + flying orbits
+    // Wildlife & Birds wandering + flying orbits (skip autonomous wander for ridden horse!)
     for (const w of this.wildlife) {
       w.glb?.mixer?.update(dt);
+      if (w.ridden) {
+        w.root.position.copy(w.position);
+        w.root.rotation.y = w.yaw;
+        continue;
+      }
       if (w.type === 'stork' || w.type === 'parrot') {
         const a = timeSec * 0.25 + w.homePos.x * 0.01;
         w.position.x = w.homePos.x + Math.cos(a) * 38;
@@ -964,12 +1206,16 @@ export class NpcAndKorokSystem {
       w.root.rotation.y = w.yaw;
     }
 
-    // Korok Mask proximity check
+    // Korok Mask proximity check & animate shoot_target balloons
     let nearestKorok = Infinity;
     for (const k of this.koroks) {
       if (k.found) {
         k.korokMesh.rotation.y += dt * 1.4;
         continue;
+      }
+      if (k.puzzleFamily === 'shoot_target') {
+        k.propMesh.position.y = 4.2 + Math.sin(timeSec * 2.2 + k.position.x) * 0.45;
+        k.targetPos.y = k.position.y + k.propMesh.position.y;
       }
       const d = k.position.distanceTo(playerPos);
       if (d < nearestKorok) nearestKorok = d;
