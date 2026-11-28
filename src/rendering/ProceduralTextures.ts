@@ -442,52 +442,122 @@ export class ProceduralTextureBank {
   }
 
   getFabricTexture(baseHex = '#2e88b8', accentHex = '#e6c87a', pattern: 'champion' | 'weave' | 'gerudo' | 'sheikah' = 'weave'): ProceduralTextureSet {
-    return this.getOrCreate(`fabric_${baseHex}_${accentHex}_${pattern}`, 512, (ctx, w, h) => {
+    const size = pattern === 'champion' ? 1024 : 512;
+    return this.getOrCreate(`fabric_v2_${baseHex}_${accentHex}_${pattern}`, size, (ctx, w, h) => {
       const rand = mulberry32(909);
       ctx.fillStyle = baseHex;
       ctx.fillRect(0, 0, w, h);
 
-      // Painterly cloth weave
-      for (let i = 0; i < 650; i++) {
-        ctx.fillStyle = rand() > 0.5 ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.08)';
-        ctx.fillRect(rand() * w, rand() * h, 18 + rand() * 34, 2);
-        ctx.fillRect(rand() * w, rand() * h, 2, 18 + rand() * 34);
+      // Soft painterly cloth tonal variation (prevents plastic flatness)
+      for (let i = 0; i < (pattern === 'champion' ? 120 : 60); i++) {
+        const rx = rand() * w;
+        const ry = rand() * h;
+        const rad = 28 + rand() * (w * 0.14);
+        const grad = ctx.createRadialGradient(rx, ry, 2, rx, ry, rad);
+        grad.addColorStop(0, rand() > 0.5 ? 'rgba(255,255,255,0.06)' : 'rgba(12,24,42,0.08)');
+        grad.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(rx, ry, rad, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Fine cross-hatched linen weave
+      const threads = pattern === 'champion' ? 1400 : 650;
+      for (let i = 0; i < threads; i++) {
+        ctx.fillStyle = rand() > 0.5 ? 'rgba(255,255,255,0.065)' : 'rgba(0,0,0,0.085)';
+        ctx.fillRect(rand() * w, rand() * h, 18 + rand() * 38, 2);
+        ctx.fillRect(rand() * w, rand() * h, 2, 18 + rand() * 38);
       }
 
       if (pattern === 'champion') {
-        // Authentic BotW Champion's Tunic: horizontal creamy-white embroidered bottom hem + collar trim + centered Master Sword diamond!
-        ctx.fillStyle = '#f4ebd4';
-        ctx.fillRect(0, h - 36, w, 18);
+        // Authentic BotW Champion's Tunic (1024x1024): embroidered collar, bottom hem motif, and Master Sword chest crest!
+        // Bottom cream & gold geometric Hylian embroidery band
+        ctx.fillStyle = '#f5ecd6';
+        ctx.fillRect(0, h - 76, w, 38);
         ctx.fillStyle = accentHex;
-        ctx.fillRect(0, h - 42, w, 6);
-        ctx.fillRect(0, h - 18, w, 5);
-        ctx.fillRect(0, 14, w, 8);
+        ctx.fillRect(0, h - 88, w, 12);
+        ctx.fillRect(0, h - 38, w, 10);
+        // Collar gold & ivory trim band
+        ctx.fillStyle = '#f5ecd6';
+        ctx.fillRect(0, 18, w, 18);
+        ctx.fillStyle = accentHex;
+        ctx.fillRect(0, 36, w, 10);
 
-        // Subtle diamond border motifs along hem
-        ctx.fillStyle = '#2a84b8';
-        for (let x = 16; x < w; x += 32) {
+        // Diamond + dot motifs along hem
+        ctx.fillStyle = baseHex;
+        for (let x = 24; x < w; x += 48) {
           ctx.beginPath();
-          ctx.moveTo(x, h - 34);
-          ctx.lineTo(x + 7, h - 27);
-          ctx.lineTo(x, h - 20);
-          ctx.lineTo(x - 7, h - 27);
+          ctx.moveTo(x, h - 71);
+          ctx.lineTo(x + 14, h - 57);
+          ctx.lineTo(x, h - 43);
+          ctx.lineTo(x - 14, h - 57);
           ctx.closePath();
           ctx.fill();
+          ctx.fillStyle = accentHex;
+          ctx.beginPath();
+          ctx.arc(x, h - 57, 4, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = baseHex;
         }
 
-        // Centered Master Sword embroidery on chest (u = 0.5)
-        ctx.strokeStyle = '#f4f8ff';
+        // Centered iconic BotW Master Sword embroidery on chest (aligned cleanly at u = 0.5!)
+        const cx = w * 0.5;
+        const cy = h * 0.42;
+
+        // Flanking Hylian scroll curves
+        ctx.strokeStyle = 'rgba(246, 249, 255, 0.88)';
+        ctx.lineWidth = 6;
+        ctx.lineCap = 'round';
+        for (const side of [-1, 1]) {
+          ctx.beginPath();
+          ctx.moveTo(cx + side * 26, cy - 115);
+          ctx.bezierCurveTo(cx + side * 95, cy - 88, cx + side * 102, cy + 16, cx + side * 34, cy + 88);
+          ctx.stroke();
+
+          ctx.beginPath();
+          ctx.moveTo(cx + side * 46, cy - 64);
+          ctx.quadraticCurveTo(cx + side * 124, cy - 24, cx + side * 70, cy + 44);
+          ctx.stroke();
+        }
+
+        // Embroidered Master Sword emblem (winged guard + tapered blade + diamond pommel)
+        ctx.fillStyle = '#f7faff';
+        ctx.strokeStyle = '#dce8f8';
         ctx.lineWidth = 4;
+        // Blade
         ctx.beginPath();
-        ctx.moveTo(w * 0.5, h * 0.24);
-        ctx.lineTo(w * 0.57, h * 0.40);
-        ctx.lineTo(w * 0.5, h * 0.58);
-        ctx.lineTo(w * 0.43, h * 0.40);
+        ctx.moveTo(cx, cy + 150);
+        ctx.lineTo(cx + 15, cy - 26);
+        ctx.lineTo(cx - 15, cy - 26);
         ctx.closePath();
+        ctx.fill();
+        // Winged crossguard
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - 12);
+        ctx.lineTo(cx + 66, cy - 52);
+        ctx.lineTo(cx + 46, cy - 22);
+        ctx.lineTo(cx, cy - 38);
+        ctx.lineTo(cx - 46, cy - 22);
+        ctx.lineTo(cx - 66, cy - 52);
+        ctx.closePath();
+        ctx.fill();
+        // Grip & pommel
+        ctx.fillRect(cx - 8, cy - 108, 16, 74);
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - 134);
+        ctx.lineTo(cx + 18, cy - 114);
+        ctx.lineTo(cx, cy - 94);
+        ctx.lineTo(cx - 18, cy - 114);
+        ctx.closePath();
+        ctx.fill();
+        // Subtle inner blade fuller line
+        ctx.strokeStyle = baseHex;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - 16);
+        ctx.lineTo(cx, cy + 110);
         ctx.stroke();
-        ctx.fillStyle = '#f4f8ff';
-        ctx.fillRect(w * 0.494, h * 0.28, w * 0.012, h * 0.25);
-        ctx.fillRect(w * 0.46, h * 0.36, w * 0.08, h * 0.018);
       } else if (pattern === 'gerudo') {
         ctx.strokeStyle = accentHex;
         ctx.lineWidth = 6;
@@ -509,7 +579,7 @@ export class ProceduralTextureBank {
         ctx.lineTo(w * 0.5, h * 0.78);
         ctx.stroke();
       }
-    }, 1.4);
+    }, pattern === 'champion' ? 1.0 : 1.5);
   }
 
   /**
@@ -581,108 +651,227 @@ export class ProceduralTextureBank {
   }
 
   /**
-   * Expressive anime-style painterly face texture calibrated strictly to SphereGeometry front hemisphere (u = 0.5 center!).
+   * 1024x1024 High-Definition BotW Anime Face Texture calibrated 1:1 to LinkCharacterModel's
+   * distortion-free frontal orthographic-blended head UV projection (center = 512, 512).
    */
-  getHeroFaceTexture(skinHex = '#f6d5b2', eyeHex = '#2a84e0'): THREE.CanvasTexture {
-    const key = `hero_face_v2_${skinHex}_${eyeHex}`;
+  getHeroFaceTexture(skinHex = '#f6d5b2', eyeHex = '#247ee0'): THREE.CanvasTexture {
+    const key = `hero_face_hd1024_v3_${skinHex}_${eyeHex}`;
     const existing = this.plainCache.get(key);
     if (existing) return existing;
 
     const canvas = document.createElement('canvas');
-    canvas.width = 512;
-    canvas.height = 512;
+    canvas.width = 1024;
+    canvas.height = 1024;
     const ctx = canvas.getContext('2d')!;
 
+    // 1. Base warm porcelain-peach BotW skin tone + subtle vertical facial luminance gradient
     ctx.fillStyle = skinHex;
-    ctx.fillRect(0, 0, 512, 512);
+    ctx.fillRect(0, 0, 1024, 1024);
 
-    // Soft rosy cheek blush near center front
-    for (const cx of [214, 298]) {
-      const blush = ctx.createRadialGradient(cx, 298, 2, cx, 298, 24);
-      blush.addColorStop(0, 'rgba(236, 134, 114, 0.38)');
-      blush.addColorStop(1, 'rgba(236, 134, 114, 0)');
+    const skinGrad = ctx.createRadialGradient(512, 490, 60, 512, 540, 420);
+    skinGrad.addColorStop(0, 'rgba(255, 245, 232, 0.24)');
+    skinGrad.addColorStop(0.55, 'rgba(246, 213, 178, 0.0)');
+    skinGrad.addColorStop(1, 'rgba(196, 138, 104, 0.24)');
+    ctx.fillStyle = skinGrad;
+    ctx.fillRect(140, 140, 744, 780);
+
+    // Subtle soft bangs shadow along upper forehead
+    const browShad = ctx.createLinearGradient(0, 210, 0, 415);
+    browShad.addColorStop(0, 'rgba(182, 126, 92, 0.28)');
+    browShad.addColorStop(1, 'rgba(182, 126, 92, 0)');
+    ctx.fillStyle = browShad;
+    ctx.fillRect(220, 210, 584, 205);
+
+    // Warm subtle jawline contour shadow near lower chin
+    const chinShad = ctx.createRadialGradient(512, 835, 10, 512, 835, 165);
+    chinShad.addColorStop(0, 'rgba(196, 134, 102, 0.22)');
+    chinShad.addColorStop(1, 'rgba(196, 134, 102, 0)');
+    ctx.fillStyle = chinShad;
+    ctx.beginPath();
+    ctx.arc(512, 835, 165, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Soft anime peach-rose cheek blush
+    for (const cx of [356, 668]) {
+      const blush = ctx.createRadialGradient(cx, 602, 6, cx, 602, 74);
+      blush.addColorStop(0, 'rgba(238, 136, 118, 0.34)');
+      blush.addColorStop(0.6, 'rgba(238, 136, 118, 0.12)');
+      blush.addColorStop(1, 'rgba(238, 136, 118, 0)');
       ctx.fillStyle = blush;
       ctx.beginPath();
-      ctx.arc(cx, 298, 24, 0, Math.PI * 2);
+      ctx.ellipse(cx, 602, 74, 46, 0, 0, Math.PI * 2);
       ctx.fill();
     }
 
-    // Expressive BotW Anime Eyes positioned tightly around u=0.5 (x=226 & x=286) so BOTH eyes face straight ahead!
-    const drawEye = (cx: number, flip: number) => {
+    // 2. Crisp BotW Almond Hero Eyes (centered at x=410 & x=614, y=520)
+    const drawBotWEye = (cx: number, flip: number) => {
       ctx.save();
-      ctx.translate(cx, 270);
+      ctx.translate(cx, 520);
       ctx.scale(flip, 1);
 
-      // Crisp white sclera
-      ctx.fillStyle = '#ffffff';
+      // Subtle warm eye-socket shading under upper eyelid
+      const sock = ctx.createLinearGradient(0, -46, 0, 20);
+      sock.addColorStop(0, 'rgba(170, 114, 84, 0.25)');
+      sock.addColorStop(1, 'rgba(170, 114, 84, 0)');
+      ctx.fillStyle = sock;
       ctx.beginPath();
-      ctx.ellipse(0, 0, 17, 15, -0.05, 0, Math.PI * 2);
+      ctx.ellipse(0, -14, 62, 34, -0.06, 0, Math.PI * 2);
       ctx.fill();
 
-      // Vibrant BotW sapphire iris gradient
-      const irisGrad = ctx.createLinearGradient(0, -14, 0, 14);
-      irisGrad.addColorStop(0, '#103c7e');
-      irisGrad.addColorStop(0.55, eyeHex);
-      irisGrad.addColorStop(1, '#7ce6ff');
+      // Almond-shaped eye aperture clipping path (authentic BotW sharp hero eyes!)
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(-58, 2); // outer corner
+      ctx.bezierCurveTo(-36, -38, 26, -38, 52, -4); // upper lid arch
+      ctx.bezierCurveTo(26, 30, -32, 32, -58, 2); // lower lid curve
+      ctx.closePath();
+      ctx.clip();
+
+      // Crisp warm-white sclera with delicate upper-lid cast shadow
+      const sclGrad = ctx.createLinearGradient(0, -34, 0, 26);
+      sclGrad.addColorStop(0, '#cfd8e4');
+      sclGrad.addColorStop(0.28, '#f8fafc');
+      sclGrad.addColorStop(1, '#ffffff');
+      ctx.fillStyle = sclGrad;
+      ctx.fillRect(-66, -42, 132, 84);
+
+      // Multi-layered BotW Sapphire-Cerulean Iris
+      const ix = 4;
+      const iy = 1;
+      const irisGrad = ctx.createLinearGradient(ix, -28, ix, 30);
+      irisGrad.addColorStop(0, '#0a2658');
+      irisGrad.addColorStop(0.35, '#1754a8');
+      irisGrad.addColorStop(0.68, eyeHex);
+      irisGrad.addColorStop(1, '#7cf0ff');
       ctx.fillStyle = irisGrad;
       ctx.beginPath();
-      ctx.ellipse(2, 1, 10.5, 13, 0, 0, Math.PI * 2);
+      ctx.ellipse(ix, iy, 31, 32, 0, 0, Math.PI * 2);
       ctx.fill();
 
-      // Deep pupil
-      ctx.fillStyle = '#0c1830';
+      // Outer dark limbal ring around iris for sharp anime definition
+      ctx.strokeStyle = '#0c244a';
+      ctx.lineWidth = 4.5;
       ctx.beginPath();
-      ctx.ellipse(2, 1, 4.8, 6.5, 0, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Bright anime catchlights
-      ctx.fillStyle = '#ffffff';
-      ctx.beginPath();
-      ctx.arc(-3, -5, 4.2, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(5, 5, 2.2, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Crisp upper lash line
-      ctx.strokeStyle = '#2a1e14';
-      ctx.lineWidth = 4.2;
-      ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.moveTo(-18, -3);
-      ctx.quadraticCurveTo(0, -20, 18, -5);
+      ctx.ellipse(ix, iy, 30, 31, 0, 0, Math.PI * 2);
       ctx.stroke();
 
-      // Expressive golden-brown eyebrow
-      ctx.strokeStyle = '#926c30';
-      ctx.lineWidth = 4.0;
+      // Subtle glowing lower-iris crescent reflection
+      const crescent = ctx.createRadialGradient(ix, iy + 18, 2, ix, iy + 16, 22);
+      crescent.addColorStop(0, 'rgba(170, 250, 255, 0.85)');
+      crescent.addColorStop(1, 'rgba(110, 220, 255, 0)');
+      ctx.fillStyle = crescent;
       ctx.beginPath();
-      ctx.moveTo(-19, -24);
-      ctx.quadraticCurveTo(0, -32, 18, -22);
+      ctx.ellipse(ix, iy + 14, 21, 12, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Deep crisp pupil
+      ctx.fillStyle = '#0a1628';
+      ctx.beginPath();
+      ctx.ellipse(ix, iy - 1, 13.5, 15.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Primary sharp specular catchlight + tiny opposite glint
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.ellipse(ix - 12, iy - 13, 10.5, 8.5, -0.35, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(ix + 12, iy + 11, 4.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.restore();
+
+      // Bold tapered espresso-brown upper lash line with crisp outer flick
+      ctx.fillStyle = '#241812';
+      ctx.beginPath();
+      ctx.moveTo(-64, 1);
+      ctx.bezierCurveTo(-40, -44, 24, -44, 54, -6);
+      ctx.bezierCurveTo(26, -30, -34, -30, -56, 5);
+      ctx.closePath();
+      ctx.fill();
+
+      // Fine warm-brown lower lash accent
+      ctx.strokeStyle = 'rgba(72, 46, 34, 0.65)';
+      ctx.lineWidth = 3.2;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(-42, 22);
+      ctx.quadraticCurveTo(0, 32, 36, 18);
+      ctx.stroke();
+
+      // Delicate upper eyelid crease line
+      ctx.strokeStyle = 'rgba(138, 88, 62, 0.58)';
+      ctx.lineWidth = 3.2;
+      ctx.beginPath();
+      ctx.moveTo(-46, -36);
+      ctx.quadraticCurveTo(2, -52, 46, -30);
+      ctx.stroke();
+
+      // Sharp determined golden-brown BotW eyebrow (angled slightly inward)
+      ctx.fillStyle = '#9e7430';
+      ctx.beginPath();
+      ctx.moveTo(-64, -56);
+      ctx.quadraticCurveTo(-8, -76, 52, -52);
+      ctx.lineTo(50, -40);
+      ctx.quadraticCurveTo(-6, -62, -62, -48);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = '#6e4d1c';
+      ctx.lineWidth = 2.0;
       ctx.stroke();
 
       ctx.restore();
     };
 
-    drawEye(226, 1);
-    drawEye(286, -1);
+    drawBotWEye(408, 1);
+    drawBotWEye(616, -1);
 
-    // Subtle nose shading & serene determined mouth
-    ctx.strokeStyle = 'rgba(168, 108, 76, 0.62)';
-    ctx.lineWidth = 2.6;
+    // 3. Sculpted Nose Bridge Highlight & Painterly Cel Nose Shadow
+    const bridgeHi = ctx.createLinearGradient(504, 520, 522, 616);
+    bridgeHi.addColorStop(0, 'rgba(255, 248, 236, 0.42)');
+    bridgeHi.addColorStop(1, 'rgba(255, 248, 236, 0)');
+    ctx.fillStyle = bridgeHi;
     ctx.beginPath();
-    ctx.moveTo(256, 286);
-    ctx.lineTo(253, 304);
-    ctx.lineTo(259, 307);
-    ctx.stroke();
+    ctx.ellipse(514, 574, 10, 44, 0, 0, Math.PI * 2);
+    ctx.fill();
 
-    ctx.strokeStyle = '#a86452';
-    ctx.lineWidth = 3.2;
+    // Iconic BotW anime angled nose-side shadow wedge
+    ctx.fillStyle = 'rgba(182, 118, 86, 0.44)';
+    ctx.beginPath();
+    ctx.moveTo(509, 558);
+    ctx.lineTo(494, 618);
+    ctx.lineTo(516, 628);
+    ctx.lineTo(512, 608);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.strokeStyle = 'rgba(148, 88, 60, 0.62)';
+    ctx.lineWidth = 3.4;
     ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.moveTo(243, 328);
-    ctx.quadraticCurveTo(256, 334, 269, 328);
+    ctx.moveTo(498, 618);
+    ctx.quadraticCurveTo(512, 629, 522, 622);
     ctx.stroke();
+
+    // 4. Serene Determined Hero Mouth + Subtle Lower-Lip Highlight & Shadow
+    ctx.strokeStyle = '#9a5444';
+    ctx.lineWidth = 4.6;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(466, 704);
+    ctx.quadraticCurveTo(512, 718, 558, 704);
+    ctx.stroke();
+
+    // Soft rose lower lip tint + subtle cel lip shadow crescent
+    ctx.fillStyle = 'rgba(226, 134, 118, 0.28)';
+    ctx.beginPath();
+    ctx.ellipse(512, 718, 34, 10, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = 'rgba(170, 106, 80, 0.35)';
+    ctx.beginPath();
+    ctx.ellipse(512, 734, 22, 6, 0, 0, Math.PI * 2);
+    ctx.fill();
 
     const tex = finalizeTexture(canvas, false);
     this.plainCache.set(key, tex);

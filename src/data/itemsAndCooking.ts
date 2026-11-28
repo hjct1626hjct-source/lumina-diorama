@@ -37,6 +37,18 @@ export const WEAPONS: WeaponDef[] = [
     accentColor: '#5c4228',
   },
   {
+    id: 'torch',
+    nameJa: 'たいまつ',
+    nameEn: 'Torch',
+    category: 'sword',
+    attack: 2,
+    durability: 40,
+    material: 'Wood',
+    element: 'Fire',
+    color: '#7c502c',
+    accentColor: '#ff8a24',
+  },
+  {
     id: 'travelers_sword',
     nameJa: '旅人の剣',
     nameEn: "Traveler's Sword",

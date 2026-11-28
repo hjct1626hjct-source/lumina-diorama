@@ -147,13 +147,113 @@ export interface FireUpdraftZone {
   mesh: THREE.Group;
 }
 
-export interface StaticCollider {
-  id: string;
-  x: number;
-  y: number;
-  z: number;
-  radius: number;
-  height: number;
+export type StaticCollider =
+  | {
+      id: string;
+      shape: 'cylinder';
+      x: number;
+      z: number;
+      radius: number;
+      minY: number;
+      maxY: number;
+      climbable?: boolean;
+      walkableTop?: boolean;
+    }
+  | {
+      id: string;
+      shape: 'box';
+      x: number;
+      z: number;
+      halfW: number;
+      halfD: number;
+      minY: number;
+      maxY: number;
+      rotY?: number;
+      climbable?: boolean;
+      walkableTop?: boolean;
+    };
+
+export interface CapsuleCollisionResult {
+  collidedHorizontal: boolean;
+  hitCeiling: boolean;
+  hitClimbable: boolean;
+  hitNormal: THREE.Vector3;
+  supportY: number;
+  wallTopY: number;
+}
+
+/**
+ * Spatial Hash Grid supporting multi-cell footprint indexing for static architecture & foliage colliders.
+ */
+export class StaticColliderHashGrid {
+  private cells = new Map<string, StaticCollider[]>();
+  private all: StaticCollider[] = [];
+  private cellSize: number;
+
+  constructor(cellSize = 24) {
+    this.cellSize = cellSize;
+  }
+
+  clear(): void {
+    this.cells.clear();
+    this.all.length = 0;
+  }
+
+  get count(): number {
+    return this.all.length;
+  }
+
+  private footprintHalfExtents(col: StaticCollider): { rx: number; rz: number } {
+    if (col.shape === 'cylinder') {
+      return { rx: col.radius, rz: col.radius };
+    }
+    const rot = col.rotY ?? 0;
+    if (Math.abs(rot) < 1e-4) {
+      return { rx: col.halfW, rz: col.halfD };
+    }
+    const c = Math.abs(Math.cos(rot));
+    const s = Math.abs(Math.sin(rot));
+    return {
+      rx: c * col.halfW + s * col.halfD,
+      rz: s * col.halfW + c * col.halfD,
+    };
+  }
+
+  insert(col: StaticCollider): void {
+    this.all.push(col);
+    const { rx, rz } = this.footprintHalfExtents(col);
+    const minCx = Math.floor((col.x - rx) / this.cellSize);
+    const maxCx = Math.floor((col.x + rx) / this.cellSize);
+    const minCz = Math.floor((col.z - rz) / this.cellSize);
+    const maxCz = Math.floor((col.z + rz) / this.cellSize);
+    for (let cz = minCz; cz <= maxCz; cz++) {
+      for (let cx = minCx; cx <= maxCx; cx++) {
+        const key = `${cx},${cz}`;
+        let bucket = this.cells.get(key);
+        if (!bucket) {
+          bucket = [];
+          this.cells.set(key, bucket);
+        }
+        bucket.push(col);
+      }
+    }
+  }
+
+  queryAABB(minX: number, minZ: number, maxX: number, maxZ: number, out: Set<StaticCollider>): void {
+    const minCx = Math.floor(minX / this.cellSize);
+    const maxCx = Math.floor(maxX / this.cellSize);
+    const minCz = Math.floor(minZ / this.cellSize);
+    const maxCz = Math.floor(maxZ / this.cellSize);
+    for (let cz = minCz; cz <= maxCz; cz++) {
+      for (let cx = minCx; cx <= maxCx; cx++) {
+        const bucket = this.cells.get(`${cx},${cz}`);
+        if (!bucket) continue;
+        for (let i = 0; i < bucket.length; i++) {
+          out.add(bucket[i]);
+        }
+      }
+    }
+  }
 }
 
 /**
@@ -209,16 +309,20 @@ export class SpatialHashGrid<T extends { position: THREE.Vector3 }> {
 }
 
 /**
- * Dual Havok-style Rigid Body Physics + GDC 2017 Chemistry Engine.
+ * Dual Havok-style Rigid Body Physics + Spatial-Hashed 3D Static Colliders + GDC 2017 Chemistry Engine.
  */
 export class PhysicsChemistryEngine {
   public bodies: PhysicsBody[] = [];
   public fireZones: FireUpdraftZone[] = [];
   public staticColliders: StaticCollider[] = [];
+  public propColliderCount = 0;
+  public readonly staticGrid = new StaticColliderHashGrid(24);
+  public readonly propGrid = new StaticColliderHashGrid(24);
   public readonly grid = new SpatialHashGrid<PhysicsBody>(32);
   public readonly effectsGroup = new THREE.Group();
 
   private normalTmp = new THREE.Vector3();
+  private querySetTmp = new Set<StaticCollider>();
 
   constructor(scene: THREE.Scene) {
     this.effectsGroup.name = 'ChemistryEffects';
@@ -240,6 +344,288 @@ export class PhysicsChemistryEngine {
 
   addStaticCollider(col: StaticCollider): void {
     this.staticColliders.push(col);
+    this.staticGrid.insert(col);
+  }
+
+  addBoxCollider(
+    id: string,
+    x: number,
+    z: number,
+    width: number,
+    depth: number,
+    minY: number,
+    maxY: number,
+    opts: { rotY?: number; climbable?: boolean; walkableTop?: boolean } = {}
+  ): void {
+    this.addStaticCollider({
+      id,
+      shape: 'box',
+      x,
+      z,
+      halfW: width * 0.5,
+      halfD: depth * 0.5,
+      minY,
+      maxY,
+      rotY: opts.rotY ?? 0,
+      climbable: opts.climbable ?? true,
+      walkableTop: opts.walkableTop ?? true,
+    });
+  }
+
+  addCylinderCollider(
+    id: string,
+    x: number,
+    z: number,
+    radius: number,
+    minY: number,
+    maxY: number,
+    opts: { climbable?: boolean; walkableTop?: boolean } = {}
+  ): void {
+    this.addStaticCollider({
+      id,
+      shape: 'cylinder',
+      x,
+      z,
+      radius,
+      minY,
+      maxY,
+      climbable: opts.climbable ?? true,
+      walkableTop: opts.walkableTop ?? true,
+    });
+  }
+
+  /**
+   * Replaces dynamic foliage/tree/rock static colliders streamed around the player.
+   */
+  setTerrainPropColliders(colliders: StaticCollider[]): void {
+    this.propGrid.clear();
+    this.propColliderCount = colliders.length;
+    for (let i = 0; i < colliders.length; i++) {
+      this.propGrid.insert(colliders[i]);
+    }
+  }
+
+  /**
+   * Resolves a vertical character capsule against ALL nearby architecture, rocks, trees,
+   * and solid dynamic physics props using O(1) spatial hash lookups.
+   * Prevents tunneling/clipping, computes walkable plinth/roof supportY, and reports climbable wall normals.
+   */
+  resolveCapsuleCollision(
+    pos: THREE.Vector3,
+    radius: number,
+    height: number,
+    stepHeight = 0.52
+  ): CapsuleCollisionResult {
+    const res: CapsuleCollisionResult = {
+      collidedHorizontal: false,
+      hitCeiling: false,
+      hitClimbable: false,
+      hitNormal: new THREE.Vector3(),
+      supportY: -Infinity,
+      wallTopY: -Infinity,
+    };
+
+    const candidates = this.querySetTmp;
+    candidates.clear();
+    const pad = radius + 0.35;
+    this.staticGrid.queryAABB(pos.x - pad, pos.z - pad, pos.x + pad, pos.z + pad, candidates);
+    this.propGrid.queryAABB(pos.x - pad, pos.z - pad, pos.x + pad, pos.z + pad, candidates);
+
+    // Run 2 relaxation passes to cleanly resolve corners between two perpendicular walls!
+    for (let pass = 0; pass < 2; pass++) {
+      for (const col of candidates) {
+        const feetY = pos.y;
+        const headY = pos.y + height;
+
+        if (col.shape === 'cylinder') {
+          const dx = pos.x - col.x;
+          const dz = pos.z - col.z;
+          const distSq = dx * dx + dz * dz;
+          const combinedR = col.radius + radius;
+          if (distSq >= combinedR * combinedR) continue;
+
+          // Walkable top support (ledges, pedestals, stumps, boulders)
+          if (col.walkableTop !== false && feetY >= col.maxY - stepHeight && feetY <= col.maxY + 0.42) {
+            if (distSq <= (col.radius + radius * 0.72) * (col.radius + radius * 0.72)) {
+              if (col.maxY > res.supportY) res.supportY = col.maxY;
+            }
+            continue;
+          }
+
+          // Vertical overlap check
+          if (feetY >= col.maxY - 0.05 || headY <= col.minY + 0.05) continue;
+
+          // Ceiling hit check (if feet well below minY)
+          if (feetY < col.minY - 0.15 && headY > col.minY) {
+            pos.y = col.minY - height;
+            res.hitCeiling = true;
+            continue;
+          }
+
+          const dist = Math.sqrt(distSq);
+          const nx = dist > 1e-5 ? dx / dist : 1;
+          const nz = dist > 1e-5 ? dz / dist : 0;
+          const pen = combinedR - dist;
+          pos.x += nx * pen;
+          pos.z += nz * pen;
+          res.collidedHorizontal = true;
+          res.hitNormal.set(nx, 0, nz);
+          if (col.climbable !== false && col.maxY - feetY > 0.85) {
+            res.hitClimbable = true;
+            res.wallTopY = Math.max(res.wallTopY, col.maxY);
+          }
+        } else {
+          // Box / OBB in XZ plane
+          const relX = pos.x - col.x;
+          const relZ = pos.z - col.z;
+          const rot = col.rotY ?? 0;
+          const cosR = Math.cos(rot);
+          const sinR = Math.sin(rot);
+          // Transform world offset into box local space (inverse Y rotation)
+          const lx = relX * cosR - relZ * sinR;
+          const lz = relX * sinR + relZ * cosR;
+
+          const clx = Math.max(-col.halfW, Math.min(col.halfW, lx));
+          const clz = Math.max(-col.halfD, Math.min(col.halfD, lz));
+          const dlx = lx - clx;
+          const dlz = lz - clz;
+          const distSq = dlx * dlx + dlz * dlz;
+          if (distSq >= radius * radius) continue;
+
+          // Walkable top support (plinths, castle bridges, flat roofs, stairs)
+          if (col.walkableTop !== false && feetY >= col.maxY - stepHeight && feetY <= col.maxY + 0.42) {
+            if (Math.abs(lx) <= col.halfW + radius * 0.65 && Math.abs(lz) <= col.halfD + radius * 0.65) {
+              if (col.maxY > res.supportY) res.supportY = col.maxY;
+            }
+            continue;
+          }
+
+          if (feetY >= col.maxY - 0.05 || headY <= col.minY + 0.05) continue;
+
+          if (feetY < col.minY - 0.15 && headY > col.minY) {
+            pos.y = col.minY - height;
+            res.hitCeiling = true;
+            continue;
+          }
+
+          let lnx = 0;
+          let lnz = 0;
+          let pen = 0;
+          if (distSq > 1e-8) {
+            const dist = Math.sqrt(distSq);
+            lnx = dlx / dist;
+            lnz = dlz / dist;
+            pen = radius - dist;
+          } else {
+            // Center penetrated inside box -> eject through nearest face
+            const penX = col.halfW - Math.abs(lx) + radius;
+            const penZ = col.halfD - Math.abs(lz) + radius;
+            if (penX < penZ) {
+              lnx = lx >= 0 ? 1 : -1;
+              pen = penX;
+            } else {
+              lnz = lz >= 0 ? 1 : -1;
+              pen = penZ;
+            }
+          }
+
+          // Transform local normal back to world XZ
+          const wnx = lnx * cosR + lnz * sinR;
+          const wnz = -lnx * sinR + lnz * cosR;
+          pos.x += wnx * pen;
+          pos.z += wnz * pen;
+          res.collidedHorizontal = true;
+          res.hitNormal.set(wnx, 0, wnz);
+          if (col.climbable !== false && col.maxY - feetY > 0.85) {
+            res.hitClimbable = true;
+            res.wallTopY = Math.max(res.wallTopY, col.maxY);
+          }
+        }
+      }
+    }
+
+    // Also resolve solid horizontal collision & walkable top against dynamic PhysicsBodies (boulders, crates, Cryonis pillars)
+    for (let i = 0; i < this.bodies.length; i++) {
+      const b = this.bodies[i];
+      if (b.magnesisGrabbed) continue;
+      const dx = pos.x - b.position.x;
+      const dz = pos.z - b.position.z;
+      const combinedR = b.radius + radius;
+      const distSq = dx * dx + dz * dz;
+      if (distSq >= combinedR * combinedR) continue;
+      const topY = b.position.y + b.halfHeight * 2;
+      if (pos.y >= topY - stepHeight && pos.y <= topY + 0.45) {
+        if (topY > res.supportY) res.supportY = topY;
+        continue;
+      }
+      if (pos.y < topY - stepHeight && pos.y + height > b.position.y + 0.08) {
+        const dist = Math.sqrt(distSq);
+        const nx = dist > 1e-5 ? dx / dist : 1;
+        const nz = dist > 1e-5 ? dz / dist : 0;
+        const pen = combinedR - dist;
+        pos.x += nx * pen;
+        pos.z += nz * pen;
+        res.collidedHorizontal = true;
+        res.hitNormal.set(nx, 0, nz);
+        if (b.isCryonisPillar && topY - pos.y > 0.85) {
+          res.hitClimbable = true;
+          res.wallTopY = Math.max(res.wallTopY, topY);
+        }
+      }
+    }
+
+    return res;
+  }
+
+  /**
+   * Keeps third-person camera outside solid building walls by marching from target toward desired camera position.
+   */
+  clampCameraPosition(target: THREE.Vector3, desired: THREE.Vector3, out = new THREE.Vector3()): THREE.Vector3 {
+    out.copy(desired);
+    const minX = Math.min(target.x, desired.x) - 0.6;
+    const maxX = Math.max(target.x, desired.x) + 0.6;
+    const minZ = Math.min(target.z, desired.z) - 0.6;
+    const maxZ = Math.max(target.z, desired.z) + 0.6;
+    const candidates = this.querySetTmp;
+    candidates.clear();
+    this.staticGrid.queryAABB(minX, minZ, maxX, maxZ, candidates);
+    if (candidates.size === 0) return out;
+
+    const steps = 10;
+    const probe = new THREE.Vector3();
+    for (let s = 1; s <= steps; s++) {
+      const t = s / steps;
+      probe.lerpVectors(target, desired, t);
+      let blocked = false;
+      for (const col of candidates) {
+        if (probe.y < col.minY + 0.15 || probe.y > col.maxY - 0.15) continue;
+        if (col.shape === 'cylinder') {
+          const d2 = (probe.x - col.x) ** 2 + (probe.z - col.z) ** 2;
+          if (d2 < (col.radius + 0.35) ** 2) {
+            blocked = true;
+            break;
+          }
+        } else {
+          const rx = probe.x - col.x;
+          const rz = probe.z - col.z;
+          const rot = col.rotY ?? 0;
+          const c = Math.cos(rot);
+          const si = Math.sin(rot);
+          const lx = rx * c - rz * si;
+          const lz = rx * si + rz * c;
+          if (Math.abs(lx) < col.halfW + 0.35 && Math.abs(lz) < col.halfD + 0.35) {
+            blocked = true;
+            break;
+          }
+        }
+      }
+      if (blocked) {
+        const safeT = Math.max(0.22, (s - 1) / steps);
+        out.lerpVectors(target, desired, safeT);
+        return out;
+      }
+    }
+    return out;
   }
 
   /**

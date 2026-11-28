@@ -4,10 +4,22 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 
-import { modelLoader } from '../rendering/ModelLoader';
+import {
+  ALL_MODEL_KEYS,
+  DEFERRED_CHARACTER_MODELS,
+  ESSENTIAL_PLATEAU_MODELS,
+  modelLoader,
+} from '../rendering/ModelLoader';
 import { TerrainChunkManager } from '../world/TerrainChunkManager';
 import { WeatherClimateSystem, type ClimateStatus } from '../world/WeatherClimateSystem';
-import { ArchitectureBuilder, type WorldChest, type WorldShrine, type WorldTower } from '../world/ArchitectureBuilder';
+import {
+  ArchitectureBuilder,
+  type WorldChest,
+  type WorldShrine,
+  type WorldTorch,
+  type WorldTower,
+  type WorldWeaponDrop,
+} from '../world/ArchitectureBuilder';
 import { getRegionAt, getTerrainHeight } from '../world/TerrainGenerator';
 import { PhysicsChemistryEngine } from '../physics/PhysicsChemistryEngine';
 import { SheikahRuneSystem } from '../gameplay/SheikahRunes';
@@ -15,6 +27,7 @@ import { PlayerController, type InputState } from '../gameplay/PlayerController'
 import { EnemyAndBossSystem, SPECIES_KILL_POINTS, type WorldEnemy } from '../entities/EnemyAndBossSystem';
 import { NpcAndKorokSystem, evaluateNpcEventFlow, type WorldKorok, type WorldNpc } from '../entities/NpcAndKorokSystem';
 import { BotWHudAndMenu } from '../ui/BotWHudAndMenu';
+import { TouchControls, isTouchCapableDevice } from '../input/TouchControls';
 import { audioEngine } from '../audio/OpenAirAudioEngine';
 import {
   createDefaultSave,
@@ -27,16 +40,19 @@ import {
 import { computeArmorSummary } from '../data/armors';
 import {
   AUTO_PARRY_LASER_SHIELD_IDS,
+  WEAPONS,
   computeBotWDamage,
   computeMasterCycleFuel,
 } from '../data/itemsAndCooking';
 import { ALL_MEMORIES, COMPENDIUM_CATALOG } from '../data/storyAndQuests';
 import { LANDMARKS } from '../data/regions';
-import type { RuneId, SaveSlotData } from '../types/botw';
+import type { GraphicsQuality, RuneId, SaveSlotData } from '../types/botw';
 
 type NearbyInteractable =
   | { kind: 'npc'; npc: WorldNpc; label: string }
   | { kind: 'chest'; chest: WorldChest; label: string }
+  | { kind: 'weaponDrop'; drop: WorldWeaponDrop; label: string }
+  | { kind: 'torch'; torch: WorldTorch; label: string }
   | { kind: 'shrine'; shrine: WorldShrine; label: string }
   | { kind: 'tower'; tower: WorldTower; label: string }
   | { kind: 'pot'; label: string }
@@ -44,13 +60,17 @@ type NearbyInteractable =
   | { kind: 'korok'; korok: WorldKorok; label: string };
 
 /**
- * Master 60fps Three.js WebGL2 Open-Air Breath of the Wild Engine.
+ * Master 60fps Three.js WebGL2 Open-Air Breath of the Wild Engine (PC & iPad Multi-Touch Ready).
  */
 export class BotWGameEngine {
   public readonly renderer: THREE.WebGLRenderer;
   public readonly scene: THREE.Scene;
   public readonly camera: THREE.PerspectiveCamera;
   private composer: EffectComposer;
+  private useComposer = true;
+  private activeQuality: GraphicsQuality = 'high';
+  private lastCompendiumSnapshotUrl: string | null = null;
+  private deferredPreloadPromise: Promise<void> = Promise.resolve();
 
   public terrain!: TerrainChunkManager;
   public weather!: WeatherClimateSystem;
@@ -61,6 +81,7 @@ export class BotWGameEngine {
   public enemies!: EnemyAndBossSystem;
   public npcs!: NpcAndKorokSystem;
   public ui!: BotWHudAndMenu;
+  public touchControls!: TouchControls;
 
   public save: SaveSlotData;
   public climate!: ClimateStatus;
@@ -70,6 +91,8 @@ export class BotWGameEngine {
     backward: false,
     left: false,
     right: false,
+    moveX: 0,
+    moveY: 0,
     sprint: false,
     jump: false,
     crouch: false,
@@ -96,19 +119,23 @@ export class BotWGameEngine {
   private lastMouseX = 0;
   private lastMouseY = 0;
   private cameraOverride: { pos: THREE.Vector3; lookAt: THREE.Vector3 } | null = null;
+  private readonly camLookScratch = new THREE.Vector3();
+  private readonly camDesiredScratch = new THREE.Vector3();
+  private readonly camClampedScratch = new THREE.Vector3();
 
   // ZL Lock-on Golden Reticle
   private lockReticle: THREE.Mesh;
 
   constructor(canvas: HTMLCanvasElement) {
+    const isTouch = isTouchCapableDevice();
     this.renderer = new THREE.WebGLRenderer({
       canvas,
-      antialias: true,
+      antialias: !isTouch,
       powerPreference: 'high-performance',
-      preserveDrawingBuffer: true, // Enables crisp Camera Rune snapshots!
+      preserveDrawingBuffer: false, // Always false for optimal iPad/mobile GPU bandwidth; Camera Rune uses 1-frame synchronous capture!
     });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isTouch ? 1.5 : 2));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -119,12 +146,12 @@ export class BotWGameEngine {
 
     this.camera = new THREE.PerspectiveCamera(56, window.innerWidth / window.innerHeight, 0.25, 2900);
 
-    // Painterly Post-Processing Pipeline (RenderPass -> Subtle BotW Bloom -> ACES OutputPass)
+    // Painterly Post-Processing Pipeline (enabled on High quality; bypassed on Medium/Low for steady iPad framerate!)
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
     const bloom = new UnrealBloomPass(
       new THREE.Vector2(window.innerWidth, window.innerHeight),
-      0.24, // Subtle glow on Sheikah cyan/orange runes, flames & sun highlights (zero blowout!)
+      0.22,
       0.45,
       0.86
     );
@@ -143,52 +170,42 @@ export class BotWGameEngine {
   }
 
   async init(): Promise<void> {
-    // 1. Preload all downloaded CC0/MIT .glb models via ModelLoader (normalizes Box3 + y=0 + BotW Toon Shader!)
-    await modelLoader.preload([
-      'chest_wood',
-      'chest_gold',
-      'barrel',
-      'crates',
-      'pillar',
-      'rubble',
-      'npc_knight',
-      'npc_rogue',
-      'npc_traveler',
-      'npc_mage',
-      'npc_barbarian',
-      'stal_warrior',
-      'stal_minion',
-      'horse',
-      'fox',
-      'bird_stork',
-      'bird_parrot',
-    ]);
+    // 1. Progressive Tier-1 Preload: lightweight ~1.16MB plateau props/wildlife/equipment GLBs so Title opens instantly on iPad!
+    await modelLoader.preload(ESSENTIAL_PLATEAU_MODELS);
 
-    // 2. Load existing auto-save if present
+    // 2. Load existing auto-save if present (filling in new iPad settings defaults for older saves)
     const saved = await saveManager.load('botw_normal_auto');
     if (saved) {
       this.save = saved;
     }
+    this.ensureSettingsDefaults();
 
-    // 3. Instantiate World, Physics/Chemistry, Architecture, Runes, Player, Enemies, NPCs, UI
+    // 3. Instantiate World, Physics/Chemistry, Terrain (linked to Physics for prop colliders!), Architecture, Runes, Player, Enemies, NPCs, UI & TouchControls
     this.weather = new WeatherClimateSystem(this.scene);
     this.weather.timeHours = this.save.inGameTimeHours;
     this.weather.daysElapsed = this.save.daysElapsed;
     this.weather.bloodMoonTimerSec = this.save.bloodMoonTimerSec;
 
-    this.terrain = new TerrainChunkManager();
+    this.physics = new PhysicsChemistryEngine(this.scene);
+    this.terrain = new TerrainChunkManager(this.physics);
     this.scene.add(this.terrain.group);
 
-    this.physics = new PhysicsChemistryEngine(this.scene);
     this.architecture = new ArchitectureBuilder(this.scene, this.physics);
     this.runes = new SheikahRuneSystem(this.scene);
     this.player = new PlayerController(this.scene);
     this.enemies = new EnemyAndBossSystem(this.scene);
     this.npcs = new NpcAndKorokSystem(this.scene);
 
+    // Seamless async hot-swap whenever heavy Tier-2 character/skeleton GLBs finish streaming in background
+    modelLoader.onAnyModelLoaded((key) => {
+      this.npcs.hotSwapModel(key);
+      this.enemies.hotSwapModel(key);
+    });
+
     this.ui = new BotWHudAndMenu({
       onStartNewGame: (mode) => {
         this.save = createDefaultSave(mode);
+        this.ensureSettingsDefaults();
         this.applyLoadedSave();
       },
       onContinueGame: () => {
@@ -213,6 +230,7 @@ export class BotWGameEngine {
         const loaded = await saveManager.load(slotId as SaveSlotId);
         if (loaded) {
           this.save = loaded;
+          this.ensureSettingsDefaults();
           this.applyLoadedSave();
           this.ui.showToast(`セーブデータ ${slotId} を読み込みました！`, 'cyan');
         }
@@ -284,20 +302,128 @@ export class BotWGameEngine {
       onTogglePause: (p) => {
         this.paused = p;
       },
+      onSettingsChanged: () => this.applyUserSettings(),
       onNotify: (t, a) => this.ui.showToast(t, a),
+    });
+
+    this.touchControls = new TouchControls({
+      onCameraLook: (dx, dy) => {
+        this.input.cameraYaw -= dx * 0.0062;
+        this.input.cameraPitch = THREE.MathUtils.clamp(this.input.cameraPitch + dy * 0.0048, -0.35, 1.05);
+      },
+      onAttack: (isChargedSpin) => {
+        if (this.runes.cameraModeActive) {
+          this.activateRune();
+        } else {
+          this.performMeleeAttack(isChargedSpin);
+        }
+      },
+      onJumpOrGlide: () => {
+        this.player.triggerJumpOrParaglider(this.save, () => audioEngine.playParagliderOpen());
+      },
+      onDodge: () => this.triggerPlayerDodge(),
+      onGuardStart: () => this.player.triggerGuardStart(),
+      onToggleZL: () => this.toggleZLTarget(),
+      onActivateRune: () => this.activateRune(),
+      onBowRelease: () => this.firePlayerArrow(),
+      onInteract: () => this.performInteract(),
+      onFirstGesture: () => audioEngine.unlock(),
     });
 
     this.applyLoadedSave();
     this.bindInputListeners();
     this.exposeAutomationBridge();
 
+    // 4. Progressive Tier-2 Background Preload: stream heavy animated NPC & Skeleton GLBs sequentially without blocking boot!
+    this.deferredPreloadPromise = modelLoader.preloadInBackground(DEFERRED_CHARACTER_MODELS, 1);
+
     this.initialized = true;
     this.lastFrameMs = performance.now();
     requestAnimationFrame((t) => this.loop(t));
   }
 
+  private ensureSettingsDefaults(): void {
+    const isTouch = isTouchCapableDevice();
+    if (!this.save.settings.touchControlsMode) {
+      this.save.settings.touchControlsMode = 'auto';
+    }
+    if (!this.save.settings.graphicsQuality) {
+      this.save.settings.graphicsQuality = isTouch ? 'medium' : 'high';
+    }
+  }
+
+  private applyUserSettings(): void {
+    this.ensureSettingsDefaults();
+    this.touchControls.setMode(this.save.settings.touchControlsMode);
+    this.applyGraphicsQuality(this.save.settings.graphicsQuality);
+  }
+
+  private applyGraphicsQuality(quality: GraphicsQuality): void {
+    this.activeQuality = quality;
+    const isTouch = isTouchCapableDevice();
+    const maxDpr = quality === 'low' ? 1.0 : isTouch ? 1.5 : quality === 'medium' ? 1.5 : 2.0;
+    const dpr = Math.min(window.devicePixelRatio || 1, maxDpr);
+
+    this.renderer.setPixelRatio(dpr);
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.composer.setPixelRatio(dpr);
+    this.composer.setSize(window.innerWidth, window.innerHeight);
+
+    // High uses full EffectComposer + Bloom; Medium (iPad default) & Low bypass Bloom for smooth frame pacing!
+    this.useComposer = quality === 'high';
+    this.renderer.shadowMap.enabled = quality !== 'low';
+    if (this.weather?.sunLight) {
+      this.weather.sunLight.castShadow = quality !== 'low';
+      const targetSize = quality === 'high' ? 2048 : 1024;
+      if (this.weather.sunLight.shadow.mapSize.width !== targetSize) {
+        this.weather.sunLight.shadow.mapSize.set(targetSize, targetSize);
+        if (this.weather.sunLight.shadow.map) {
+          this.weather.sunLight.shadow.map.dispose();
+          this.weather.sunLight.shadow.map = null;
+        }
+      }
+    }
+    this.terrain?.setGraphicsQuality(quality);
+  }
+
+  private renderFrame(): void {
+    if (this.useComposer) {
+      this.composer.render();
+    } else {
+      this.renderer.render(this.scene, this.camera);
+    }
+  }
+
+  private triggerPlayerDodge(): void {
+    if (!this.player.grounded || this.player.climbing) return;
+    const yaw = this.player.yaw;
+    const rightX = Math.cos(yaw);
+    const rightZ = -Math.sin(yaw);
+    const dirSign = this.touchControls.state.moveX < -0.25 ? -1 : this.touchControls.state.moveX > 0.25 ? 1 : 0;
+    if (dirSign !== 0) {
+      this.player.velocity.x = rightX * dirSign * 11.5;
+      this.player.velocity.z = rightZ * dirSign * 11.5;
+    } else {
+      this.player.velocity.x = -Math.sin(yaw) * 10.5;
+      this.player.velocity.z = -Math.cos(yaw) * 10.5;
+    }
+    this.player.velocity.y = 6.2;
+    this.player.grounded = false;
+    this.player.invulnTimer = Math.max(this.player.invulnTimer, 0.42);
+    // Perfect Dodge Flurry Rush window if an enemy is striking nearby!
+    const nearThreat = this.enemies.enemies.some(
+      (e) => e.alive && e.position.distanceTo(this.player.position) < 5.5 && e.attackCooldown > 1.3
+    );
+    if (nearThreat) {
+      this.player.flurryRushTimer = 2.6;
+      audioEngine.playBulletTimeEnter();
+      this.ui.showToast('⚡ ジャスト回避！ラッシュ攻撃発動！！', 'cyan');
+    }
+  }
+
   private applyLoadedSave(): void {
     this.ui.bindSave(this.save);
+    this.applyUserSettings();
     this.player.teleportTo(this.save.playerPos.x, this.save.playerPos.z, 0.25);
     this.player.yaw = this.save.playerPos.yaw;
     this.runes.bikeFuel = this.save.masterCycleFuel;
@@ -362,14 +488,15 @@ export class BotWGameEngine {
   }
 
   private bindInputListeners(): void {
-    window.addEventListener('resize', () => {
+    const handleResize = () => {
       const w = window.innerWidth;
-      const h = window.innerHeight;
+      const h = Math.max(1, window.innerHeight);
       this.camera.aspect = w / h;
       this.camera.updateProjectionMatrix();
-      this.renderer.setSize(w, h);
-      this.composer.setSize(w, h);
-    });
+      this.applyGraphicsQuality(this.activeQuality);
+    };
+    window.addEventListener('resize', handleResize);
+    window.addEventListener('orientationchange', () => window.setTimeout(handleResize, 120));
 
     window.addEventListener('keydown', (e) => {
       if (e.code === 'Escape') {
@@ -626,6 +753,13 @@ export class BotWGameEngine {
   }
 
   private captureCompendiumPhoto(): void {
+    // 1-frame synchronous render capture works cleanly with preserveDrawingBuffer: false (saves GPU bandwidth on iPad!)
+    this.renderFrame();
+    try {
+      this.lastCompendiumSnapshotUrl = this.renderer.domElement.toDataURL('image/jpeg', 0.82);
+    } catch {
+      this.lastCompendiumSnapshotUrl = null;
+    }
     const target = this.detectCameraTarget();
     audioEngine.playUiConfirm();
     if (target) {
@@ -684,14 +818,20 @@ export class BotWGameEngine {
     const baseAtk = wep ? (wep.isMasterSword && this.save.masterSwordAwakened ? 60 : wep.attack) : 10;
     const fwd = this.player.getForwardDirection();
 
-    // Flameblade / Fire weapon ignites dry grass right in front of Link -> Fire Updraft!
+    // Flameblade / Torch / Fire weapon ignites world torches & dry grass right in front of Link -> Fire Updraft!
     if (wep?.element === 'Fire') {
       const igniteSpot = this.player.position.clone().addScaledVector(fwd, 2.2);
       igniteSpot.y = getTerrainHeight(igniteSpot.x, igniteSpot.z);
       const isRaining = this.climate?.weather === 'rain' || this.climate?.weather === 'thunderstorm';
+      const litTorches = this.architecture.igniteTorchesNear(igniteSpot, 4.2);
+      if (litTorches > 0) {
+        this.ui.showToast('🔥 燭台に火を灯した！', 'amber');
+      }
       if (!isRaining) {
         this.physics.spawnFireUpdraft(igniteSpot, 4.4, 24, 26);
-        this.ui.showToast('🔥 炎の剣で草原に着火！上昇気流が発生！', 'amber');
+        if (litTorches === 0) {
+          this.ui.showToast('🔥 炎の武器で草原に着火！上昇気流が発生！', 'amber');
+        }
       }
     }
 
@@ -854,6 +994,16 @@ export class BotWGameEngine {
         return { kind: 'chest', chest, label: `${chest.labelJa} を開ける` };
       }
     }
+    for (const drop of this.architecture.weaponDrops) {
+      if (!drop.collected && drop.position.distanceTo(p) < 3.4) {
+        return { kind: 'weaponDrop', drop, label: `${drop.nameJa} を拾う` };
+      }
+    }
+    for (const torch of this.architecture.torches) {
+      if (!torch.lit && torch.position.distanceTo(p) < 3.5) {
+        return { kind: 'torch', torch, label: `${torch.nameJa} に火を灯す` };
+      }
+    }
     for (const pot of this.architecture.cookingPots) {
       if (pot.position.distanceTo(p) < 3.8) {
         return { kind: 'pot', label: `${pot.nameJa} で料理する` };
@@ -910,6 +1060,21 @@ export class BotWGameEngine {
       else this.save.materials[target.chest.rewardId] = (this.save.materials[target.chest.rewardId] ?? 0) + target.chest.rewardAmount;
       audioEngine.playChestFanfare();
       this.ui.showToast(`🎁 宝箱を開けた！ ${target.chest.rewardTextJa} を手に入れた！`, 'amber');
+    } else if (target.kind === 'weaponDrop') {
+      this.architecture.collectWeaponDrop(target.drop);
+      const template = WEAPONS.find((w) => w.id === target.drop.weaponId);
+      if (template && !this.save.weapons.some((w) => w.id === template.id)) {
+        this.save.weapons.push({ ...template, currentDurability: template.durability });
+      }
+      if (template) {
+        this.save.equippedWeaponId = template.id;
+      }
+      audioEngine.playChestFanfare();
+      this.ui.showToast(`⚔ ${target.drop.nameJa} を手に入れた！`, 'amber');
+    } else if (target.kind === 'torch') {
+      this.architecture.igniteTorch(target.torch);
+      audioEngine.playUiConfirm();
+      this.ui.showToast(`🔥 ${target.torch.nameJa} に火を灯した！（周囲が暖かくなった）`, 'amber');
     } else if (target.kind === 'pot') {
       this.ui.openCookingModal(this.climate.isBloodMoonCookWindow);
     } else if (target.kind === 'korok') {
@@ -980,9 +1145,12 @@ export class BotWGameEngine {
       }
 
       if (hit) {
-        if (a.type === 'fire' && !isRaining) {
-          this.physics.spawnFireUpdraft(new THREE.Vector3(a.position.x, gy, a.position.z), 4.6, 25, 28);
-          this.ui.showToast('🔥 炎の矢が草原に着火！上昇気流が発生！', 'amber');
+        if (a.type === 'fire') {
+          this.architecture.igniteTorchesNear(a.position, 4.5);
+          if (!isRaining) {
+            this.physics.spawnFireUpdraft(new THREE.Vector3(a.position.x, gy, a.position.z), 4.6, 25, 28);
+            this.ui.showToast('🔥 炎の矢が草原に着火！上昇気流が発生！', 'amber');
+          }
         } else if (a.type === 'bomb') {
           this.physics.triggerExplosion(a.position, 6.5, 22, isRaining);
           audioEngine.playBombExplode();
@@ -1032,10 +1200,17 @@ export class BotWGameEngine {
     const groundCam = getTerrainHeight(camX, camZ) + 0.85;
     if (camY < groundCam) camY = groundCam;
 
-    this.camera.position.set(camX, camY, camZ);
+    // Architectural 3D wall-clip prevention (glides camera forward when backing up near Temple/Castle walls!)
+    this.camLookScratch.set(p.x, targetY, p.z);
+    this.camDesiredScratch.set(camX, camY, camZ);
+    this.physics.clampCameraPosition(this.camLookScratch, this.camDesiredScratch, this.camClampedScratch);
+    const clampedGround = getTerrainHeight(this.camClampedScratch.x, this.camClampedScratch.z) + 0.72;
+    if (this.camClampedScratch.y < clampedGround) this.camClampedScratch.y = clampedGround;
+
+    this.camera.position.copy(this.camClampedScratch);
     const lookTarget = this.lockedEnemy
       ? this.lockedEnemy.position.clone().add(new THREE.Vector3(0, 1.3, 0))
-      : new THREE.Vector3(p.x, targetY, p.z);
+      : this.camLookScratch;
     this.camera.lookAt(lookTarget);
   }
 
@@ -1047,6 +1222,9 @@ export class BotWGameEngine {
     this.lastFrameMs = nowMs;
     this.fps = THREE.MathUtils.lerp(this.fps, 1 / rawDt, 0.08);
 
+    // Synchronize TouchControls visibility with Title / Sheikah Slate / Dialogue modal blocking state
+    this.touchControls.setBlocked(this.ui.isBlockingInput());
+
     const armor = computeArmorSummary(this.save.equippedArmor, this.save.armorStars);
 
     if (!this.paused) {
@@ -1057,8 +1235,12 @@ export class BotWGameEngine {
 
       // 1. Weather, Climate, Sky Dome & Blood Moon
       const activeWep = this.save.weapons.find((w) => w.id === this.save.equippedWeaponId);
+      const nearFire =
+        this.physics.isNearFire(this.player.position) ||
+        this.architecture.isNearLitTorch(this.player.position) ||
+        (activeWep?.element === 'Fire' && this.player.weaponDrawn);
       this.climate = this.weather.update(worldDt, this.player.position, {
-        nearFire: this.physics.isNearFire(this.player.position),
+        nearFire,
         holdingIceWeapon: activeWep?.element === 'Ice',
         wearingMetal: activeWep?.material === 'Metal',
         onBloodMoonMidnight: () => {
@@ -1070,11 +1252,20 @@ export class BotWGameEngine {
       const isRaining = this.climate.weather === 'rain' || this.climate.weather === 'thunderstorm';
       const isNight = this.climate.timeHours >= 20 || this.climate.timeHours < 5;
 
-      // 2. Terrain LOD Streaming + Wind Grass + Trees/Rocks
+      // 2. Terrain LOD Streaming + Wind Grass + Trees/Rocks + Prop Colliders
       this.terrain.update(this.player.position.x, this.player.position.z);
 
-      // 3. Player Controller & Movement Physics (runs at responsive real-time even in Bullet-Time!)
-      const { moveSpeed } = this.player.update(rawDt, this.input, this.save, armor, this.physics, this.runes, {
+      // 3. Player Controller & Substepped CCD Movement Physics (merges keyboard + multi-touch analog stick & holds!)
+      const tc = this.touchControls.state;
+      const effectiveInput: InputState = {
+        ...this.input,
+        moveX: tc.moveX,
+        moveY: tc.moveY,
+        sprint: this.input.sprint || tc.sprint,
+        guard: this.input.guard || tc.guard,
+        aimBow: this.input.aimBow || tc.aimBow,
+      };
+      const { moveSpeed } = this.player.update(rawDt, effectiveInput, this.save, armor, this.physics, this.runes, {
         isRaining,
         isNight,
         lockedTargetPos: this.lockedEnemy?.alive ? this.lockedEnemy.position : null,
@@ -1164,7 +1355,6 @@ export class BotWGameEngine {
       this.revivalRandomTimer += rawDt;
       if (this.revivalRandomTimer >= 60) {
         this.revivalRandomTimer = 0;
-        // 10x8 1000m grid RevivalRandom check + Midnight Shop Restock (<50 arrows rule)
         if (Math.random() < 0.01) {
           this.save.materials.apple = (this.save.materials.apple ?? 0) + 1;
         }
@@ -1198,8 +1388,10 @@ export class BotWGameEngine {
         inBossFight: !!combatStatus.activeBoss,
       });
 
-      // 11. Nearest Interactable + ZL Reticle + HUD Projection
+      // 11. Nearest Interactable + ZL Reticle + Touch Interact Sync + HUD Projection
       this.nearestInteract = this.findNearestInteractable();
+      this.touchControls.setInteractLabel(this.nearestInteract?.label ?? null);
+      this.touchControls.setZLLocked(!!this.lockedEnemy?.alive);
       if (this.lockedEnemy?.alive) {
         this.lockReticle.visible = true;
         this.lockReticle.position.copy(this.lockedEnemy.position).add(new THREE.Vector3(0, 1.8, 0));
@@ -1268,7 +1460,7 @@ export class BotWGameEngine {
       }
     }
 
-    this.composer.render();
+    this.renderFrame();
   }
 
   /**
@@ -1280,6 +1472,53 @@ export class BotWGameEngine {
       startPlayDirectly: () => {
         this.ui.dismissTitleDirectly();
         this.paused = false;
+        this.touchControls.setBlocked(false);
+      },
+      waitForAllModels: async () => {
+        await this.deferredPreloadPromise;
+        return {
+          allKeys: ALL_MODEL_KEYS,
+          loadedKeys: modelLoader.getLoadedKeys(),
+          instantiatedKeys: modelLoader.getInstantiatedKeys(),
+        };
+      },
+      getModelStats: () => ({
+        allKeys: ALL_MODEL_KEYS,
+        loadedKeys: modelLoader.getLoadedKeys(),
+        instantiatedKeys: modelLoader.getInstantiatedKeys(),
+      }),
+      getPhysicsStats: () => ({
+        staticColliders: this.physics.staticColliders.length,
+        propColliders: this.physics.propColliderCount,
+        climbing: this.player.climbing,
+        climbingWall: this.player.climbingWall,
+      }),
+      getTerrainDiagnostics: () => this.terrain.getChunkDiagnostics(),
+      getGraphicsState: () => ({
+        quality: this.activeQuality,
+        useComposer: this.useComposer,
+        dpr: this.renderer.getPixelRatio(),
+        preserveDrawingBuffer: this.renderer.getContextAttributes()?.preserveDrawingBuffer ?? false,
+        lastCompendiumSnapshotLength: this.lastCompendiumSnapshotUrl?.length ?? 0,
+      }),
+      getTouchState: () => ({
+        visible: this.touchControls.isVisible(),
+        mode: this.touchControls.getMode(),
+        moveX: this.touchControls.state.moveX,
+        moveY: this.touchControls.state.moveY,
+        sprint: this.touchControls.state.sprint,
+        guard: this.touchControls.state.guard,
+        aimBow: this.touchControls.state.aimBow,
+        cameraYaw: this.input.cameraYaw,
+        cameraPitch: this.input.cameraPitch,
+      }),
+      setTouchMode: (m: 'auto' | 'always' | 'hidden') => {
+        this.save.settings.touchControlsMode = m;
+        this.applyUserSettings();
+      },
+      setGraphicsQuality: (q: GraphicsQuality) => {
+        this.save.settings.graphicsQuality = q;
+        this.applyUserSettings();
       },
       setCameraOverride: (pos: [number, number, number], lookAt: [number, number, number]) => {
         this.cameraOverride = { pos: new THREE.Vector3(...pos), lookAt: new THREE.Vector3(...lookAt) };
@@ -1319,6 +1558,11 @@ export class BotWGameEngine {
         this.player.syncVisuals(this.save);
         return computeArmorSummary(this.save.equippedArmor, this.save.armorStars);
       },
+      equipWeapon: (weaponId: string, drawn = true) => {
+        this.save.equippedWeaponId = weaponId;
+        this.player.weaponDrawn = drawn;
+        this.player.syncVisuals(this.save);
+      },
       interactNearest: () => this.performInteract(),
       openSlate: (tab: 'inventory' | 'map' | 'adventure' | 'compendium' | 'system') => this.ui.openSlate(tab),
       closeAllModals: () => {
@@ -1339,6 +1583,8 @@ export class BotWGameEngine {
         towersCount: this.architecture.towers.length,
         shrinesCount: this.architecture.shrines.length,
         chestsCount: this.architecture.chests.length,
+        torchesCount: this.architecture.torches.length,
+        weaponDropsCount: this.architecture.weaponDrops.length,
         npcsCount: this.npcs.npcs.length,
         enemiesCount: this.enemies.enemies.length,
         koroksCount: this.npcs.koroks.length,

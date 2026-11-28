@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { createBotWToonMaterial } from './BotWToonShader';
+import { modelLoader } from './ModelLoader';
 import { textureBank } from './ProceduralTextures';
 import type { ArmorPiece } from '../types/botw';
 
@@ -28,6 +29,8 @@ export interface HeroEquipmentVisuals {
   headDyeHex?: string | null;
   bodyDyeHex?: string | null;
   legsDyeHex?: string | null;
+  weaponId?: string;
+  shieldId?: string;
   weaponDrawn: boolean;
   isMasterSword: boolean;
   weaponColor: string;
@@ -38,12 +41,36 @@ export interface HeroEquipmentVisuals {
   holdingTorchFire: boolean;
 }
 
+interface PoseTargets {
+  pelvisY: number;
+  pelvisRot: THREE.Euler;
+  torsoRot: THREE.Euler;
+  headRot: THREE.Euler;
+  leftArm: THREE.Euler;
+  rightArm: THREE.Euler;
+  leftForearm: THREE.Euler;
+  rightForearm: THREE.Euler;
+  leftLeg: THREE.Euler;
+  rightLeg: THREE.Euler;
+  leftShin: THREE.Euler;
+  rightShin: THREE.Euler;
+}
+
+function lerpEuler(target: THREE.Euler, goal: THREE.Euler, alpha: number): void {
+  target.x = THREE.MathUtils.lerp(target.x, goal.x, alpha);
+  target.y = THREE.MathUtils.lerp(target.y, goal.y, alpha);
+  target.z = THREE.MathUtils.lerp(target.z, goal.z, alpha);
+}
+
 /**
- * High-detail 6.5-head stylized sculpted Link model (1.60m tall, bottom strictly grounded at y = 0).
- * Uses LatheGeometry, tapered curved capsules, sculpted hair locks, pointed Hylian ears,
- * expressive painted anime face texture, dynamic armor/dye swapping (including naked/underwear state),
- * hip-mounted glowing Sheikah Slate, back-sheathed/hand-drawn Master Sword & Hylian Shield,
- * and deployable BotW Paraglider.
+ * High-detail 6.5-head stylized sculpted BotW Link model (1.60m tall, bottom strictly grounded at y = 0).
+ * Features:
+ * - Distortion-free frontal orthographic-blended UV head + 1024x1024 painted BotW anime face
+ * - Layered TubeGeometry sculpted bangs, sideburns, ponytail & flowing blue ribbon tails
+ * - 1024x1024 Champion's Tunic Master Sword chest embroidery + separate matching sleeve weave
+ * - Hip-mounted glowing Sheikah Slate with handle loop, belt pouches & cuffed boots
+ * - Sculpted Master Sword & Hylian Shield + integrated `sword_shield.glb` & `torch.glb` gear
+ * - Smooth exponential joint interpolation (zero pose snapping across all 17 HeroAnimStates)
  */
 export class LinkCharacterModel {
   public readonly root = new THREE.Group();
@@ -67,6 +94,8 @@ export class LinkCharacterModel {
   private rightSleeveMesh!: THREE.Mesh;
   private leftShoulderMesh!: THREE.Mesh;
   private rightShoulderMesh!: THREE.Mesh;
+  private leftCuffMesh!: THREE.Mesh;
+  private rightCuffMesh!: THREE.Mesh;
   private leftThighMesh!: THREE.Mesh;
   private rightThighMesh!: THREE.Mesh;
   private leftBootMesh!: THREE.Mesh;
@@ -75,9 +104,16 @@ export class LinkCharacterModel {
   private rightFootMesh!: THREE.Mesh;
   private headArmorGroup = new THREE.Group();
   private capeMesh!: THREE.Mesh;
-  private sheikahSlateMesh!: THREE.Mesh;
+  private ponytailGroup = new THREE.Group();
+  private sheikahSlateGroup = new THREE.Group();
   private backGearGroup = new THREE.Group();
+  private backSwordGroup!: THREE.Group;
+  private backShieldGroup!: THREE.Group;
+  private backGlbCrestGroup = new THREE.Group();
   private handSwordGroup = new THREE.Group();
+  private handTorchGroup = new THREE.Group();
+  private torchFlameMesh!: THREE.Mesh;
+  private torchLight!: THREE.PointLight;
   private handShieldGroup = new THREE.Group();
   private handBowGroup = new THREE.Group();
   private paragliderGroup = new THREE.Group();
@@ -88,6 +124,7 @@ export class LinkCharacterModel {
   private skinMat: THREE.MeshToonMaterial;
   private hairMat: THREE.MeshToonMaterial;
   private tunicMat: THREE.MeshToonMaterial;
+  private sleeveMat: THREE.MeshToonMaterial;
   private pantsMat: THREE.MeshToonMaterial;
   private bootMat: THREE.MeshToonMaterial;
   private headArmorMat: THREE.MeshToonMaterial;
@@ -98,21 +135,29 @@ export class LinkCharacterModel {
   private attackSwingTimer = 0;
   private attackComboIndex = 0;
   private lastVisualSignature = '';
+  private poseGoal: PoseTargets;
 
   constructor() {
     this.root.name = 'LinkHeroRig';
 
     const championFab = textureBank.getFabricTexture('#2a84b8', '#e6ca7a', 'champion');
-    const leatherTex = textureBank.getWoodPlankTexture('#624028');
+    const sleeveFab = textureBank.getFabricTexture('#2a84b8', '#e6ca7a', 'weave');
+    const leatherTex = textureBank.getWoodPlankTexture('#8c5d3c');
     const pantsFab = textureBank.getFabricTexture('#dcd2b8', '#b0a282', 'weave');
 
-    this.skinMat = createBotWToonMaterial({ color: '#f6d5b2', rimStrength: 0.28, rimTint: '#fff0dc', warmSkinShadow: true });
+    this.skinMat = createBotWToonMaterial({ color: '#f6d5b2', rimStrength: 0.26, rimTint: '#fff0dc', warmSkinShadow: true });
     this.hairMat = createBotWToonMaterial({ color: '#dfb854', rimStrength: 0.42, rimTint: '#fff4bc', warmSkinShadow: true });
     this.tunicMat = createBotWToonMaterial({
       color: '#ffffff',
       map: championFab.map,
       normalMap: championFab.normalMap,
-      rimStrength: 0.34,
+      rimStrength: 0.32,
+    });
+    this.sleeveMat = createBotWToonMaterial({
+      color: '#ffffff',
+      map: sleeveFab.map,
+      normalMap: sleeveFab.normalMap,
+      rimStrength: 0.30,
     });
     this.pantsMat = createBotWToonMaterial({
       color: '#ffffff',
@@ -121,10 +166,10 @@ export class LinkCharacterModel {
       rimStrength: 0.24,
     });
     this.bootMat = createBotWToonMaterial({
-      color: '#6b452a',
+      color: '#b88b68',
       map: leatherTex.map,
       normalMap: leatherTex.normalMap,
-      rimStrength: 0.26,
+      rimStrength: 0.28,
     });
     this.headArmorMat = createBotWToonMaterial({
       color: '#345e3d',
@@ -144,6 +189,21 @@ export class LinkCharacterModel {
       rimTint: '#9ce6ff',
     });
 
+    this.poseGoal = {
+      pelvisY: 0.82,
+      pelvisRot: new THREE.Euler(),
+      torsoRot: new THREE.Euler(),
+      headRot: new THREE.Euler(),
+      leftArm: new THREE.Euler(0, 0, 0.14),
+      rightArm: new THREE.Euler(0, 0, -0.14),
+      leftForearm: new THREE.Euler(-0.18, 0, 0),
+      rightForearm: new THREE.Euler(-0.18, 0, 0),
+      leftLeg: new THREE.Euler(),
+      rightLeg: new THREE.Euler(),
+      leftShin: new THREE.Euler(),
+      rightShin: new THREE.Euler(),
+    };
+
     this.buildBodyHierarchy();
     this.buildHeadAndHair();
     this.buildWeaponsAndParaglider();
@@ -151,11 +211,11 @@ export class LinkCharacterModel {
   }
 
   private buildBodyHierarchy(): void {
-    // Pelvis at hip height ~0.82m (total hero height = 1.60m, 6.5-head proportions!)
+    // Pelvis at hip height ~0.82m (total hero height = 1.60m, authentic 6.5-head BotW proportions)
     this.pelvis.position.set(0, 0.82, 0);
     this.root.add(this.pelvis);
 
-    const pelvisGeo = new THREE.CapsuleGeometry(0.122, 0.09, 8, 14);
+    const pelvisGeo = new THREE.CapsuleGeometry(0.122, 0.09, 8, 16);
     pelvisGeo.scale(1.16, 0.85, 0.90);
     const pelvisMesh = new THREE.Mesh(pelvisGeo, this.pantsMat);
     this.pelvis.add(pelvisMesh);
@@ -163,121 +223,172 @@ export class LinkCharacterModel {
     this.torso.position.set(0, 0.06, 0);
     this.pelvis.add(this.torso);
 
-    // Fuller natural athletic hero torso via LatheGeometry
+    // Fuller athletic hero torso via LatheGeometry with phiStart = PI so u=0.5 faces +Z (front chest!)
     const torsoPoints = [
       new THREE.Vector2(0.01, 0.0),
       new THREE.Vector2(0.122, 0.02),
-      new THREE.Vector2(0.120, 0.14),
-      new THREE.Vector2(0.152, 0.30),
-      new THREE.Vector2(0.162, 0.40),
-      new THREE.Vector2(0.102, 0.46),
-      new THREE.Vector2(0.056, 0.48),
+      new THREE.Vector2(0.118, 0.14),
+      new THREE.Vector2(0.150, 0.28),
+      new THREE.Vector2(0.164, 0.39),
+      new THREE.Vector2(0.118, 0.45),
+      new THREE.Vector2(0.064, 0.48),
     ];
-    const torsoGeo = new THREE.LatheGeometry(torsoPoints, 18);
+    const torsoGeo = new THREE.LatheGeometry(torsoPoints, 24, Math.PI, Math.PI * 2);
     torsoGeo.scale(1.06, 1.0, 0.84);
     this.torsoMesh = new THREE.Mesh(torsoGeo, this.tunicMat);
     this.torso.add(this.torsoMesh);
 
-    // Flowing split tunic skirt hem
+    // Flowing split tunic skirt hem (remap V to [0.0, 0.22] so bottom diamond trim appears cleanly without repeating chest emblem!)
     const skirtPoints = [
-      new THREE.Vector2(0.165, -0.25),
-      new THREE.Vector2(0.148, -0.10),
-      new THREE.Vector2(0.128, 0.04),
+      new THREE.Vector2(0.172, -0.26),
+      new THREE.Vector2(0.156, -0.14),
+      new THREE.Vector2(0.140, -0.04),
+      new THREE.Vector2(0.126, 0.04),
     ];
-    const skirtGeo = new THREE.LatheGeometry(skirtPoints, 18);
+    const skirtGeo = new THREE.LatheGeometry(skirtPoints, 24, Math.PI, Math.PI * 2);
     skirtGeo.scale(1.12, 1.0, 0.88);
+    const skirtUv = skirtGeo.attributes.uv;
+    for (let i = 0; i < skirtUv.count; i++) {
+      skirtUv.setY(i, skirtUv.getY(i) * 0.22);
+    }
+    skirtUv.needsUpdate = true;
     this.skirtMesh = new THREE.Mesh(skirtGeo, this.tunicMat);
     this.skirtMesh.position.y = 0.04;
     this.torso.add(this.skirtMesh);
 
-    // Standing tunic collar
-    const collarGeo = new THREE.TorusGeometry(0.088, 0.026, 8, 16);
+    // Standing tunic collar + undershirt ivory V-neck trim
+    const collarGeo = new THREE.TorusGeometry(0.088, 0.024, 10, 20);
     collarGeo.rotateX(Math.PI / 2);
-    this.collarMesh = new THREE.Mesh(collarGeo, this.tunicMat);
-    this.collarMesh.position.set(0, 0.46, 0.01);
+    this.collarMesh = new THREE.Mesh(collarGeo, this.sleeveMat);
+    this.collarMesh.position.set(0, 0.462, 0.008);
     this.torso.add(this.collarMesh);
 
-    // Heroic Leather Belt + Brass Buckle + Cross-Chest Baldric Strap
-    const beltMat = createBotWToonMaterial({ color: '#5b3a22', rimStrength: 0.22 });
-    const brassMat = createBotWToonMaterial({ color: '#e6c25a', metalHighlight: true });
-    const belt = new THREE.Mesh(new THREE.TorusGeometry(0.132, 0.022, 8, 18), beltMat);
+    const innerShirtMat = createBotWToonMaterial({ color: '#ede4cc', rimStrength: 0.2 });
+    const vNeck = new THREE.Mesh(new THREE.ConeGeometry(0.056, 0.08, 4), innerShirtMat);
+    vNeck.rotation.z = Math.PI;
+    vNeck.position.set(0, 0.445, 0.095);
+    vNeck.scale.set(1.0, 1.0, 0.35);
+    this.torso.add(vNeck);
+
+    // Heroic Double-Strapped Leather Belt + Brass Buckle + Hip Pouch + Cross-Chest Baldric Strap
+    const beltMat = createBotWToonMaterial({ color: '#b48258', map: textureBank.getWoodPlankTexture('#8c5d3c').map, rimStrength: 0.28 });
+    const brassMat = createBotWToonMaterial({ color: '#ecc85c', metalHighlight: true, rimStrength: 0.4 });
+    const belt = new THREE.Mesh(new THREE.TorusGeometry(0.132, 0.022, 8, 22), beltMat);
     belt.rotation.x = Math.PI / 2;
     belt.scale.set(1.10, 0.88, 1.0);
-    belt.position.y = 0.05;
+    belt.position.y = 0.052;
     this.torso.add(belt);
 
-    const buckle = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.048, 0.026), brassMat);
-    buckle.position.set(0, 0.05, 0.124);
+    const subBelt = new THREE.Mesh(new THREE.TorusGeometry(0.136, 0.013, 6, 20), beltMat);
+    subBelt.rotation.set(Math.PI / 2 + 0.14, 0, 0.10);
+    subBelt.scale.set(1.11, 0.89, 1.0);
+    subBelt.position.y = 0.018;
+    this.torso.add(subBelt);
+
+    const buckle = new THREE.Mesh(new THREE.BoxGeometry(0.056, 0.048, 0.028), brassMat);
+    buckle.position.set(0, 0.052, 0.124);
     this.torso.add(buckle);
 
-    const strap = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.46, 8), beltMat);
+    const hipPouch = new THREE.Mesh(new THREE.BoxGeometry(0.068, 0.082, 0.042), beltMat);
+    hipPouch.position.set(0.142, -0.01, 0.058);
+    hipPouch.rotation.set(0.08, -0.45, -0.1);
+    const pouchClasp = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.022, 0.016), brassMat);
+    pouchClasp.position.set(0, 0.006, 0.022);
+    hipPouch.add(pouchClasp);
+    this.torso.add(hipPouch);
+
+    const strap = new THREE.Mesh(new THREE.CylinderGeometry(0.020, 0.020, 0.46, 10), beltMat);
     strap.position.set(0, 0.25, 0.118);
     strap.rotation.z = -0.58;
     strap.scale.set(1.6, 1, 0.45);
-    this.torso.add(strap);
+    const strapBuckle = new THREE.Mesh(new THREE.BoxGeometry(0.046, 0.036, 0.022), brassMat);
+    strapBuckle.position.set(0.072, 0.34, 0.125);
+    strapBuckle.rotation.z = -0.58;
+    this.torso.add(strap, strapBuckle);
 
-    // Hip-mounted glowing Sheikah Slate!
+    // Hip-mounted glowing Sheikah Slate with authentic frame, eye lens & top handle ring!
     const sheikahTex = textureBank.getSheikahStoneTexture();
     const slateMat = createBotWToonMaterial({
       color: '#465060',
       map: sheikahTex.map,
       emissive: '#22ddff',
       emissiveMap: sheikahTex.emissiveMap,
-      emissiveIntensity: 1.4,
+      emissiveIntensity: 1.5,
       sheikahCircuit: true,
       sheikahActivated: 1.0,
       sheikahHeight: 0.2,
     });
-    this.sheikahSlateMesh = new THREE.Mesh(new THREE.BoxGeometry(0.095, 0.145, 0.026), slateMat);
-    this.sheikahSlateMesh.position.set(-0.165, -0.02, 0.02);
-    this.sheikahSlateMesh.rotation.set(0.1, 0.35, 0.15);
-    this.torso.add(this.sheikahSlateMesh);
+    const slateBody = new THREE.Mesh(new THREE.BoxGeometry(0.094, 0.142, 0.024), slateMat);
+    const slateHandle = new THREE.Mesh(new THREE.TorusGeometry(0.026, 0.008, 6, 12, Math.PI), brassMat);
+    slateHandle.position.set(0, 0.072, 0);
+    const slateEye = new THREE.Mesh(
+      new THREE.CircleGeometry(0.022, 12),
+      new THREE.MeshBasicMaterial({ color: '#42ecff' })
+    );
+    slateEye.position.set(0, 0.008, 0.014);
+    this.sheikahSlateGroup.add(slateBody, slateHandle, slateEye);
+    this.sheikahSlateGroup.position.set(-0.165, -0.025, 0.025);
+    this.sheikahSlateGroup.rotation.set(0.1, 0.38, 0.15);
+    this.torso.add(this.sheikahSlateGroup);
 
     // Optional Hood/Cloak Cape
-    const capeGeo = new THREE.PlaneGeometry(0.44, 0.74, 6, 8);
+    const capeGeo = new THREE.PlaneGeometry(0.46, 0.78, 8, 10);
     const cp = capeGeo.attributes.position;
     for (let i = 0; i < cp.count; i++) {
       const y = cp.getY(i);
-      const frac = 0.5 - y / 0.74;
-      cp.setX(i, cp.getX(i) * (0.65 + frac * 0.65));
-      cp.setZ(i, -frac * 0.14 - Math.sin(frac * Math.PI) * 0.04);
+      const frac = 0.5 - y / 0.78;
+      cp.setX(i, cp.getX(i) * (0.65 + frac * 0.68));
+      cp.setZ(i, -frac * 0.14 - Math.sin(frac * Math.PI) * 0.045);
     }
     capeGeo.computeVertexNormals();
     this.capeMesh = new THREE.Mesh(capeGeo, this.capeMat);
-    this.capeMesh.position.set(0, 0.12, -0.15);
+    this.capeMesh.position.set(0, 0.12, -0.155);
     this.capeMesh.visible = false;
     this.torso.add(this.capeMesh);
 
     // Neck
-    const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.048, 0.058, 0.095, 10), this.skinMat);
+    const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.046, 0.056, 0.095, 12), this.skinMat);
     neck.position.set(0, 0.50, 0);
     this.torso.add(neck);
 
-    // Seamless Arms (Shoulder -> Upper Arm -> Elbow -> Forearm Bracer -> Hand)
+    // Seamless Arms (Shoulder -> Upper Arm Sleeve -> Elbow Cuff -> Leather Bracer -> Hand)
     const buildArm = (side: -1 | 1, armGrp: THREE.Group, forearmGrp: THREE.Group) => {
       armGrp.position.set(side * 0.205, 0.405, 0);
       this.torso.add(armGrp);
 
-      const shoulder = new THREE.Mesh(new THREE.SphereGeometry(0.066, 12, 10), this.tunicMat);
+      const shoulder = new THREE.Mesh(new THREE.SphereGeometry(0.068, 14, 12), this.sleeveMat);
+      shoulder.scale.set(1.06, 0.96, 1.0);
       armGrp.add(shoulder);
 
-      const upperArm = new THREE.Mesh(new THREE.CapsuleGeometry(0.048, 0.18, 8, 12), this.tunicMat);
+      const upperArm = new THREE.Mesh(new THREE.CapsuleGeometry(0.048, 0.18, 8, 14), this.sleeveMat);
       upperArm.position.y = -0.12;
       armGrp.add(upperArm);
+
+      // Folded sleeve cuff ring above elbow
+      const cuff = new THREE.Mesh(new THREE.TorusGeometry(0.049, 0.012, 8, 14), innerShirtMat);
+      cuff.rotation.x = Math.PI / 2;
+      cuff.position.y = -0.21;
+      armGrp.add(cuff);
 
       forearmGrp.position.set(0, -0.23, 0);
       armGrp.add(forearmGrp);
 
-      const forearm = new THREE.Mesh(new THREE.CapsuleGeometry(0.042, 0.17, 8, 12), this.bootMat);
+      const forearm = new THREE.Mesh(new THREE.CapsuleGeometry(0.042, 0.17, 8, 14), this.bootMat);
       forearm.position.y = -0.10;
       forearmGrp.add(forearm);
 
-      const hand = new THREE.Mesh(new THREE.SphereGeometry(0.042, 10, 8), this.skinMat);
-      hand.scale.set(0.92, 1.12, 0.78);
+      // Leather bracer strap & brass stud
+      const bracerRing = new THREE.Mesh(new THREE.TorusGeometry(0.044, 0.008, 6, 12), beltMat);
+      bracerRing.rotation.x = Math.PI / 2;
+      bracerRing.position.y = -0.165;
+      forearmGrp.add(bracerRing);
+
+      const hand = new THREE.Mesh(new THREE.SphereGeometry(0.041, 12, 10), this.skinMat);
+      hand.scale.set(0.92, 1.14, 0.76);
       hand.position.y = -0.22;
       forearmGrp.add(hand);
 
-      return { upperArm, shoulder };
+      return { upperArm, shoulder, cuff };
     };
 
     const lArmParts = buildArm(-1, this.leftArm, this.leftForearm);
@@ -286,33 +397,40 @@ export class LinkCharacterModel {
     this.rightSleeveMesh = rArmParts.upperArm;
     this.leftShoulderMesh = lArmParts.shoulder;
     this.rightShoulderMesh = rArmParts.shoulder;
+    this.leftCuffMesh = lArmParts.cuff;
+    this.rightCuffMesh = rArmParts.cuff;
 
-    // Seamless Legs (Hip -> Thigh -> Knee overlap -> Cuffed Leather Boot grounded at y = 0!)
+    // Seamless Legs (Hip -> Thigh -> Knee overlap -> Sculpted Cuffed Leather Boot grounded at y = 0!)
     const buildLeg = (side: -1 | 1, legGrp: THREE.Group, shinGrp: THREE.Group) => {
       legGrp.position.set(side * 0.095, -0.01, 0);
       this.pelvis.add(legGrp);
 
-      const thigh = new THREE.Mesh(new THREE.CapsuleGeometry(0.068, 0.30, 8, 12), this.pantsMat);
+      const thigh = new THREE.Mesh(new THREE.CapsuleGeometry(0.068, 0.30, 8, 14), this.pantsMat);
       thigh.position.y = -0.18;
       legGrp.add(thigh);
 
       shinGrp.position.set(0, -0.36, 0);
       legGrp.add(shinGrp);
 
-      // Sculpted overlapping cuffed leather boot (extends slightly above shin pivot so ZERO seam gap!)
+      // Sculpted overlapping cuffed leather boot with folded cuff & boot strap
       const bootPoints = [
         new THREE.Vector2(0.050, -0.45),
         new THREE.Vector2(0.056, -0.32),
         new THREE.Vector2(0.060, -0.14),
-        new THREE.Vector2(0.078, -0.02),
-        new THREE.Vector2(0.074, 0.04),
-        new THREE.Vector2(0.056, 0.04),
+        new THREE.Vector2(0.080, -0.02),
+        new THREE.Vector2(0.076, 0.045),
+        new THREE.Vector2(0.056, 0.045),
       ];
-      const bootGeo = new THREE.LatheGeometry(bootPoints, 14);
+      const bootGeo = new THREE.LatheGeometry(bootPoints, 16);
       const boot = new THREE.Mesh(bootGeo, this.bootMat);
       shinGrp.add(boot);
 
-      const foot = new THREE.Mesh(new THREE.CapsuleGeometry(0.048, 0.105, 6, 10), this.bootMat);
+      const bootStrap = new THREE.Mesh(new THREE.TorusGeometry(0.064, 0.009, 6, 14), beltMat);
+      bootStrap.rotation.x = Math.PI / 2;
+      bootStrap.position.y = -0.12;
+      shinGrp.add(bootStrap);
+
+      const foot = new THREE.Mesh(new THREE.CapsuleGeometry(0.048, 0.105, 8, 12), this.bootMat);
       foot.rotation.x = Math.PI / 2;
       foot.position.set(0, -0.405, 0.058);
       shinGrp.add(foot);
@@ -334,128 +452,202 @@ export class LinkCharacterModel {
     this.headGroup.position.set(0, 0.56, 0.01);
     this.torso.add(this.headGroup);
 
-    // Sculpted anime head with graceful chin taper + front-calibrated painted BotW eyes/brows/mouth!
-    const headGeo = new THREE.SphereGeometry(0.130, 26, 22);
+    // High-resolution sculpted anime head with phiStart = -PI/2 so native seam sits at -Z (back of head)
+    // and u=0.5 sits cleanly at +Z (front center of face)!
+    const headGeo = new THREE.SphereGeometry(0.130, 34, 28, -Math.PI / 2, Math.PI * 2);
     const pos = headGeo.attributes.position;
+    const uv = headGeo.attributes.uv;
+
     for (let i = 0; i < pos.count; i++) {
-      const x = pos.getX(i);
-      const y = pos.getY(i);
-      const z = pos.getZ(i);
-      const chinTaper = y < 0 ? 1.0 + y * 1.35 : 1.0;
-      const chinPull = y < -0.04 && z > 0 ? 0.016 : 0;
-      pos.setXYZ(i, x * 0.93 * Math.max(0.70, chinTaper), y * 1.05, z * 0.97 + chinPull);
+      let x = pos.getX(i);
+      let y = pos.getY(i);
+      let z = pos.getZ(i);
+
+      // Refined BotW anime jawline, cheekbone taper & subtle nose/chin profile
+      const chinTaper = y < 0 ? 1.0 + y * 1.48 : 1.0;
+      const cheekSoft = y < 0.02 && y > -0.06 && z > 0.03 ? 1.025 : 1.0;
+      x = x * 0.93 * Math.max(0.68, chinTaper) * cheekSoft;
+      y = y * 1.055;
+      const chinPull = y < -0.045 && z > 0.02 ? 0.014 * Math.min(1, (-y - 0.045) / 0.07) : 0;
+      const noseSubtle = Math.abs(x) < 0.022 && y < 0.01 && y > -0.045 && z > 0.095 ? 0.007 * (1 - Math.abs(x) / 0.022) : 0;
+      z = z * 0.97 + chinPull + noseSubtle;
+      pos.setXYZ(i, x, y, z);
+
+      // Distortion-free frontal orthographic-blended UV mapping calibrated 1:1 to 1024x1024 getHeroFaceTexture()!
+      const frontW = THREE.MathUtils.smoothstep(z, 0.0, 0.042);
+      if (frontW > 0) {
+        const uOrtho = THREE.MathUtils.clamp(0.5 + x / 0.34, 0.04, 0.96);
+        const vOrtho = THREE.MathUtils.clamp(0.495 + y / 0.31, 0.04, 0.96);
+        uv.setXY(
+          i,
+          THREE.MathUtils.lerp(uv.getX(i), uOrtho, frontW),
+          THREE.MathUtils.lerp(uv.getY(i), vOrtho, frontW)
+        );
+      }
     }
+    pos.needsUpdate = true;
+    uv.needsUpdate = true;
     headGeo.computeVertexNormals();
 
     const faceMat = createBotWToonMaterial({
       color: '#ffffff',
-      map: textureBank.getHeroFaceTexture('#f6d5b2', '#2a84e0'),
-      rimStrength: 0.25,
+      map: textureBank.getHeroFaceTexture('#f6d5b2', '#2686e8'),
+      rimStrength: 0.24,
       rimTint: '#fff2e0',
       warmSkinShadow: true,
     });
     const headMesh = new THREE.Mesh(headGeo, faceMat);
-    // In Three.js SphereGeometry, u=0.5 sits at +X; rotation.y = -PI/2 brings +X cleanly to +Z (front)!
-    headMesh.rotation.y = -Math.PI / 2;
     headMesh.position.y = 0.085;
     this.headGroup.add(headMesh);
 
-    // Iconic Pointed Hylian Ears
-    const earGeo = new THREE.ConeGeometry(0.022, 0.095, 7);
+    // Iconic Pointed Hylian Ears + small blue BotW earring studs
+    const earGeo = new THREE.ConeGeometry(0.022, 0.098, 8);
+    const earringMat = createBotWToonMaterial({ color: '#3896e8', metalHighlight: true });
     for (const side of [-1, 1]) {
       const ear = new THREE.Mesh(earGeo, this.skinMat);
-      ear.position.set(side * 0.120, 0.075, -0.012);
-      ear.rotation.set(-0.18, side * 0.35, -side * 1.28);
+      ear.position.set(side * 0.118, 0.072, -0.010);
+      ear.rotation.set(-0.16, side * 0.35, -side * 1.26);
       this.headGroup.add(ear);
+
+      const stud = new THREE.Mesh(new THREE.SphereGeometry(0.008, 8, 6), earringMat);
+      stud.position.set(side * 0.114, 0.048, -0.004);
+      this.headGroup.add(stud);
     }
 
-    // Layered BotW Golden-Blond Hair (smooth curved crown + sweeping parted bangs framing eyes cleanly!)
+    // Layered Sculpted BotW Golden-Blond Hair (TubeGeometry flowing curved locks + crown + long sideburns + ponytail!)
     this.hairGroup.position.set(0, 0.085, 0);
     this.headGroup.add(this.hairGroup);
 
-    // Full rounded top & back hair volume hugging the skull cleanly
     const hairCrown = new THREE.Mesh(
-      new THREE.SphereGeometry(0.142, 22, 16, 0, Math.PI * 2, 0, Math.PI * 0.56),
+      new THREE.SphereGeometry(0.142, 26, 20, 0, Math.PI * 2, 0, Math.PI * 0.58),
       this.hairMat
     );
-    hairCrown.position.set(0, 0.018, -0.012);
+    hairCrown.position.set(0, 0.020, -0.012);
     hairCrown.rotation.x = -0.18;
     this.hairGroup.add(hairCrown);
 
-    // Smooth side-parted bangs nested cleanly inside the hairline (smooth rounded silhouette!)
-    const makeLock = (x: number, y: number, z: number, rx: number, ry: number, rz: number, r: number, len: number) => {
-      const m = new THREE.Mesh(new THREE.CapsuleGeometry(r, len, 6, 8), this.hairMat);
-      m.position.set(x, y, z);
-      m.rotation.set(rx, ry, rz);
-      this.hairGroup.add(m);
+    // Sculpted back hair volume hugging the occipital curve
+    const hairBack = new THREE.Mesh(
+      new THREE.SphereGeometry(0.136, 20, 14, 0, Math.PI * 2, Math.PI * 0.35, Math.PI * 0.45),
+      this.hairMat
+    );
+    hairBack.position.set(0, -0.005, -0.025);
+    hairBack.rotation.x = 0.15;
+    this.hairGroup.add(hairBack);
+
+    // Helper: creates a tapered curved hair lock via TubeGeometry + radial tip taper
+    const addCurvedLock = (pts: [number, number, number][], baseRadius: number, parent: THREE.Object3D = this.hairGroup) => {
+      const curve = new THREE.CatmullRomCurve3(pts.map(([x, y, z]) => new THREE.Vector3(x, y, z)));
+      const tubularSegs = 10;
+      const radialSegs = 7;
+      const geo = new THREE.TubeGeometry(curve, tubularSegs, baseRadius, radialSegs, false);
+      const pAttr = geo.attributes.position;
+      const tmp = new THREE.Vector3();
+      const center = new THREE.Vector3();
+      for (let i = 0; i <= tubularSegs; i++) {
+        const t = i / tubularSegs;
+        curve.getPointAt(t, center);
+        // Smooth taper: fuller near root/mid, crisp pointed anime lock tip!
+        const taper = t < 0.2 ? 0.72 + t * 1.4 : Math.max(0.08, 1.0 - Math.pow((t - 0.2) / 0.8, 1.45));
+        for (let j = 0; j <= radialSegs; j++) {
+          const idx = i * (radialSegs + 1) + j;
+          tmp.fromBufferAttribute(pAttr, idx).sub(center).multiplyScalar(taper).add(center);
+          pAttr.setXYZ(idx, tmp.x, tmp.y, tmp.z);
+        }
+      }
+      pAttr.needsUpdate = true;
+      geo.computeVertexNormals();
+      const mesh = new THREE.Mesh(geo, this.hairMat);
+      parent.add(mesh);
     };
 
-    makeLock(-0.078, 0.056, 0.086, 0.14, -0.22, 0.45, 0.022, 0.075);
-    makeLock(-0.036, 0.074, 0.098, 0.22, -0.08, 0.72, 0.020, 0.055);
-    makeLock(0.038, 0.074, 0.098, 0.22, 0.10, -0.72, 0.020, 0.055);
-    makeLock(0.080, 0.056, 0.086, 0.14, 0.22, -0.45, 0.022, 0.075);
+    // Sweeping center-parted BotW bangs framing the forehead cleanly ABOVE Link's eyebrows & eyes!
+    addCurvedLock([[0.0, 0.142, 0.042], [-0.042, 0.122, 0.104], [-0.080, 0.082, 0.114], [-0.104, 0.036, 0.098]], 0.025);
+    addCurvedLock([[0.0, 0.142, 0.042], [0.044, 0.122, 0.104], [0.082, 0.082, 0.114], [0.106, 0.036, 0.098]], 0.025);
+    addCurvedLock([[-0.012, 0.144, 0.056], [-0.038, 0.116, 0.120], [-0.064, 0.086, 0.122]], 0.019);
+    addCurvedLock([[0.014, 0.144, 0.056], [0.040, 0.116, 0.120], [0.066, 0.086, 0.122]], 0.019);
+    // Crown windswept ahoge/tuft strands for lively silhouette
+    addCurvedLock([[0.0, 0.146, 0.01], [-0.035, 0.168, -0.025], [-0.075, 0.148, -0.055]], 0.018);
+    addCurvedLock([[0.008, 0.148, 0.005], [0.045, 0.170, -0.022], [0.082, 0.146, -0.052]], 0.017);
+
     // Iconic BotW long sideburns draping cleanly in front of Hylian ears!
-    makeLock(-0.114, -0.018, 0.042, 0.06, 0, 0.10, 0.022, 0.145);
-    makeLock(0.114, -0.018, 0.042, 0.06, 0, -0.10, 0.022, 0.145);
+    addCurvedLock([[-0.088, 0.085, 0.072], [-0.116, 0.015, 0.068], [-0.112, -0.055, 0.055], [-0.095, -0.112, 0.040]], 0.024);
+    addCurvedLock([[0.088, 0.085, 0.072], [0.116, 0.015, 0.068], [0.112, -0.055, 0.055], [0.095, -0.112, 0.040]], 0.024);
+    // Secondary temple strands tucked behind ears
+    addCurvedLock([[-0.102, 0.065, 0.015], [-0.122, -0.008, -0.015], [-0.108, -0.075, -0.042]], 0.022);
+    addCurvedLock([[0.102, 0.065, 0.015], [0.122, -0.008, -0.015], [0.108, -0.075, -0.042]], 0.022);
 
-    // Back tied BotW ponytail + blue ribbon
-    const hairTie = new THREE.Mesh(
-      new THREE.TorusGeometry(0.032, 0.01, 6, 10),
-      createBotWToonMaterial({ color: '#2b5d9a' })
-    );
-    hairTie.position.set(0, -0.025, -0.132);
+    // Back tied BotW ponytail + flowing royal-blue hair ribbon (animated in updateAnimation!)
+    this.ponytailGroup.position.set(0, -0.022, -0.132);
+    this.hairGroup.add(this.ponytailGroup);
+
+    const ribbonMat = createBotWToonMaterial({ color: '#2b5d9a', rimStrength: 0.35 });
+    const hairTie = new THREE.Mesh(new THREE.TorusGeometry(0.030, 0.010, 8, 14), ribbonMat);
     hairTie.rotation.x = 0.65;
-    this.hairGroup.add(hairTie);
+    this.ponytailGroup.add(hairTie);
 
-    const pony = new THREE.Mesh(new THREE.ConeGeometry(0.044, 0.19, 10), this.hairMat);
-    pony.position.set(0, -0.105, -0.155);
-    pony.rotation.x = 2.72;
-    this.hairGroup.add(pony);
+    addCurvedLock([[0, 0, 0], [0, -0.055, -0.036], [0, -0.125, -0.052], [0, -0.185, -0.035]], 0.038, this.ponytailGroup);
+    addCurvedLock([[-0.014, -0.005, -0.005], [-0.032, -0.068, -0.038], [-0.038, -0.138, -0.045]], 0.022, this.ponytailGroup);
+    addCurvedLock([[0.014, -0.005, -0.005], [0.032, -0.068, -0.038], [0.038, -0.138, -0.045]], 0.022, this.ponytailGroup);
+
+    for (const s of [-1, 1]) {
+      const tailRibbon = new THREE.Mesh(new THREE.BoxGeometry(0.014, 0.11, 0.005), ribbonMat);
+      tailRibbon.position.set(s * 0.022, -0.058, -0.018);
+      tailRibbon.rotation.set(0.35, 0, s * 0.24);
+      this.ponytailGroup.add(tailRibbon);
+    }
 
     this.headArmorGroup.position.set(0, 0.085, 0);
     this.headGroup.add(this.headArmorGroup);
   }
 
   private buildWeaponsAndParaglider(): void {
-    this.backGearGroup.position.set(0, 0.26, -0.155);
+    this.backGearGroup.position.set(0, 0.26, -0.158);
     this.torso.add(this.backGearGroup);
 
     const buildSwordMesh = (withScabbard = false): THREE.Group => {
       const g = new THREE.Group();
       const hiltMat = createBotWToonMaterial({ color: '#3b4ca8', metalHighlight: true });
+      const gripWrapMat = createBotWToonMaterial({ color: '#274f38', rimStrength: 0.25 });
       const goldMat = createBotWToonMaterial({ color: '#ecc85a', metalHighlight: true });
-      const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.022, 0.24, 8), hiltMat);
+      const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.017, 0.021, 0.24, 10), gripWrapMat);
       g.add(grip);
-      const pommel = new THREE.Mesh(new THREE.OctahedronGeometry(0.032, 0), goldMat);
-      pommel.position.y = -0.13;
+      const pommel = new THREE.Mesh(new THREE.OctahedronGeometry(0.030, 0), goldMat);
+      pommel.position.y = -0.132;
       g.add(pommel);
-      // Winged Master Sword Crossguard
-      const guardL = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.035, 0.032), hiltMat);
-      guardL.position.set(-0.07, 0.14, 0);
-      guardL.rotation.z = 0.35;
+      // Sculpted Winged Master Sword Crossguard
+      const guardCore = new THREE.Mesh(new THREE.BoxGeometry(0.064, 0.052, 0.034), hiltMat);
+      guardCore.position.y = 0.132;
+      const guardL = new THREE.Mesh(new THREE.BoxGeometry(0.145, 0.032, 0.028), hiltMat);
+      guardL.position.set(-0.075, 0.142, 0);
+      guardL.rotation.z = 0.36;
       const guardR = guardL.clone();
-      guardR.position.x = 0.07;
-      guardR.rotation.z = -0.35;
-      const gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.028, 0), goldMat);
-      gem.position.set(0, 0.13, 0.018);
-      g.add(guardL, guardR, gem);
+      guardR.position.x = 0.075;
+      guardR.rotation.z = -0.36;
+      const gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.026, 0), goldMat);
+      gem.position.set(0, 0.132, 0.020);
+      g.add(guardCore, guardL, guardR, gem);
 
       if (withScabbard) {
-        // Ornate Royal Blue & Gold Master Sword Scabbard when sheathed on Link's back!
         const scabbardMat = createBotWToonMaterial({ color: '#21408a', metalHighlight: true });
-        const scabbard = new THREE.Mesh(new THREE.BoxGeometry(0.076, 0.78, 0.032), scabbardMat);
+        const scabbard = new THREE.Mesh(new THREE.BoxGeometry(0.074, 0.78, 0.032), scabbardMat);
         scabbard.position.y = 0.54;
-        const tipCap = new THREE.Mesh(new THREE.ConeGeometry(0.048, 0.14, 4), goldMat);
+        const tipCap = new THREE.Mesh(new THREE.ConeGeometry(0.046, 0.14, 4), goldMat);
         tipCap.position.y = 0.96;
-        const band = new THREE.Mesh(new THREE.BoxGeometry(0.086, 0.07, 0.038), goldMat);
+        const band = new THREE.Mesh(new THREE.BoxGeometry(0.086, 0.068, 0.038), goldMat);
         band.position.y = 0.24;
-        g.add(scabbard, tipCap, band);
+        const midBand = new THREE.Mesh(new THREE.BoxGeometry(0.082, 0.042, 0.036), goldMat);
+        midBand.position.y = 0.62;
+        g.add(scabbard, tipCap, band, midBand);
       } else {
-        const bladeGeo = new THREE.ConeGeometry(0.046, 0.88, 4);
+        // Tapered diamond-section Master Sword blade with Triforce fuller accent
+        const bladeGeo = new THREE.ConeGeometry(0.048, 0.90, 4);
         bladeGeo.scale(1.0, 1.0, 0.28);
         const blade = new THREE.Mesh(bladeGeo, this.swordBladeMat);
-        blade.position.y = 0.58;
-        g.add(blade);
+        blade.position.y = 0.59;
+        const ricasso = new THREE.Mesh(new THREE.BoxGeometry(0.064, 0.12, 0.022), this.swordBladeMat);
+        ricasso.position.y = 0.20;
+        g.add(ricasso, blade);
       }
       return g;
     };
@@ -470,7 +662,6 @@ export class LinkCharacterModel {
         rimStrength: 0.42,
       });
 
-      // Shield kite silhouette via ExtrudeGeometry with properly normalized 0..1 UVs for the Triforce & Loftwing Crest!
       const shape = new THREE.Shape();
       shape.moveTo(0, 0.30);
       shape.lineTo(0.22, 0.24);
@@ -494,18 +685,31 @@ export class LinkCharacterModel {
       return g;
     };
 
-    // Back-sheathed Master Sword inside Royal Scabbard tucked cleanly diagonally behind Hylian Shield!
-    const backSword = buildSwordMesh(true);
-    backSword.position.set(0.16, 0.28, -0.01);
-    backSword.rotation.set(0.06, 0, 2.68);
-    backSword.name = 'backSword';
-    this.backGearGroup.add(backSword);
+    // Back-sheathed Master Sword inside Royal Scabbard + Hylian Shield
+    this.backSwordGroup = buildSwordMesh(true);
+    this.backSwordGroup.position.set(0.16, 0.28, -0.01);
+    this.backSwordGroup.rotation.set(0.06, 0, 2.68);
+    this.backSwordGroup.name = 'backSword';
+    this.backGearGroup.add(this.backSwordGroup);
 
-    const backShield = buildHylianShieldMesh();
-    backShield.position.set(-0.01, 0.02, -0.048);
-    backShield.rotation.y = Math.PI;
-    backShield.name = 'backShield';
-    this.backGearGroup.add(backShield);
+    this.backShieldGroup = buildHylianShieldMesh();
+    this.backShieldGroup.position.set(-0.01, 0.02, -0.048);
+    this.backShieldGroup.rotation.y = Math.PI;
+    this.backShieldGroup.name = 'backShield';
+    this.backGearGroup.add(this.backShieldGroup);
+
+    // Optional `sword_shield.glb` Golden Crest Back Gear (shown when wielding Royal / Traveler / non-Master-Sword gear!)
+    this.backGlbCrestGroup.position.set(0, -0.24, -0.062);
+    this.backGlbCrestGroup.rotation.y = Math.PI;
+    this.backGlbCrestGroup.visible = false;
+    this.backGearGroup.add(this.backGlbCrestGroup);
+    const mountBackGlbCrest = () => {
+      if (this.backGlbCrestGroup.children.length > 0) return;
+      const inst = modelLoader.instantiate('sword_shield', { scaleMultiplier: 0.78 });
+      if (inst) this.backGlbCrestGroup.add(inst.root);
+    };
+    mountBackGlbCrest();
+    modelLoader.onModelLoaded('sword_shield', mountBackGlbCrest);
 
     // Hand-drawn Sword (Right Hand)
     this.handSwordGroup.position.set(0, -0.24, 0.04);
@@ -513,6 +717,43 @@ export class LinkCharacterModel {
     this.handSwordGroup.add(buildSwordMesh());
     this.handSwordGroup.visible = false;
     this.rightForearm.add(this.handSwordGroup);
+
+    // Hand-drawn Torch (`torch.glb` + dynamic flickering flame!)
+    this.handTorchGroup.position.set(0, -0.22, 0.05);
+    this.handTorchGroup.rotation.set(Math.PI * 0.44, 0, 0);
+    this.handTorchGroup.visible = false;
+    const mountHandTorch = () => {
+      if (this.handTorchGroup.getObjectByName('torchGlb')) return;
+      const inst = modelLoader.instantiate('torch', { scaleMultiplier: 0.56 });
+      if (inst) {
+        inst.root.name = 'torchGlb';
+        inst.root.position.set(0, -0.08, 0);
+        this.handTorchGroup.add(inst.root);
+      } else {
+        const stick = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.025, 0.018, 0.65, 8),
+          createBotWToonMaterial({ color: '#6b4528' })
+        );
+        stick.name = 'torchFallback';
+        stick.position.y = 0.24;
+        this.handTorchGroup.add(stick);
+      }
+    };
+    mountHandTorch();
+    modelLoader.onModelLoaded('torch', () => {
+      const fb = this.handTorchGroup.getObjectByName('torchFallback');
+      if (fb) this.handTorchGroup.remove(fb);
+      mountHandTorch();
+    });
+    this.torchFlameMesh = new THREE.Mesh(
+      new THREE.ConeGeometry(0.085, 0.22, 7),
+      new THREE.MeshBasicMaterial({ color: '#ff8e24', transparent: true, opacity: 0.92 })
+    );
+    this.torchFlameMesh.position.set(0, 0.52, 0);
+    this.torchLight = new THREE.PointLight('#ff9428', 2.4, 9.0);
+    this.torchLight.position.set(0, 0.56, 0);
+    this.handTorchGroup.add(this.torchFlameMesh, this.torchLight);
+    this.rightForearm.add(this.handTorchGroup);
 
     // Dynamic Slash Ribbon Arc
     const slashGeo = new THREE.RingGeometry(0.7, 1.45, 18, 1, -Math.PI * 0.65, Math.PI * 1.3);
@@ -537,7 +778,7 @@ export class LinkCharacterModel {
 
     // Hand-drawn Bow (Left Hand)
     const bowWood = createBotWToonMaterial({ color: '#7a5230', map: textureBank.getWoodPlankTexture().map });
-    const bowArch = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.022, 6, 16, Math.PI * 1.15), bowWood);
+    const bowArch = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.022, 8, 18, Math.PI * 1.15), bowWood);
     bowArch.rotation.z = -Math.PI * 0.58;
     const bowString = new THREE.Mesh(
       new THREE.CylinderGeometry(0.005, 0.005, 0.80, 4),
@@ -574,7 +815,7 @@ export class LinkCharacterModel {
     const handleBar = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.56, 6), gliderWood);
     handleBar.rotation.z = Math.PI / 2;
     handleBar.position.set(0, -0.18, 0);
-    const wingGeo = new THREE.PlaneGeometry(2.35, 0.92, 8, 2);
+    const wingGeo = new THREE.PlaneGeometry(2.35, 0.92, 10, 3);
     wingGeo.rotateX(-Math.PI / 2);
     const wp = wingGeo.attributes.position;
     for (let i = 0; i < wp.count; i++) {
@@ -593,7 +834,7 @@ export class LinkCharacterModel {
 
   private enableShadows(): void {
     this.root.traverse((obj) => {
-      if ((obj as THREE.Mesh).isMesh && obj !== this.swordSlashArc) {
+      if ((obj as THREE.Mesh).isMesh && obj !== this.swordSlashArc && obj !== this.torchFlameMesh) {
         obj.castShadow = true;
         obj.receiveShadow = true;
       }
@@ -602,7 +843,7 @@ export class LinkCharacterModel {
 
   /**
    * Synchronizes Link's 3D appearance with ALL equipped armor pieces, Kochi Dye colors,
-   * naked/underwear state, weapons, shield, bow, and paraglider!
+   * naked/underwear state, Master Sword / Torch / `sword_shield.glb` gear, shield, bow, and paraglider!
    */
   applyEquipmentVisuals(vis: HeroEquipmentVisuals): void {
     const sig = JSON.stringify([
@@ -614,6 +855,8 @@ export class LinkCharacterModel {
       vis.legsDyeHex,
       vis.isMasterSword,
       vis.weaponColor,
+      vis.weaponId,
+      vis.shieldId,
     ]);
 
     if (sig !== this.lastVisualSignature) {
@@ -621,13 +864,15 @@ export class LinkCharacterModel {
       this.rebuildArmorAppearance(vis);
     }
 
-    // Drawn vs Sheathed Weapon / Shield / Bow / Paraglider visibility
-    const backSword = this.backGearGroup.getObjectByName('backSword');
-    const backShield = this.backGearGroup.getObjectByName('backShield');
-    if (backSword) backSword.visible = !vis.weaponDrawn;
-    if (backShield) backShield.visible = !vis.weaponDrawn && !vis.shieldSurfing;
+    const useTorch = vis.holdingTorchFire || vis.weaponId === 'torch';
+    const useGlbCrestBack = !vis.isMasterSword && vis.shieldId !== 'hylian_shield' && this.backGlbCrestGroup.children.length > 0;
 
-    this.handSwordGroup.visible = vis.weaponDrawn && !vis.bowDrawn && !vis.paragliderOpen;
+    this.backSwordGroup.visible = !vis.weaponDrawn && !useGlbCrestBack;
+    this.backShieldGroup.visible = !vis.weaponDrawn && !vis.shieldSurfing && !useGlbCrestBack;
+    this.backGlbCrestGroup.visible = !vis.weaponDrawn && !vis.shieldSurfing && useGlbCrestBack;
+
+    this.handSwordGroup.visible = vis.weaponDrawn && !useTorch && !vis.bowDrawn && !vis.paragliderOpen;
+    this.handTorchGroup.visible = vis.weaponDrawn && useTorch && !vis.bowDrawn && !vis.paragliderOpen;
     this.handShieldGroup.visible = vis.weaponDrawn && !vis.bowDrawn && !vis.paragliderOpen && !vis.shieldSurfing;
     this.handBowGroup.visible = vis.bowDrawn && !vis.paragliderOpen;
     this.paragliderGroup.visible = vis.paragliderOpen;
@@ -642,6 +887,8 @@ export class LinkCharacterModel {
       this.rightSleeveMesh.material = this.skinMat;
       this.leftShoulderMesh.material = this.skinMat;
       this.rightShoulderMesh.material = this.skinMat;
+      this.leftCuffMesh.visible = false;
+      this.rightCuffMesh.visible = false;
       this.skirtMesh.visible = false;
       this.collarMesh.visible = false;
       this.capeMesh.visible = false;
@@ -656,6 +903,8 @@ export class LinkCharacterModel {
           ? 'sheikah'
           : 'weave';
       const fab = textureBank.getFabricTexture(baseHex, vis.bodyPiece.accentColor, pattern);
+      const sleeveFab = textureBank.getFabricTexture(baseHex, vis.bodyPiece.accentColor, 'weave');
+
       this.tunicMat.map = fab.map;
       this.tunicMat.normalMap = fab.normalMap;
       this.tunicMat.color.set('#ffffff');
@@ -663,11 +912,20 @@ export class LinkCharacterModel {
       this.tunicMat.emissiveIntensity = vis.bodyPiece.effect === 'night_glow' ? 0.85 : 0;
       this.tunicMat.needsUpdate = true;
 
+      this.sleeveMat.map = sleeveFab.map;
+      this.sleeveMat.normalMap = sleeveFab.normalMap;
+      this.sleeveMat.color.set('#ffffff');
+      this.sleeveMat.emissive.set(vis.bodyPiece.effect === 'night_glow' ? '#20f0b4' : '#000000');
+      this.sleeveMat.emissiveIntensity = vis.bodyPiece.effect === 'night_glow' ? 0.85 : 0;
+      this.sleeveMat.needsUpdate = true;
+
       this.torsoMesh.material = this.tunicMat;
-      this.leftSleeveMesh.material = this.tunicMat;
-      this.rightSleeveMesh.material = this.tunicMat;
-      this.leftShoulderMesh.material = this.tunicMat;
-      this.rightShoulderMesh.material = this.tunicMat;
+      this.leftSleeveMesh.material = this.sleeveMat;
+      this.rightSleeveMesh.material = this.sleeveMat;
+      this.leftShoulderMesh.material = this.sleeveMat;
+      this.rightShoulderMesh.material = this.sleeveMat;
+      this.leftCuffMesh.visible = true;
+      this.rightCuffMesh.visible = true;
       this.skirtMesh.visible = true;
       this.collarMesh.visible = true;
 
@@ -704,7 +962,7 @@ export class LinkCharacterModel {
       this.rightBootMesh.material = this.bootMat;
       this.leftFootMesh.material = this.bootMat;
       this.rightFootMesh.material = this.bootMat;
-      this.bootMat.color.set(vis.legsPiece.accentColor || '#5c3c24');
+      this.bootMat.color.set(vis.legsPiece.accentColor || '#8c5d3c').lerp(new THREE.Color('#e6cbb0'), 0.52);
     }
 
     // 3. HEADGEAR GEOMETRY (dynamic sculpted hood/helm/circlet/mask!)
@@ -750,7 +1008,6 @@ export class LinkCharacterModel {
         mask.position.set(0, 0.02, 0.13);
         this.headArmorGroup.add(mask);
       } else {
-        // Sculpted Knight / Barbarian / Zora / Ancient / Thunder Helm
         const helm = new THREE.Mesh(new THREE.SphereGeometry(0.152, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.68), this.headArmorMat);
         helm.position.set(0, 0.02, 0);
         this.headArmorGroup.add(helm);
@@ -782,122 +1039,142 @@ export class LinkCharacterModel {
   }
 
   updateAnimation(dt: number, state: HeroAnimState, moveSpeed: number, isSpinAttack = false): void {
-    this.animPhase += dt * (state === 'sprint' ? 12.5 : state === 'run' ? 9.5 : state === 'walk' ? 6.5 : 2.6);
+    this.animPhase += dt * (state === 'sprint' ? 12.2 : state === 'run' ? 9.2 : state === 'walk' ? 6.4 : 2.5);
     const p = this.animPhase;
+    const g = this.poseGoal;
 
-    // Reset baseline rotations smoothly
-    this.pelvis.position.y = 0.82;
-    this.pelvis.rotation.set(0, 0, 0);
-    this.torso.rotation.set(0, 0, 0);
-    this.headGroup.rotation.set(0, 0, 0);
-    this.leftArm.rotation.set(0, 0, 0.12);
-    this.rightArm.rotation.set(0, 0, -0.12);
-    this.leftForearm.rotation.set(-0.18, 0, 0);
-    this.rightForearm.rotation.set(-0.18, 0, 0);
-    this.leftLeg.rotation.set(0, 0, 0);
-    this.rightLeg.rotation.set(0, 0, 0);
-    this.leftShin.rotation.set(0, 0, 0);
-    this.rightShin.rotation.set(0, 0, 0);
+    // Reset pose goals cleanly before computing state target pose
+    g.pelvisY = 0.82;
+    g.pelvisRot.set(0, 0, 0);
+    g.torsoRot.set(0, 0, 0);
+    g.headRot.set(0, 0, 0);
+    g.leftArm.set(0, 0, 0.13);
+    g.rightArm.set(0, 0, -0.13);
+    g.leftForearm.set(-0.18, 0, 0);
+    g.rightForearm.set(-0.18, 0, 0);
+    g.leftLeg.set(0, 0, 0);
+    g.rightLeg.set(0, 0, 0);
+    g.leftShin.set(0, 0, 0);
+    g.rightShin.set(0, 0, 0);
 
     if (state === 'idle') {
-      this.pelvis.position.y = 0.82 + Math.sin(p) * 0.012;
-      this.torso.rotation.x = Math.sin(p * 0.5) * 0.025;
-      this.leftArm.rotation.z = 0.14 + Math.sin(p) * 0.03;
-      this.rightArm.rotation.z = -0.14 - Math.sin(p) * 0.03;
+      g.pelvisY = 0.82 + Math.sin(p) * 0.011;
+      g.torsoRot.x = Math.sin(p * 0.5) * 0.024;
+      g.headRot.y = Math.sin(p * 0.35) * 0.06;
+      g.leftArm.set(0.04, 0, 0.15 + Math.sin(p) * 0.025);
+      g.rightArm.set(0.04, 0, -0.15 - Math.sin(p) * 0.025);
+      if (this.handTorchGroup.visible) {
+        g.rightArm.set(-0.78, -0.1, -0.18);
+        g.rightForearm.set(-0.48, 0, 0);
+      }
     } else if (state === 'walk' || state === 'run' || state === 'sprint') {
       const amp = state === 'sprint' ? 0.88 : state === 'run' ? 0.68 : 0.42;
       const lean = state === 'sprint' ? 0.24 : state === 'run' ? 0.14 : 0.05;
-      this.pelvis.position.y = 0.80 + Math.abs(Math.sin(p)) * (state === 'sprint' ? 0.065 : 0.04);
-      this.torso.rotation.x = lean;
-      this.torso.rotation.y = Math.sin(p) * 0.12;
-      this.leftLeg.rotation.x = Math.sin(p) * amp;
-      this.rightLeg.rotation.x = -Math.sin(p) * amp;
-      this.leftShin.rotation.x = Math.max(0, -Math.cos(p) * amp * 0.9);
-      this.rightShin.rotation.x = Math.max(0, Math.cos(p) * amp * 0.9);
-      this.leftArm.rotation.x = -Math.sin(p) * amp * 0.85;
-      this.rightArm.rotation.x = Math.sin(p) * amp * 0.85;
-      this.leftForearm.rotation.x = -0.55;
-      this.rightForearm.rotation.x = -0.55;
+      g.pelvisY = 0.80 + Math.abs(Math.sin(p)) * (state === 'sprint' ? 0.065 : 0.04);
+      g.torsoRot.set(lean, Math.sin(p) * 0.13, -Math.sin(p) * 0.03);
+      g.headRot.set(-lean * 0.45, -Math.sin(p) * 0.06, 0);
+      g.leftLeg.set(Math.sin(p) * amp, 0, 0);
+      g.rightLeg.set(-Math.sin(p) * amp, 0, 0);
+      g.leftShin.set(Math.max(0, -Math.cos(p) * amp * 0.92), 0, 0);
+      g.rightShin.set(Math.max(0, Math.cos(p) * amp * 0.92), 0, 0);
+      g.leftArm.set(-Math.sin(p) * amp * 0.85, 0, 0.12);
+      g.rightArm.set(this.handTorchGroup.visible ? -0.82 : Math.sin(p) * amp * 0.85, 0, -0.12);
+      g.leftForearm.set(-0.52, 0, 0);
+      g.rightForearm.set(this.handTorchGroup.visible ? -0.45 : -0.52, 0, 0);
     } else if (state === 'crouch') {
-      this.pelvis.position.y = 0.60;
-      this.torso.rotation.x = 0.36;
-      this.leftLeg.rotation.x = -0.75 + Math.sin(p) * (moveSpeed > 0.2 ? 0.35 : 0);
-      this.rightLeg.rotation.x = -0.75 - Math.sin(p) * (moveSpeed > 0.2 ? 0.35 : 0);
-      this.leftShin.rotation.x = 1.25;
-      this.rightShin.rotation.x = 1.25;
+      g.pelvisY = 0.60;
+      g.torsoRot.set(0.36, 0, 0);
+      g.headRot.set(-0.26, 0, 0);
+      g.leftLeg.set(-0.75 + Math.sin(p) * (moveSpeed > 0.2 ? 0.35 : 0), 0, 0);
+      g.rightLeg.set(-0.75 - Math.sin(p) * (moveSpeed > 0.2 ? 0.35 : 0), 0, 0);
+      g.leftShin.set(1.25, 0, 0);
+      g.rightShin.set(1.25, 0, 0);
+      g.leftArm.set(-0.22, 0, 0.22);
+      g.rightArm.set(-0.22, 0, -0.22);
     } else if (state === 'jump') {
-      this.pelvis.position.y = 0.88;
-      this.leftLeg.rotation.x = -0.45;
-      this.rightLeg.rotation.x = 0.35;
-      this.leftShin.rotation.x = 0.85;
-      this.leftArm.rotation.set(-0.5, 0, 0.65);
-      this.rightArm.rotation.set(-0.5, 0, -0.65);
+      g.pelvisY = 0.88;
+      g.torsoRot.set(0.08, 0, 0);
+      g.leftLeg.set(-0.45, 0, 0);
+      g.rightLeg.set(0.32, 0, 0);
+      g.leftShin.set(0.85, 0, 0);
+      g.rightShin.set(0.25, 0, 0);
+      g.leftArm.set(-0.5, 0, 0.65);
+      g.rightArm.set(-0.5, 0, -0.65);
     } else if (state === 'paraglide') {
-      this.pelvis.position.y = 0.78 + Math.sin(p * 1.4) * 0.03;
-      this.torso.rotation.x = 0.14;
-      this.leftArm.rotation.set(-2.65, 0, 0.25);
-      this.rightArm.rotation.set(-2.65, 0, -0.25);
-      this.leftLeg.rotation.x = 0.25 + Math.sin(p * 1.2) * 0.1;
-      this.rightLeg.rotation.x = 0.32 - Math.sin(p * 1.2) * 0.1;
-      this.paragliderGroup.rotation.z = Math.sin(p * 1.4) * 0.04;
+      g.pelvisY = 0.78 + Math.sin(p * 1.4) * 0.03;
+      g.torsoRot.set(0.14, 0, Math.sin(p * 1.1) * 0.04);
+      g.leftArm.set(-2.65, 0, 0.25);
+      g.rightArm.set(-2.65, 0, -0.25);
+      g.leftLeg.set(0.25 + Math.sin(p * 1.2) * 0.1, 0, 0);
+      g.rightLeg.set(0.32 - Math.sin(p * 1.2) * 0.1, 0, 0);
+      this.paragliderGroup.rotation.z = THREE.MathUtils.lerp(
+        this.paragliderGroup.rotation.z,
+        Math.sin(p * 1.4) * 0.045,
+        1 - Math.exp(-8 * dt)
+      );
     } else if (state === 'climb') {
-      const cp = p * 1.2;
-      this.torso.rotation.x = 0.08;
-      this.leftArm.rotation.x = -1.9 + Math.sin(cp) * 0.6;
-      this.rightArm.rotation.x = -1.9 - Math.sin(cp) * 0.6;
-      this.leftLeg.rotation.x = -0.55 - Math.sin(cp) * 0.45;
-      this.rightLeg.rotation.x = -0.55 + Math.sin(cp) * 0.45;
-      this.leftShin.rotation.x = 0.9;
-      this.rightShin.rotation.x = 0.9;
+      const cp = p * (moveSpeed > 0.2 ? 1.35 : 0.25);
+      g.torsoRot.set(0.10, 0, 0);
+      g.headRot.set(-0.22, 0, 0);
+      g.leftArm.set(-1.95 + Math.sin(cp) * 0.55, 0, 0.25);
+      g.rightArm.set(-1.95 - Math.sin(cp) * 0.55, 0, -0.25);
+      g.leftForearm.set(-0.55, 0, 0);
+      g.rightForearm.set(-0.55, 0, 0);
+      g.leftLeg.set(-0.58 - Math.sin(cp) * 0.42, 0, 0.14);
+      g.rightLeg.set(-0.58 + Math.sin(cp) * 0.42, 0, -0.14);
+      g.leftShin.set(0.92, 0, 0);
+      g.rightShin.set(0.92, 0, 0);
     } else if (state === 'swim') {
-      this.pelvis.position.y = 0.55;
-      this.torso.rotation.x = 1.15;
-      this.leftArm.rotation.x = -1.6 + Math.sin(p * 1.6) * 0.9;
-      this.rightArm.rotation.x = -1.6 - Math.sin(p * 1.6) * 0.9;
-      this.leftLeg.rotation.x = Math.sin(p * 2.2) * 0.45;
-      this.rightLeg.rotation.x = -Math.sin(p * 2.2) * 0.45;
+      g.pelvisY = 0.55;
+      g.torsoRot.set(1.15, 0, 0);
+      g.headRot.set(-0.85, 0, 0);
+      g.leftArm.set(-1.6 + Math.sin(p * 1.6) * 0.9, 0, 0.3);
+      g.rightArm.set(-1.6 - Math.sin(p * 1.6) * 0.9, 0, -0.3);
+      g.leftLeg.set(Math.sin(p * 2.2) * 0.45, 0, 0);
+      g.rightLeg.set(-Math.sin(p * 2.2) * 0.45, 0, 0);
     } else if (state === 'shield_surf') {
-      this.pelvis.position.y = 0.72;
-      this.pelvis.rotation.y = 0.72;
-      this.torso.rotation.x = 0.2;
-      this.leftLeg.rotation.x = -0.4;
-      this.rightLeg.rotation.x = -0.2;
-      this.leftShin.rotation.x = 0.7;
-      this.rightShin.rotation.x = 0.5;
-      this.leftArm.rotation.set(0, 0, 1.05);
-      this.rightArm.rotation.set(0, 0, -1.05);
+      g.pelvisY = 0.72;
+      g.pelvisRot.set(0, 0.72, 0);
+      g.torsoRot.set(0.2, 0, 0);
+      g.leftLeg.set(-0.4, 0, 0);
+      g.rightLeg.set(-0.2, 0, 0);
+      g.leftShin.set(0.7, 0, 0);
+      g.rightShin.set(0.5, 0, 0);
+      g.leftArm.set(0, 0, 1.05);
+      g.rightArm.set(0, 0, -1.05);
     } else if (state === 'bow_aim') {
-      this.torso.rotation.y = -0.65;
-      this.headGroup.rotation.y = 0.65;
-      this.leftArm.rotation.set(-1.45, 0.65, 0);
-      this.rightArm.rotation.set(-1.45, -0.25, -0.4);
-      this.rightForearm.rotation.set(-0.4, 0, 0.8);
+      g.torsoRot.set(0, -0.65, 0);
+      g.headRot.set(0, 0.65, 0);
+      g.leftArm.set(-1.45, 0.65, 0);
+      g.rightArm.set(-1.45, -0.25, -0.4);
+      g.rightForearm.set(-0.4, 0, 0.8);
     } else if (state === 'guard') {
-      this.torso.rotation.y = -0.28;
-      this.leftArm.rotation.set(-1.15, 0.55, 0.25);
-      this.rightArm.rotation.set(-0.55, -0.2, -0.3);
+      g.torsoRot.set(0.05, -0.28, 0);
+      g.leftArm.set(-1.15, 0.55, 0.25);
+      g.rightArm.set(-0.55, -0.2, -0.3);
     } else if (state === 'ride') {
-      this.pelvis.position.y = 0.74;
-      this.torso.rotation.x = 0.18;
-      this.leftLeg.rotation.set(-0.9, 0, 0.35);
-      this.rightLeg.rotation.set(-0.9, 0, -0.35);
-      this.leftShin.rotation.x = 1.1;
-      this.rightShin.rotation.x = 1.1;
-      this.leftArm.rotation.x = -0.95;
-      this.rightArm.rotation.x = -0.95;
+      g.pelvisY = 0.74;
+      g.torsoRot.set(0.18, 0, 0);
+      g.leftLeg.set(-0.9, 0, 0.35);
+      g.rightLeg.set(-0.9, 0, -0.35);
+      g.leftShin.set(1.1, 0, 0);
+      g.rightShin.set(1.1, 0, 0);
+      g.leftArm.set(-0.95, 0, 0.14);
+      g.rightArm.set(-0.95, 0, -0.14);
     }
 
     // Sword attack swing overlay + glowing slash arc
-    if (this.attackSwingTimer > 0) {
+    const isAttacking = this.attackSwingTimer > 0;
+    if (isAttacking) {
       this.attackSwingTimer = Math.max(0, this.attackSwingTimer - dt);
       const t = 1 - this.attackSwingTimer / 0.32;
       const dir = this.attackComboIndex % 2 === 0 ? 1 : -1;
       if (isSpinAttack) {
-        this.pelvis.rotation.y = t * Math.PI * 2;
-        this.rightArm.rotation.set(-1.45, 0, -1.2);
+        g.pelvisRot.y = t * Math.PI * 2;
+        g.rightArm.set(-1.45, 0, -1.2);
       } else {
-        this.torso.rotation.y = dir * (-0.9 + t * 1.9);
-        this.rightArm.rotation.set(-1.35, dir * (-1.1 + t * 2.2), -0.45);
+        g.torsoRot.y = dir * (-0.9 + t * 1.9);
+        g.rightArm.set(-1.35, dir * (-1.1 + t * 2.2), -0.45);
       }
       const slashMat = this.swordSlashArc.material as THREE.MeshBasicMaterial;
       slashMat.opacity = Math.sin(t * Math.PI) * 0.78;
@@ -907,9 +1184,48 @@ export class LinkCharacterModel {
       (this.swordSlashArc.material as THREE.MeshBasicMaterial).opacity = 0;
     }
 
-    // Dynamic cape flutter in wind
+    // Smooth exponential joint interpolation (fluid transitions with zero pose snapping!)
+    const blendSpeed = isAttacking ? 34.0 : 15.5;
+    const alpha = 1 - Math.exp(-blendSpeed * Math.max(0.001, dt));
+    this.pelvis.position.y = THREE.MathUtils.lerp(this.pelvis.position.y, g.pelvisY, alpha);
+    lerpEuler(this.pelvis.rotation, g.pelvisRot, alpha);
+    lerpEuler(this.torso.rotation, g.torsoRot, alpha);
+    lerpEuler(this.headGroup.rotation, g.headRot, alpha);
+    lerpEuler(this.leftArm.rotation, g.leftArm, alpha);
+    lerpEuler(this.rightArm.rotation, g.rightArm, alpha);
+    lerpEuler(this.leftForearm.rotation, g.leftForearm, alpha);
+    lerpEuler(this.rightForearm.rotation, g.rightForearm, alpha);
+    lerpEuler(this.leftLeg.rotation, g.leftLeg, alpha);
+    lerpEuler(this.rightLeg.rotation, g.rightLeg, alpha);
+    lerpEuler(this.leftShin.rotation, g.leftShin, alpha);
+    lerpEuler(this.rightShin.rotation, g.rightShin, alpha);
+
+    // Secondary physics: Ponytail wind sway & cape flutter
+    const sway = Math.min(0.45, moveSpeed * 0.045);
+    this.ponytailGroup.rotation.x = THREE.MathUtils.lerp(
+      this.ponytailGroup.rotation.x,
+      sway + Math.sin(p * 1.6) * 0.08,
+      1 - Math.exp(-10 * dt)
+    );
+    this.ponytailGroup.rotation.z = THREE.MathUtils.lerp(
+      this.ponytailGroup.rotation.z,
+      Math.cos(p * 1.1) * (0.04 + sway * 0.25),
+      1 - Math.exp(-10 * dt)
+    );
+
     if (this.capeMesh.visible) {
-      this.capeMesh.rotation.x = 0.12 + Math.min(0.55, moveSpeed * 0.05) + Math.sin(p * 1.8) * 0.06;
+      this.capeMesh.rotation.x = THREE.MathUtils.lerp(
+        this.capeMesh.rotation.x,
+        0.12 + Math.min(0.55, moveSpeed * 0.05) + Math.sin(p * 1.8) * 0.06,
+        1 - Math.exp(-10 * dt)
+      );
+    }
+
+    // Dynamic Torch Flame flicker
+    if (this.handTorchGroup.visible) {
+      const f = 0.85 + Math.sin(p * 5.2) * 0.18 + Math.cos(p * 8.4) * 0.08;
+      this.torchFlameMesh.scale.set(0.95 + Math.sin(p * 6.0) * 0.12, f, 0.95 + Math.cos(p * 6.0) * 0.12);
+      this.torchLight.intensity = 2.0 + Math.sin(p * 7.1) * 0.55;
     }
   }
 }

@@ -109,6 +109,7 @@ function createStarterWeapons(): Array<WeaponDef & { currentDurability: number }
   const ids = [
     'master_sword',
     'travelers_sword',
+    'torch',
     'flameblade',
     'frostblade',
     'thunderblade',
@@ -271,6 +272,11 @@ export function createDefaultSave(mode: SaveMode): SaveSlotData {
       glitchPhysics: true,
       cameraMode: 'tps',
       muted: false,
+      touchControlsMode: 'auto',
+      graphicsQuality:
+        typeof navigator !== 'undefined' && (navigator.maxTouchPoints > 0 || /iPad|iPhone|iPod|Android/i.test(navigator.userAgent))
+          ? 'medium'
+          : 'high',
     },
   };
 }

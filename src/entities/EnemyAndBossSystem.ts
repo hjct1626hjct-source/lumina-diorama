@@ -13,6 +13,8 @@ export const SPECIES_KILL_POINTS: Partial<Record<EnemySpecies, number>> = {
   bokoblin: 15,
   moblin: 25,
   lizalfos: 30,
+  stal_mage: 35,
+  wizzrobe: 45,
   lynel: 120,
   guardian_stalker: 85,
   hinox: 70,
@@ -76,9 +78,15 @@ export interface WorldEnemy {
   isBoss: boolean;
   isShockImmune: boolean;
   isGuardian: boolean;
+  isHoverCaster?: boolean;
+  casterElement?: 'fire' | 'ice' | 'shock';
   guardianCharge: number; // 0..1 aiming laser buildup
   guardianLaserMesh?: THREE.Mesh;
   root: THREE.Group;
+  fallbackGroup?: THREE.Group | null;
+  glbKey?: string;
+  glbScale?: number;
+  glbTint?: string;
   glbInstance?: NormalizedInstance | null;
   hitFlashTimer: number;
   yigaBlademaster?: boolean;
@@ -161,12 +169,15 @@ export class EnemyAndBossSystem {
       baseHp: number;
       atk: number;
       isBoss?: boolean;
+      casterElement?: 'fire' | 'ice' | 'shock';
     }> = [
-      // Great Plateau encounters (spaced nicely away from spawn overlook for clean screenshots & fun fights!)
+      // Great Plateau encounters (spaced cleanly for exploration & fights!)
       { id: 'boko_gp_1', species: 'bokoblin', nameJa: 'ボコブリン', tier: 'red', x: -255, z: 422, baseHp: 40, atk: 8 },
       { id: 'boko_gp_2', species: 'bokoblin', nameJa: 'ボコブリン', tier: 'red', x: -200, z: 455, baseHp: 40, atk: 8 },
       { id: 'boko_gp_3', species: 'bokoblin', nameJa: 'ボコブリン', tier: 'blue', x: -165, z: 470, baseHp: 55, atk: 12 },
       { id: 'stal_gp_1', species: 'stal_bokoblin', nameJa: 'スタルボコブリン', tier: 'red', x: -292, z: 515, baseHp: 35, atk: 10 },
+      { id: 'wizzrobe_gp_fire', species: 'wizzrobe', nameJa: 'ファイアウィズローブ', tier: 'red', x: -178, z: 438, baseHp: 150, atk: 18, casterElement: 'fire' },
+      { id: 'stal_mage_gp', species: 'stal_mage', nameJa: 'スタル魔導士', tier: 'blue', x: -268, z: 505, baseHp: 90, atk: 16, casterElement: 'shock' },
       { id: 'talus_gp', species: 'stone_talus', nameJa: 'イワロック', tier: 'boss', x: -275, z: 410, baseHp: 300, atk: 24, isBoss: true },
       { id: 'guard_gp', species: 'guardian_decayed', nameJa: '朽ちたガーディアン', tier: 'boss', x: -158, z: 486, baseHp: 500, atk: 32 },
       // Central Hyrule & Hyrule Castle
@@ -174,8 +185,10 @@ export class EnemyAndBossSystem {
       { id: 'guard_hc_2', species: 'guardian_stalker', nameJa: 'ガーディアン（歩行型）', tier: 'boss', x: -80, z: -120, baseHp: 1500, atk: 38, isBoss: true },
       { id: 'moblin_ch_1', species: 'moblin', nameJa: 'モリブリン', tier: 'blue', x: -140, z: 220, baseHp: 75, atk: 16 },
       { id: 'calamity_ganon', species: 'calamity_ganon', nameJa: '厄災ガノン', tier: 'boss', x: -80, z: -260, baseHp: 4000, atk: 44, isBoss: true },
-      // Regional signature monsters & lynels & hinoxes
+      // Regional signature monsters, Wizzrobes, Lynels & Hinoxes
       { id: 'lizal_lan', species: 'lizalfos', nameJa: 'リザルフォス', tier: 'blue', x: 820, z: -60, baseHp: 70, atk: 18 },
+      { id: 'wizzrobe_lan_elec', species: 'wizzrobe', nameJa: 'ボルトウィズローブ', tier: 'blue', x: 780, z: -110, baseHp: 180, atk: 22, casterElement: 'shock' },
+      { id: 'wizzrobe_hebra_ice', species: 'wizzrobe', nameJa: 'アイスウィズローブ', tier: 'blue', x: -690, z: -690, baseHp: 180, atk: 22, casterElement: 'ice' },
       { id: 'lynel_pl', species: 'lynel', nameJa: 'ライネル', tier: 'red', x: 990, z: -170, baseHp: 2000, atk: 36, isBoss: true },
       { id: 'hinox_dp', species: 'hinox', nameJa: 'ヒノックス', tier: 'boss', x: 310, z: 440, baseHp: 600, atk: 26, isBoss: true },
       { id: 'stal_ak', species: 'stal_moblin', nameJa: 'スタルモリブリン', tier: 'blue', x: 980, z: -420, baseHp: 65, atk: 18 },
@@ -198,6 +211,114 @@ export class EnemyAndBossSystem {
     this.buildSkyDragons();
   }
 
+  private resolveEnemyGlbSpec(
+    species: EnemySpecies,
+    tier: EnemyTier,
+    yigaBlademaster?: boolean,
+    casterElement?: 'fire' | 'ice' | 'shock'
+  ): { key: string; scale: number; tint?: string } | null {
+    const tierCol = TIER_COLORS[tier];
+    switch (species) {
+      case 'bokoblin':
+        return { key: 'npc_barbarian', scale: 0.80, tint: tierCol };
+      case 'moblin':
+        return { key: 'npc_barbarian', scale: 1.38, tint: tierCol };
+      case 'lizalfos':
+        return { key: 'npc_rogue', scale: 1.05, tint: tierCol };
+      case 'stal_bokoblin':
+        return { key: 'stal_minion', scale: 0.96 };
+      case 'stal_moblin':
+        return { key: 'stal_warrior', scale: 1.26 };
+      case 'stal_mage':
+        return { key: 'stal_mage', scale: 1.05, tint: '#8e6ce8' };
+      case 'wizzrobe':
+        return {
+          key: 'stal_mage',
+          scale: 1.08,
+          tint: casterElement === 'ice' ? '#58c8f8' : casterElement === 'shock' ? '#f2d044' : '#e65432',
+        };
+      case 'monk_maz_koshia':
+        return { key: 'stal_mage', scale: 1.48, tint: '#c8ae74' };
+      case 'yiga_footsoldier':
+      case 'yiga_blademaster':
+        return {
+          key: yigaBlademaster ? 'npc_barbarian' : 'npc_rogue',
+          scale: yigaBlademaster ? 1.28 : 1.0,
+          tint: '#b8242e',
+        };
+      default:
+        return null;
+    }
+  }
+
+  private attachSpeciesAccents(
+    parent: THREE.Group,
+    species: EnemySpecies,
+    scale: number,
+    yigaBlademaster?: boolean,
+    casterElement?: 'fire' | 'ice' | 'shock'
+  ): void {
+    const boneMat = createBotWToonMaterial({ color: '#efe5cc', rimStrength: 0.35 });
+    if (species === 'bokoblin' || species === 'moblin') {
+      const horn = new THREE.Mesh(new THREE.ConeGeometry(0.11 * scale, 0.52 * scale, 7), boneMat);
+      horn.position.set(0, 1.88 * scale, 0.08 * scale);
+      horn.rotation.x = 0.28;
+      parent.add(horn);
+    } else if (species === 'lizalfos') {
+      const fin = new THREE.Mesh(new THREE.ConeGeometry(0.10 * scale, 0.48 * scale, 5), boneMat);
+      fin.position.set(0, 1.76 * scale, -0.10 * scale);
+      fin.rotation.x = -0.55;
+      parent.add(fin);
+    } else if (species === 'yiga_footsoldier' || species === 'yiga_blademaster') {
+      const mask = new THREE.Mesh(
+        new THREE.CircleGeometry(0.22, 10),
+        createBotWToonMaterial({ color: '#f5f0e2', emissive: '#e02828', emissiveIntensity: 0.25 })
+      );
+      mask.position.set(0, yigaBlademaster ? 1.85 : 1.48, 0.24);
+      parent.add(mask);
+    } else if (species === 'monk_maz_koshia') {
+      const halo = new THREE.Mesh(
+        new THREE.TorusGeometry(0.95, 0.08, 8, 22),
+        createBotWToonMaterial({ color: '#f2ce58', emissive: '#2ce8ff', emissiveIntensity: 1.5 })
+      );
+      halo.position.set(0, 2.35, -0.25);
+      parent.add(halo);
+    } else if (species === 'wizzrobe' || species === 'stal_mage') {
+      const orbCol = casterElement === 'ice' ? '#62e8ff' : casterElement === 'fire' ? '#ff6424' : '#c868ff';
+      const orb = new THREE.Mesh(
+        new THREE.OctahedronGeometry(0.22, 1),
+        new THREE.MeshBasicMaterial({ color: orbCol })
+      );
+      orb.position.set(0.45, 1.75, 0.35);
+      parent.add(orb);
+    }
+  }
+
+  /**
+   * Seamlessly hot-swaps any enemy waiting on a deferred heavy GLB while preserving HP, position, and combat AI!
+   */
+  public hotSwapModel(key: string): number {
+    let swapped = 0;
+    for (const e of this.enemies) {
+      if (!e.glbKey || e.glbKey !== key || e.glbInstance) continue;
+      const inst = modelLoader.instantiate(key, {
+        scaleMultiplier: e.glbScale ?? 1.0,
+        tintColor: e.glbTint,
+      });
+      if (!inst) continue;
+      if (e.fallbackGroup) {
+        e.root.remove(e.fallbackGroup);
+        e.fallbackGroup = null;
+      }
+      e.root.add(inst.root);
+      this.attachSpeciesAccents(e.root, e.species, e.glbScale ?? 1.0, e.yigaBlademaster, e.casterElement);
+      inst.playClip(e.alertState === 'chase' ? 'run' : 'idle');
+      e.glbInstance = inst;
+      swapped++;
+    }
+    return swapped;
+  }
+
   spawnEnemy(spec: {
     id: string;
     species: EnemySpecies;
@@ -209,46 +330,46 @@ export class EnemyAndBossSystem {
     atk: number;
     isBoss?: boolean;
     yigaBlademaster?: boolean;
+    casterElement?: 'fire' | 'ice' | 'shock';
   }): WorldEnemy {
     const y = getTerrainHeight(spec.x, spec.z);
     const root = new THREE.Group();
     root.position.set(spec.x, y, spec.z);
 
     let glbInstance: NormalizedInstance | null = null;
+    let fallbackGroup: THREE.Group | null = null;
     let guardianLaserMesh: THREE.Mesh | undefined;
     const tierCol = TIER_COLORS[spec.tier];
 
-    if (spec.species === 'stal_bokoblin' || spec.species === 'stal_moblin') {
-      // Use real CC0 animated KayKit Skeleton GLBs!
-      const glbKey = spec.species === 'stal_moblin' ? 'stal_warrior' : 'stal_minion';
-      glbInstance = modelLoader.instantiate(glbKey, { scaleMultiplier: spec.species === 'stal_moblin' ? 1.25 : 0.95 });
-      if (glbInstance) root.add(glbInstance.root);
-    } else if (spec.species === 'yiga_footsoldier' || spec.species === 'yiga_blademaster') {
-      glbInstance = modelLoader.instantiate(spec.yigaBlademaster ? 'npc_barbarian' : 'npc_rogue', {
-        tintColor: '#b8242e',
-        scaleMultiplier: spec.yigaBlademaster ? 1.28 : 1.0,
+    const glbSpec = this.resolveEnemyGlbSpec(spec.species, spec.tier, spec.yigaBlademaster, spec.casterElement);
+    if (glbSpec) {
+      glbInstance = modelLoader.instantiate(glbSpec.key, {
+        scaleMultiplier: glbSpec.scale,
+        tintColor: glbSpec.tint,
       });
       if (glbInstance) {
         root.add(glbInstance.root);
-        // Iconic Yiga upside-down Sheikah eye white mask!
-        const mask = new THREE.Mesh(
-          new THREE.CircleGeometry(0.22, 10),
-          createBotWToonMaterial({ color: '#f5f0e2', emissive: '#e02828', emissiveIntensity: 0.25 })
-        );
-        mask.position.set(0, spec.yigaBlademaster ? 1.85 : 1.48, 0.24);
-        root.add(mask);
+        this.attachSpeciesAccents(root, spec.species, glbSpec.scale, spec.yigaBlademaster, spec.casterElement);
       }
     }
 
     if (!glbInstance) {
-      guardianLaserMesh = this.buildSculptedMonsterMesh(root, spec.species, tierCol);
+      fallbackGroup = new THREE.Group();
+      guardianLaserMesh = this.buildSculptedMonsterMesh(fallbackGroup, spec.species, tierCol, spec.casterElement);
+      root.add(fallbackGroup);
     }
 
     this.group.add(root);
+    const showTierPrefix =
+      spec.tier !== 'boss' &&
+      spec.tier !== 'red' &&
+      spec.species !== 'wizzrobe' &&
+      spec.species !== 'stal_mage';
+    const tierPrefix: Partial<Record<EnemyTier, string>> = { blue: '青', black: '黒', silver: '白銀', gold: '黄金' };
     const enemy: WorldEnemy = {
       id: spec.id,
       species: spec.species,
-      nameJa: `${spec.tier !== 'boss' && spec.tier !== 'red' ? ({ blue: '青', black: '黒', silver: '白銀', gold: '黄金' }[spec.tier] ?? '') : ''}${spec.nameJa}`,
+      nameJa: `${showTierPrefix ? tierPrefix[spec.tier] ?? '' : ''}${spec.nameJa}`,
       baseTier: spec.tier,
       tier: spec.tier,
       position: new THREE.Vector3(spec.x, y, spec.z),
@@ -270,9 +391,15 @@ export class EnemyAndBossSystem {
       isBoss: !!spec.isBoss,
       isShockImmune: spec.species === 'lynel' || spec.species === 'thunderblight',
       isGuardian: spec.species === 'guardian_stalker' || spec.species === 'guardian_decayed',
+      isHoverCaster: spec.species === 'wizzrobe' || spec.species === 'stal_mage',
+      casterElement: spec.casterElement,
       guardianCharge: 0,
       guardianLaserMesh,
       root,
+      fallbackGroup,
+      glbKey: glbSpec?.key,
+      glbScale: glbSpec?.scale,
+      glbTint: glbSpec?.tint,
       glbInstance,
       hitFlashTimer: 0,
       yigaBlademaster: spec.yigaBlademaster,
@@ -282,11 +409,44 @@ export class EnemyAndBossSystem {
     return enemy;
   }
 
-  private buildSculptedMonsterMesh(parent: THREE.Group, species: EnemySpecies, tierHex: string): THREE.Mesh | undefined {
+  private buildSculptedMonsterMesh(
+    parent: THREE.Group,
+    species: EnemySpecies,
+    tierHex: string,
+    casterElement?: 'fire' | 'ice' | 'shock'
+  ): THREE.Mesh | undefined {
     const shTex = textureBank.getSheikahStoneTexture();
     const skinMat = createBotWToonMaterial({ color: tierHex, rimStrength: 0.42 });
     const boneMat = createBotWToonMaterial({ color: '#ede3cc' });
     const eyeMat = createBotWToonMaterial({ color: '#ffd838', emissive: '#ffaa14', emissiveIntensity: 0.9 });
+
+    if (species === 'wizzrobe' || species === 'stal_mage') {
+      const robeHex =
+        species === 'stal_mage'
+          ? '#4b3b78'
+          : casterElement === 'ice'
+          ? '#3aa8e8'
+          : casterElement === 'shock'
+          ? '#d9b42e'
+          : '#c93a2b';
+      const orbHex =
+        casterElement === 'ice' ? '#70eeff' : casterElement === 'fire' ? '#ff6a24' : '#d278ff';
+      const robeMat = createBotWToonMaterial({ color: robeHex, rimStrength: 0.48 });
+      const robe = new THREE.Mesh(new THREE.ConeGeometry(0.68, 1.85, 10), robeMat);
+      robe.position.y = 1.05;
+      robe.castShadow = true;
+      const hood = new THREE.Mesh(new THREE.SphereGeometry(0.34, 12, 10), robeMat);
+      hood.position.y = 2.02;
+      const face = new THREE.Mesh(new THREE.SphereGeometry(0.24, 10, 8), boneMat);
+      face.position.set(0, 1.98, 0.14);
+      const staff = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.03, 1.9, 6), createBotWToonMaterial({ color: '#5c3c22' }));
+      staff.position.set(0.54, 1.25, 0.22);
+      staff.rotation.z = -0.18;
+      const orb = new THREE.Mesh(new THREE.OctahedronGeometry(0.24, 1), new THREE.MeshBasicMaterial({ color: orbHex }));
+      orb.position.set(0.68, 2.22, 0.24);
+      parent.add(robe, hood, face, staff, orb);
+      return undefined;
+    }
 
     if (species === 'guardian_stalker' || species === 'guardian_decayed') {
       // Iconic Sheikah Guardian Stalker with Jomon dome, rotating eye turret, 6 segmented spider legs & red targeting laser!
@@ -638,13 +798,17 @@ export class EnemyAndBossSystem {
       } else {
         e.position.y = getTerrainHeight(e.position.x, e.position.z);
       }
+      if (e.isHoverCaster && e.ragdollTimer <= 0) {
+        const hoverBase = e.species === 'wizzrobe' ? 1.15 : 0.35;
+        e.position.y = getTerrainHeight(e.position.x, e.position.z) + hoverBase + Math.sin(timeSec * 2.8 + e.spawnPos.x) * 0.28;
+      }
 
       // Monster Mask / Majora's Mask Disguise & Stealth detection radius!
       const isDisguised =
         opts.disguises.includes('majora') ||
         opts.disguises.includes(e.species) ||
-        (opts.disguises.includes('stal') && (e.species === 'stal_bokoblin' || e.species === 'stal_moblin'));
-      const detectRadius = isDisguised ? 4.5 : Math.max(9, (e.isGuardian ? 38 : 22) - opts.stealthLevel * 4.5);
+        (opts.disguises.includes('stal') && (e.species === 'stal_bokoblin' || e.species === 'stal_moblin' || e.species === 'stal_mage'));
+      const detectRadius = isDisguised ? 4.5 : Math.max(9, (e.isGuardian ? 38 : e.isHoverCaster ? 26 : 22) - opts.stealthLevel * 4.5);
 
       if (dist < detectRadius && !isDisguised) {
         inCombat = true;
@@ -668,6 +832,19 @@ export class EnemyAndBossSystem {
           if (e.species === 'guardian_stalker' && dist > 16) {
             e.position.x += Math.sin(e.yaw) * 4.4 * dt;
             e.position.z += Math.cos(e.yaw) * 4.4 * dt;
+          }
+        } else if (e.isHoverCaster) {
+          // Strafe gracefully while maintaining casting range & firing elemental magic orbs!
+          const orbitDir = e.yaw + Math.PI * 0.42;
+          const moveSpd = dist < 8 ? -2.4 : dist > 16 ? 3.2 : 2.0;
+          e.position.x += (dist > 16 ? Math.sin(e.yaw) : Math.sin(orbitDir)) * moveSpd * dt;
+          e.position.z += (dist > 16 ? Math.cos(e.yaw) : Math.cos(orbitDir)) * moveSpd * dt;
+          if (e.attackCooldown <= 0) {
+            e.attackCooldown = 3.0;
+            e.glbInstance?.playClip('attack');
+            this.fireWizzrobeOrb(e, playerPos);
+          } else {
+            e.glbInstance?.playClip('walk');
           }
         } else if (dist > e.radius + 1.55) {
           const speed = e.species === 'lynel' || e.species === 'lizalfos' ? 6.2 : e.species === 'hinox' ? 3.2 : 4.2;
@@ -744,8 +921,35 @@ export class EnemyAndBossSystem {
       }
     }
 
-    void timeSec;
     return { inCombat, guardianLocked, activeBoss };
+  }
+
+  private fireWizzrobeOrb(caster: WorldEnemy, playerPos: THREE.Vector3): void {
+    const start = caster.position.clone().add(new THREE.Vector3(0, 1.65, 0));
+    const dir = playerPos.clone().add(new THREE.Vector3(0, 1.0, 0)).sub(start).normalize();
+    const col =
+      caster.casterElement === 'ice'
+        ? '#68ecff'
+        : caster.casterElement === 'fire'
+        ? '#ff6a22'
+        : '#d678ff';
+    const mesh = new THREE.Mesh(
+      new THREE.OctahedronGeometry(0.36, 1),
+      new THREE.MeshBasicMaterial({ color: col })
+    );
+    mesh.position.copy(start);
+    this.group.add(mesh);
+
+    this.projectiles.push({
+      id: `orb_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+      fromEnemy: true,
+      isGuardianLaser: false,
+      position: start,
+      velocity: dir.multiplyScalar(15.5),
+      damage: caster.attack,
+      life: 3.2,
+      mesh,
+    });
   }
 
   private fireGuardianBeam(guardian: WorldEnemy, playerPos: THREE.Vector3): void {

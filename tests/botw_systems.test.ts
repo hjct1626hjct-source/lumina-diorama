@@ -18,7 +18,16 @@ import {
   TRIAL_OF_THE_SWORD_STAGES,
 } from '../src/data/storyAndQuests';
 import { getTerrainHeight, isNoBikeZone } from '../src/world/TerrainGenerator';
-import { evaluateChemistryInteraction, evaluateElementVsElement } from '../src/physics/PhysicsChemistryEngine';
+import {
+  PhysicsChemistryEngine,
+  evaluateChemistryInteraction,
+  evaluateElementVsElement,
+} from '../src/physics/PhysicsChemistryEngine';
+import {
+  ALL_MODEL_KEYS,
+  DEFERRED_CHARACTER_MODELS,
+  ESSENTIAL_PLATEAU_MODELS,
+} from '../src/rendering/ModelLoader';
 import { computeBlightGanonHp, computeScaledEnemyTier } from '../src/entities/EnemyAndBossSystem';
 import { KOROK_33_PUZZLE_TYPES, evaluateNpcEventFlow, type WorldNpc } from '../src/entities/NpcAndKorokSystem';
 import { computeCompletionPercent, createDefaultSave, recordHeroPathSample } from '../src/save/SaveManager';
@@ -213,5 +222,65 @@ describe('Lore, 23 Memories, 147 Quests, LevelSensor, Koroks & 100% Completion',
     recordHeroPathSample(save, 20, 10, 0);
     expect(save.heroPath.length).toBe(2);
     expect(computeCompletionPercent(save)).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe('3D Spatial-Hash Collision, Camera Clamping & 21-GLB Progressive Loading Catalog', () => {
+  it('blocks player capsule from clipping through AABB/OBB walls and cylinders, supports walkable tops, and clamps camera', () => {
+    const scene = new THREE.Scene();
+    const physics = new PhysicsChemistryEngine(scene);
+
+    // Temple wall box: x in [-2, 2], z in [9, 11], y in [0, 8]
+    physics.addBoxCollider('temple_wall', 0, 10, 4, 2, 0, 8, { climbable: true, walkableTop: true });
+    // Pillar cylinder at (12, 10), radius 1.2, height 6
+    physics.addCylinderCollider('ruin_pillar', 12, 10, 1.2, 0, 6, { climbable: true });
+    // Walkable plinth step at (-10, 10), height 1.0
+    physics.addBoxCollider('temple_step', -10, 10, 4, 4, 0, 1.0, { walkableTop: true });
+
+    // 1. Walking into front face of temple wall pushes player cleanly outside z <= 9 - radius (0.44)
+    const p = new THREE.Vector3(0, 0.1, 9.25);
+    const hit = physics.resolveCapsuleCollision(p, 0.44, 1.65);
+    expect(hit.collidedHorizontal).toBe(true);
+    expect(hit.hitClimbable).toBe(true);
+    expect(p.z).toBeLessThanOrEqual(8.57);
+    expect(hit.hitNormal.z).toBeLessThan(-0.9);
+
+    // 2. Cylinder pillar push-out keeps player radius outside pillar radius (1.2 + 0.44 = 1.64)
+    const p2 = new THREE.Vector3(12.6, 0.1, 10.0);
+    const hitCyl = physics.resolveCapsuleCollision(p2, 0.44, 1.65);
+    expect(hitCyl.collidedHorizontal).toBe(true);
+    expect(Math.hypot(p2.x - 12, p2.z - 10)).toBeGreaterThanOrEqual(1.63);
+
+    // 3. Standing above walkable plinth reports supportY = 1.0 without horizontal push
+    const pTop = new THREE.Vector3(-10, 1.05, 10);
+    const hitTop = physics.resolveCapsuleCollision(pTop, 0.44, 1.65);
+    expect(hitTop.collidedHorizontal).toBe(false);
+    expect(hitTop.supportY).toBeCloseTo(1.0, 2);
+
+    // 4. Camera raycast behind wall clamps forward in front of wall
+    const camOut = new THREE.Vector3();
+    const clamped = physics.clampCameraPosition(
+      new THREE.Vector3(0, 1.5, 6.0),
+      new THREE.Vector3(0, 1.5, 14.0),
+      camOut
+    );
+    expect(clamped).toBe(camOut);
+    expect(camOut.z).toBeLessThan(9.0);
+  });
+
+  it('partitions all 21 GLB models cleanly into lightweight essential tier + deferred heavy tier without overlap', () => {
+    const combined = [...ESSENTIAL_PLATEAU_MODELS, ...DEFERRED_CHARACTER_MODELS];
+    const unique = new Set(combined);
+    expect(ALL_MODEL_KEYS).toHaveLength(21);
+    expect(unique.size).toBe(21);
+    expect(unique.has('sword_shield')).toBe(true);
+    expect(unique.has('torch')).toBe(true);
+    expect(unique.has('wall_arched')).toBe(true);
+    expect(unique.has('stal_mage')).toBe(true);
+
+    const save = createDefaultSave('normal');
+    expect(save.settings.touchControlsMode).toBe('auto');
+    expect(['high', 'medium', 'low']).toContain(save.settings.graphicsQuality);
+    expect(save.weapons.some((w) => w.id === 'torch')).toBe(true);
   });
 });

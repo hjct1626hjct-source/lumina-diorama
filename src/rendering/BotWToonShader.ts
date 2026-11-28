@@ -63,6 +63,8 @@ export interface BotWToonOptions {
   map?: THREE.Texture | null;
   normalMap?: THREE.Texture | null;
   normalScale?: THREE.Vector2;
+  aoMap?: THREE.Texture | null;
+  aoMapIntensity?: number;
   emissive?: THREE.ColorRepresentation;
   emissiveMap?: THREE.Texture | null;
   emissiveIntensity?: number;
@@ -85,20 +87,22 @@ export interface BotWToonOptions {
 
 /**
  * Creates a custom BotW painterly 3-step cel-shaded material with:
- * - 3-step quantized sun diffuse lighting
+ * - True normalMap & aoMap-aware 3-step quantized sun diffuse lighting (prevents white blowout & flatness)
  * - Blue-violet/indigo shadow tinting (or soft warm peach shadow for anime skin/faces)
  * - Soft directional Fresnel rim lighting
  * - Height-and-distance atmospheric scattering aerial perspective fog
  * - Optional Sheikah animated orange->cyan constellation circuit glow
  * - Optional Magnesis / Stasis rune highlight overlays
- * Compatible with SkinnedMesh (animated GLBs), InstancedMesh, shadows, and normal maps.
+ * Compatible with SkinnedMesh (animated GLBs), InstancedMesh, shadows, normal maps, and AO maps.
  */
 export function createBotWToonMaterial(opts: BotWToonOptions = {}): THREE.MeshToonMaterial {
   const mat = new THREE.MeshToonMaterial({
     color: opts.color ?? 0xffffff,
     map: opts.map ?? null,
     normalMap: opts.normalMap ?? null,
-    normalScale: opts.normalScale ?? new THREE.Vector2(0.75, 0.75),
+    normalScale: opts.normalScale ?? new THREE.Vector2(0.85, 0.85),
+    aoMap: opts.aoMap ?? null,
+    aoMapIntensity: opts.aoMapIntensity ?? 1.0,
     emissive: opts.emissive !== undefined ? new THREE.Color(opts.emissive) : new THREE.Color(0x000000),
     emissiveMap: opts.emissiveMap ?? null,
     emissiveIntensity: opts.emissiveIntensity ?? 1.0,
@@ -112,8 +116,8 @@ export function createBotWToonMaterial(opts: BotWToonOptions = {}): THREE.MeshTo
   });
 
   const localUniforms = {
-    uRimStrength: { value: opts.rimStrength ?? 0.36 },
-    uRimPower: { value: opts.rimPower ?? 2.8 },
+    uRimStrength: { value: opts.rimStrength ?? 0.34 },
+    uRimPower: { value: opts.rimPower ?? 2.9 },
     uRimTint: { value: new THREE.Color(opts.rimTint ?? '#ffffff') },
     uSheikahMode: { value: opts.sheikahCircuit ? 1.0 : 0.0 },
     uSheikahActivated: { value: opts.sheikahActivated ?? 0.0 },
@@ -126,7 +130,7 @@ export function createBotWToonMaterial(opts: BotWToonOptions = {}): THREE.MeshTo
 
   mat.userData.botwUniforms = localUniforms;
 
-  const cacheKey = `botw_toon_${opts.sheikahCircuit ? 'sh' : 'std'}_${opts.metalHighlight ? 'm' : 'n'}_${opts.warmSkinShadow ? 'sk' : 'df'}`;
+  const cacheKey = `botw_toon_v2_${opts.sheikahCircuit ? 'sh' : 'std'}_${opts.metalHighlight ? 'm' : 'n'}_${opts.warmSkinShadow ? 'sk' : 'df'}`;
   mat.customProgramCacheKey = () => cacheKey;
 
   mat.onBeforeCompile = (shader) => {
@@ -188,41 +192,56 @@ export function createBotWToonMaterial(opts: BotWToonOptions = {}): THREE.MeshTo
         '#include <opaque_fragment>',
         `#include <opaque_fragment>
         {
-          vec3 wn = normalize( vBotwWorldNormal );
+          // Use Three.js view-space normal (includes skinning, instancing, DoubleSide flip & normalMap perturbation!)
+          vec3 wnViewToWorld = ( vec4( normal, 0.0 ) * viewMatrix ).xyz;
+          vec3 wn = length( wnViewToWorld ) > 0.001 ? normalize( wnViewToWorld ) : normalize( vBotwWorldNormal );
           vec3 sunD = normalize( uSunDir );
-          float ndl = dot( wn, sunD );
 
-          // Crisp 3-step BotW cel quantization (shadow / midtone / highlight)
-          float stepMid = smoothstep( 0.02, 0.12, ndl );
-          float stepHi  = smoothstep( 0.56, 0.66, ndl );
+          // Preserve GLB AO map crevice contrast so models never look washed out or flat
+          float botwAo = 1.0;
+          #ifdef USE_AOMAP
+            botwAo = clamp( ambientOcclusion, 0.35, 1.0 );
+          #endif
 
-          // Albedo base preserved from diffuseColor (which includes map + vertexColor)
+          float ndl = dot( wn, sunD ) * mix( 0.72, 1.0, botwAo ) - ( 1.0 - botwAo ) * 0.22;
+
+          // Crisp 3-step BotW cel quantization (deep shadow / painterly midtone / clean sunlight highlight)
+          float stepMid = smoothstep( 0.00, 0.11, ndl );
+          float stepHi  = smoothstep( 0.54, 0.65, ndl );
+
+          // Albedo base preserved from diffuseColor (includes map + vertexColor) with anti-blowout shoulder
           vec3 baseCol = diffuseColor.rgb;
-          vec3 coolTint = mix( max( uShadowTint, vec3( 0.42, 0.48, 0.66 ) ), vec3( 0.56, 0.16, 0.24 ), uBloodMoon * 0.65 );
-          vec3 chosenShadowTint = mix( coolTint, vec3( 0.84, 0.74, 0.72 ), uWarmSkin );
-          vec3 shadowCol = baseCol * chosenShadowTint;
-          vec3 midCol    = baseCol * mix( vec3( 0.93, 0.95, 0.99 ), uSunColor, 0.42 );
-          vec3 hiCol     = baseCol * ( uSunColor * 1.10 );
+          vec3 coolTint = mix( max( uShadowTint, vec3( 0.38, 0.44, 0.62 ) ), vec3( 0.56, 0.16, 0.24 ), uBloodMoon * 0.65 );
+          vec3 chosenShadowTint = mix( coolTint, vec3( 0.85, 0.74, 0.71 ), uWarmSkin );
+          vec3 shadowCol = baseCol * chosenShadowTint * mix( 0.82, 1.0, botwAo );
+          vec3 midCol    = baseCol * mix( vec3( 0.90, 0.93, 0.97 ), uSunColor, 0.36 ) * mix( 0.86, 1.0, botwAo );
+          // Gentle highlight shoulder prevents white-blowout on light-colored GLBs while keeping warm BotW sheen
+          vec3 sunLift   = mix( vec3( 1.02 ), uSunColor * 1.06, 0.72 );
+          vec3 hiCol     = min( baseCol * sunLift, baseCol * 0.65 + vec3( 0.42 ) );
 
           vec3 celLit = mix( shadowCol, mix( midCol, hiCol, stepHi ), stepMid );
 
+          // Subtle hemisphere sky-ground bounce for sculpted 3D volume
+          float skyBounce = 0.95 + 0.07 * clamp( wn.y, -1.0, 1.0 );
+          celLit *= skyBounce;
+
           // Preserve dynamic shadow darkening softly (never crushes anime faces to black!)
           float threeLuma = clamp( dot( reflectedLight.directDiffuse + reflectedLight.indirectDiffuse, vec3( 0.299, 0.587, 0.114 ) ), 0.35, 1.30 );
-          celLit *= mix( mix( 0.78, 0.92, uWarmSkin ), 1.06, smoothstep( 0.35, 0.95, threeLuma ) );
+          celLit *= mix( mix( 0.76, 0.91, uWarmSkin ), 1.04, smoothstep( 0.35, 0.95, threeLuma ) );
 
-          // Painterly Fresnel backlight rim light
+          // Painterly Fresnel backlight rim light (modulated by AO & upper hemisphere so interiors don't glow unnaturally)
           vec3 viewDirW = normalize( cameraPosition - vBotwWorldPos );
           float fresnel = pow( clamp( 1.0 - max( dot( wn, viewDirW ), 0.0 ), 0.0, 1.0 ), uRimPower );
-          float sunRimBoost = 0.55 + 0.45 * clamp( dot( -viewDirW, sunD ) * 0.5 + 0.5, 0.0, 1.0 );
-          vec3 rimLight = uRimColor * uRimTint * fresnel * uRimStrength * sunRimBoost;
+          float sunRimBoost = 0.48 + 0.52 * clamp( dot( -viewDirW, sunD ) * 0.5 + 0.5, 0.0, 1.0 );
+          vec3 rimLight = uRimColor * uRimTint * fresnel * uRimStrength * sunRimBoost * mix( 0.45, 1.0, stepMid ) * botwAo;
 
           // Optional crisp metallic specular band (armor, weapons, gold chests)
           vec3 specBand = vec3( 0.0 );
           if ( uMetalHighlight > 0.5 || uRainWetness > 0.15 ) {
             vec3 halfVec = normalize( sunD + viewDirW );
-            float spec = pow( max( dot( wn, halfVec ), 0.0 ), 28.0 );
-            float specStep = smoothstep( 0.35, 0.42, spec );
-            specBand = uSunColor * specStep * ( uMetalHighlight * 0.42 + uRainWetness * 0.18 );
+            float spec = pow( max( dot( wn, halfVec ), 0.0 ), 30.0 );
+            float specStep = smoothstep( 0.36, 0.44, spec );
+            specBand = uSunColor * specStep * ( uMetalHighlight * 0.36 + uRainWetness * 0.16 ) * botwAo;
           }
 
           // Optional Sheikah Jomon constellation circuit glow (amber orange -> luminous cyan wave)
@@ -270,29 +289,37 @@ export function createBotWToonMaterial(opts: BotWToonOptions = {}): THREE.MeshTo
 
 /**
  * Custom BotW Triplanar Slope + Height + Biome Terrain ShaderMaterial.
- * - Gentle slopes: Painterly watercolor grass tinted by region biome vertex color
- * - Steep cliffs (>35 deg): Triplanar layered rock strata (ZERO UV stretching!)
+ * - Gentle slopes: Painterly watercolor grass tinted by region biome vertex color + distance-faded normal micro-detail
+ * - Steep cliffs (>35 deg): Sharp noise-modulated rock edge blend + triplanar layered rock strata & normal relief
  * - High altitude: Crisp cel-shaded snow cap
- * - Shorelines (y near water): Wet sand & pebbles
- * - Scorched grass / fire patches supported dynamically
- * - Full 3-step BotW cel shading + blue-violet shadow tint + atmospheric scattering fog
+ * - Shorelines (y near water): Wet sand/pebbles + shallow turquoise water fade + animated shoreline foam band
+ * - Far-panorama Z-fighting elimination via uExcludeBounds active-chunk cutout
  */
-export function createBotWTerrainMaterial(textures: {
-  grassMap: THREE.Texture;
-  cliffMap: THREE.Texture;
-  sandMap: THREE.Texture;
-  snowMap: THREE.Texture;
-  volcanicMap: THREE.Texture;
-}): THREE.ShaderMaterial {
+export function createBotWTerrainMaterial(
+  textures: {
+    grassMap: THREE.Texture;
+    grassNormalMap?: THREE.Texture;
+    cliffMap: THREE.Texture;
+    cliffNormalMap?: THREE.Texture;
+    sandMap: THREE.Texture;
+    snowMap: THREE.Texture;
+    volcanicMap: THREE.Texture;
+  },
+  opts: { isFarPanorama?: boolean } = {}
+): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     uniforms: {
       ...BOTW_UNIFORMS,
       uGrassMap: { value: textures.grassMap },
+      uGrassNormalMap: { value: textures.grassNormalMap ?? textures.grassMap },
       uCliffMap: { value: textures.cliffMap },
+      uCliffNormalMap: { value: textures.cliffNormalMap ?? textures.cliffMap },
       uSandMap: { value: textures.sandMap },
       uSnowMap: { value: textures.snowMap },
       uVolcanicMap: { value: textures.volcanicMap },
       uWaterLevel: { value: 4.5 },
+      uUseExcludeBounds: { value: opts.isFarPanorama ? 1.0 : 0.0 },
+      uExcludeBounds: { value: new THREE.Vector4(0, 0, 0, 0) }, // minX, minZ, maxX, maxZ
     },
     vertexShader: `
       attribute vec4 aBiomeWeights; // x=snow, y=sand, z=volcanic, w=path/dirt
@@ -324,8 +351,12 @@ export function createBotWTerrainMaterial(textures: {
       uniform float uBloodMoon;
       uniform float uRainWetness;
       uniform float uWaterLevel;
+      uniform float uUseExcludeBounds;
+      uniform vec4 uExcludeBounds;
       uniform sampler2D uGrassMap;
+      uniform sampler2D uGrassNormalMap;
       uniform sampler2D uCliffMap;
+      uniform sampler2D uCliffNormalMap;
       uniform sampler2D uSandMap;
       uniform sampler2D uSnowMap;
       uniform sampler2D uVolcanicMap;
@@ -337,7 +368,7 @@ export function createBotWTerrainMaterial(textures: {
 
       vec3 triplanarSample( sampler2D tex, vec3 wp, vec3 wn, float scale ) {
         vec3 blend = abs( wn );
-        blend = pow( blend, vec3( 4.0 ) );
+        blend = pow( blend, vec3( 5.0 ) );
         blend /= max( blend.x + blend.y + blend.z, 0.0001 );
         vec3 xTex = texture2D( tex, wp.zy * scale ).rgb;
         vec3 yTex = texture2D( tex, wp.xz * scale ).rgb;
@@ -346,25 +377,56 @@ export function createBotWTerrainMaterial(textures: {
       }
 
       void main() {
-        vec3 wn = normalize( vWorldNormal );
-        // Slope angle: cos(35 deg) ~= 0.819
-        float upness = clamp( wn.y, 0.0, 1.0 );
-        float cliffMask = smoothstep( 0.84, 0.70, upness );
+        // Strict active-chunk cutout on far panorama -> mathematically eradicates Z-fighting!
+        if ( uUseExcludeBounds > 0.5 ) {
+          if (
+            vWorldPos.x > uExcludeBounds.x &&
+            vWorldPos.x < uExcludeBounds.z &&
+            vWorldPos.z > uExcludeBounds.y &&
+            vWorldPos.z < uExcludeBounds.w
+          ) {
+            discard;
+          }
+        }
 
-        // Multi-scale painterly ground sampling (prevents tiling repetition)
-        vec3 grassFine = texture2D( uGrassMap, vWorldPos.xz * 0.075 ).rgb;
+        vec3 baseWn = normalize( vWorldNormal );
+        float dist = length( cameraPosition - vWorldPos );
+        float detailFade = 1.0 - smoothstep( 42.0, 210.0, dist );
+
+        // Multi-scale painterly ground sampling + near micro-detail (prevents tiling & flat coarseness)
+        vec3 grassFine = texture2D( uGrassMap, vWorldPos.xz * 0.085 ).rgb;
+        vec3 grassMicro = texture2D( uGrassMap, vWorldPos.xz * 0.28 + vec2( 0.13, 0.41 ) ).rgb;
         vec3 grassMacro = texture2D( uGrassMap, vWorldPos.xz * 0.014 + vec2( 0.37, 0.19 ) ).rgb;
-        vec3 grassCol = mix( grassFine, grassMacro, 0.36 ) * vBiomeColor * 1.24;
+        vec3 grassMix = mix( grassFine, grassMacro, 0.34 );
+        grassMix *= mix( vec3( 1.0 ), 0.84 + grassMicro * 0.34, detailFade * 0.65 );
+        vec3 grassCol = grassMix * vBiomeColor * 1.20;
 
-        // Triplanar rock cliff strata (zero UV stretch even on 90-deg sheer cliff walls!)
-        vec3 cliffCol = triplanarSample( uCliffMap, vWorldPos, wn, 0.048 );
-        float strata = 0.88 + 0.12 * sin( vWorldPos.y * 0.85 + sin( vWorldPos.x * 0.05 ) * 2.0 );
+        // Triplanar rock cliff strata + crisp high-frequency rock detail
+        vec3 cliffCol = triplanarSample( uCliffMap, vWorldPos, baseWn, 0.052 );
+        vec3 cliffMicro = triplanarSample( uCliffMap, vWorldPos, baseWn, 0.19 );
+        cliffCol *= mix( vec3( 1.0 ), 0.78 + cliffMicro * 0.46, detailFade * 0.75 );
+        float strata = 0.85 + 0.15 * sin( vWorldPos.y * 0.92 + sin( vWorldPos.x * 0.055 + vWorldPos.z * 0.045 ) * 2.4 );
         cliffCol *= strata;
 
+        // Sharp, painterly cliff-to-grass edge modulated by rock grain (eliminates blurry slope fade!)
+        float upness = clamp( baseWn.y, 0.0, 1.0 );
+        float edgeNoise = ( cliffCol.r - 0.5 ) * 0.085;
+        float cliffMask = smoothstep( 0.845, 0.745, upness + edgeNoise );
+
+        // Distance-faded normal perturbation for sculpted ground & crisp faceted rock cliff relief!
+        vec3 wn = baseWn;
+        if ( detailFade > 0.01 ) {
+          vec3 gNorm = texture2D( uGrassNormalMap, vWorldPos.xz * 0.12 ).xyz * 2.0 - 1.0;
+          vec3 cNorm = triplanarSample( uCliffNormalMap, vWorldPos, baseWn, 0.085 ) * 2.0 - 1.0;
+          vec3 flatPerturb = vec3( gNorm.x * 0.24, 0.0, gNorm.y * 0.24 );
+          vec3 rockPerturb = vec3( cNorm.x * 0.44, cNorm.y * 0.22, cNorm.z * 0.44 );
+          wn = normalize( baseWn + mix( flatPerturb, rockPerturb, cliffMask ) * detailFade );
+        }
+
         // Biome overrides: Snow, Desert Sand, Volcanic Basalt, Dirt Path
-        vec3 snowTex = texture2D( uSnowMap, vWorldPos.xz * 0.045 ).rgb;
-        vec3 sandTex = texture2D( uSandMap, vWorldPos.xz * 0.048 ).rgb;
-        vec3 volcTex = triplanarSample( uVolcanicMap, vWorldPos, wn, 0.045 );
+        vec3 snowTex = texture2D( uSnowMap, vWorldPos.xz * 0.05 ).rgb;
+        vec3 sandTex = texture2D( uSandMap, vWorldPos.xz * 0.052 ).rgb;
+        vec3 volcTex = triplanarSample( uVolcanicMap, vWorldPos, baseWn, 0.05 );
 
         float elevSnow = smoothstep( 138.0, 175.0, vWorldPos.y );
         float snowMask = clamp( max( vBiomeWeights.x, elevSnow * ( 1.0 - vBiomeWeights.z ) ), 0.0, 1.0 );
@@ -372,20 +434,35 @@ export function createBotWTerrainMaterial(textures: {
         float volcMask = vBiomeWeights.z;
         float pathMask = vBiomeWeights.w;
 
-        // Wet shoreline sand/pebbles near water level
-        float shoreMask = smoothstep( uWaterLevel + 4.8, uWaterLevel + 0.4, vWorldPos.y ) * ( 1.0 - volcMask );
+        // Wet shoreline sand/pebbles + shallow water turquoise tint + animated foam edge!
+        float heightAboveWater = vWorldPos.y - uWaterLevel;
+        float shoreMask = smoothstep( 4.6, 0.25, heightAboveWater ) * ( 1.0 - volcMask );
+        float wetShore = smoothstep( 1.6, -0.3, heightAboveWater ) * ( 1.0 - volcMask );
+        float submergedMask = smoothstep( 0.15, -3.5, heightAboveWater );
 
         vec3 flatSurface = grassCol;
         flatSurface = mix( flatSurface, sandTex * vec3( 1.02, 0.92, 0.74 ), sandMask );
         flatSurface = mix( flatSurface, volcTex * vec3( 0.72, 0.64, 0.60 ), volcMask );
-        flatSurface = mix( flatSurface, vec3( 0.62, 0.52, 0.36 ) * ( 0.85 + 0.3 * grassFine.r ), pathMask * 0.68 );
-        flatSurface = mix( flatSurface, sandTex * vec3( 0.74, 0.68, 0.56 ), shoreMask * 0.82 );
+        // Crisp hand-painted dirt road edge
+        float pathEdge = smoothstep( 0.22, 0.65, pathMask + ( grassFine.r - 0.5 ) * 0.14 );
+        flatSurface = mix( flatSurface, vec3( 0.64, 0.52, 0.36 ) * ( 0.84 + 0.32 * grassFine.r ), pathEdge * 0.78 );
+        flatSurface = mix( flatSurface, sandTex * vec3( 0.74, 0.68, 0.56 ), shoreMask * 0.85 );
+        flatSurface = mix( flatSurface, flatSurface * vec3( 0.72, 0.76, 0.78 ), wetShore * 0.55 );
         flatSurface = mix( flatSurface, snowTex * vec3( 0.96, 0.98, 1.04 ), snowMask * smoothstep( 0.58, 0.78, upness ) );
 
         // Blend gentle surface with triplanar rock cliffs
         vec3 cliffTinted = mix( cliffCol, volcTex * vec3( 0.60, 0.48, 0.46 ), volcMask );
         cliffTinted = mix( cliffTinted, cliffCol * vec3( 1.15, 0.96, 0.72 ), sandMask * 0.65 );
         vec3 albedo = mix( flatSurface, cliffTinted, cliffMask );
+
+        // Shallow underwater turquoise scatter & animated shoreline lapping foam!
+        if ( submergedMask > 0.01 ) {
+          albedo = mix( albedo, vec3( 0.14, 0.46, 0.58 ), submergedMask * 0.62 );
+        }
+        float waveLap = sin( vWorldPos.x * 0.55 + vWorldPos.z * 0.42 + uTime * 2.4 ) * 0.18;
+        float foamBand = ( 1.0 - smoothstep( 0.0, 0.48, abs( heightAboveWater - 0.12 - waveLap ) ) ) * ( 1.0 - volcMask );
+        float foamNoise = smoothstep( 0.32, 0.72, sin( vWorldPos.x * 1.4 - uTime * 1.8 ) * cos( vWorldPos.z * 1.3 + uTime * 1.5 ) * 0.5 + 0.5 );
+        albedo = mix( albedo, vec3( 0.94, 0.99, 1.0 ), foamBand * ( 0.45 + 0.45 * foamNoise ) );
 
         // Volcanic glowing lava cracks on Eldin Death Mountain peaks
         if ( volcMask > 0.4 && vWorldPos.y > 110.0 ) {
@@ -396,32 +473,32 @@ export function createBotWTerrainMaterial(textures: {
         // BotW 3-step quantized cel lighting
         vec3 sunD = normalize( uSunDir );
         float ndl = dot( wn, sunD );
-        float stepMid = smoothstep( 0.04, 0.14, ndl );
+        float stepMid = smoothstep( 0.02, 0.12, ndl );
         float stepHi  = smoothstep( 0.54, 0.66, ndl );
 
         // Subtle cloud shadow dapple drifting across Hyrule Field!
         float cloudShadow = 0.5 + 0.5 * sin( ( vWorldPos.x + uTime * 7.5 ) * 0.0085 ) * cos( ( vWorldPos.z + uTime * 4.5 ) * 0.0095 );
-        float dapple = mix( 0.86, 1.04, smoothstep( 0.35, 0.75, cloudShadow ) );
+        float dapple = mix( 0.87, 1.04, smoothstep( 0.35, 0.75, cloudShadow ) );
 
         vec3 shadowCol = albedo * mix( uShadowTint, vec3( 0.50, 0.14, 0.22 ), uBloodMoon * 0.65 );
-        vec3 midCol    = albedo * mix( vec3( 0.92, 0.95, 0.99 ), uSunColor, 0.48 );
-        vec3 hiCol     = albedo * ( uSunColor * 1.14 );
+        vec3 midCol    = albedo * mix( vec3( 0.92, 0.95, 0.99 ), uSunColor, 0.46 );
+        vec3 hiCol     = albedo * ( uSunColor * 1.12 );
         vec3 celLit = mix( shadowCol, mix( midCol, hiCol, stepHi ), stepMid ) * dapple;
 
         // Rim light on ridgelines
         vec3 viewDirW = normalize( cameraPosition - vWorldPos );
         float rim = pow( clamp( 1.0 - max( dot( wn, viewDirW ), 0.0 ), 0.0, 1.0 ), 3.2 );
-        celLit += uRimColor * rim * 0.22 * ( 0.4 + 0.6 * stepMid );
+        celLit += uRimColor * rim * 0.20 * ( 0.4 + 0.6 * stepMid );
 
-        // Wet sheen during rain
-        if ( uRainWetness > 0.1 ) {
+        // Wet sheen during rain or along wet shoreline
+        float wetness = max( uRainWetness, wetShore * 0.65 );
+        if ( wetness > 0.1 ) {
           vec3 halfV = normalize( sunD + viewDirW );
-          float wetSpec = smoothstep( 0.5, 0.6, pow( max( dot( wn, halfV ), 0.0 ), 18.0 ) );
-          celLit += uSunColor * wetSpec * uRainWetness * 0.22;
+          float wetSpec = smoothstep( 0.52, 0.62, pow( max( dot( wn, halfV ), 0.0 ), 20.0 ) );
+          celLit += uSunColor * wetSpec * wetness * 0.22;
         }
 
         // Atmospheric scattering aerial perspective fog
-        float dist = length( cameraPosition - vWorldPos );
         float distFog = clamp( ( dist - uFogStart ) / max( uFogEnd - uFogStart, 1.0 ), 0.0, 1.0 );
         distFog = distFog * distFog * ( 3.0 - 2.0 * distFog );
         float heightAtten = exp( -max( 0.0, vWorldPos.y - 12.0 ) * 0.0042 );
@@ -514,7 +591,7 @@ export function createBotWGrassMaterial(): THREE.ShaderMaterial {
 }
 
 /**
- * Painterly Cel-Shaded Water Shader (shore foam, sun sparkles, depth tint)
+ * Painterly Cel-Shaded Water Shader (shoreline shallow gradient, foam rings, sun sparkles, Fresnel tint)
  */
 export function createBotWWaterMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
@@ -526,10 +603,13 @@ export function createBotWWaterMaterial(): THREE.ShaderMaterial {
     vertexShader: `
       uniform float uTime;
       varying vec3 vWorldPos;
+      varying float vDepthApprox;
+      attribute float aWaterDepth;
       void main() {
         vec4 wp = modelMatrix * vec4( position, 1.0 );
-        wp.y += sin( wp.x * 0.18 + uTime * 1.8 ) * 0.12 + cos( wp.z * 0.22 + uTime * 1.5 ) * 0.10;
+        wp.y += sin( wp.x * 0.18 + uTime * 1.8 ) * 0.10 + cos( wp.z * 0.22 + uTime * 1.5 ) * 0.09;
         vWorldPos = wp.xyz;
+        vDepthApprox = aWaterDepth;
         gl_Position = projectionMatrix * viewMatrix * wp;
       }
     `,
@@ -542,31 +622,42 @@ export function createBotWWaterMaterial(): THREE.ShaderMaterial {
       uniform float uFogEnd;
       uniform float uBloodMoon;
       varying vec3 vWorldPos;
+      varying float vDepthApprox;
 
       void main() {
         float w1 = sin( vWorldPos.x * 0.35 + uTime * 2.0 ) * cos( vWorldPos.z * 0.35 - uTime * 1.6 );
         float w2 = sin( ( vWorldPos.x + vWorldPos.z ) * 0.55 - uTime * 2.5 );
-        float ripple = smoothstep( 0.45, 0.72, w1 * 0.5 + w2 * 0.5 );
+        float ripple = smoothstep( 0.42, 0.74, w1 * 0.5 + w2 * 0.5 );
 
-        vec3 deepWater = vec3( 0.11, 0.44, 0.68 );
-        vec3 shallowWater = vec3( 0.24, 0.72, 0.84 );
-        vec3 col = mix( deepWater, shallowWater, 0.45 + 0.35 * ripple );
+        // Shallow turquoise-emerald near shores transitioning into rich cobalt lakes & ocean
+        float shallowFrac = 1.0 - smoothstep( 0.0, 8.5, vDepthApprox );
+        vec3 deepWater = vec3( 0.08, 0.36, 0.64 );
+        vec3 midWater = vec3( 0.16, 0.58, 0.78 );
+        vec3 shallowWater = vec3( 0.30, 0.82, 0.86 );
+        vec3 col = mix( deepWater, midWater, 0.45 + 0.32 * ripple );
+        col = mix( col, shallowWater, shallowFrac * 0.82 );
         col = mix( col, vec3( 0.45, 0.08, 0.14 ), uBloodMoon * 0.55 );
 
-        // Crisp stylized foam crest highlights
-        float foam = smoothstep( 0.82, 0.94, w1 * 0.5 + 0.5 + w2 * 0.25 );
-        col = mix( col, vec3( 0.94, 0.99, 1.0 ), foam * 0.55 );
+        // Crisp stylized shoreline foam rings + open-water wave crest highlights
+        float shoreWave = sin( vDepthApprox * 3.8 - uTime * 3.2 + w1 * 1.6 );
+        float shoreFoam = smoothstep( 0.65, 0.92, shoreWave ) * smoothstep( 3.2, 0.1, vDepthApprox );
+        float crestFoam = smoothstep( 0.82, 0.94, w1 * 0.5 + 0.5 + w2 * 0.25 ) * 0.48;
+        col = mix( col, vec3( 0.96, 0.99, 1.0 ), clamp( shoreFoam * 0.82 + crestFoam, 0.0, 0.92 ) );
 
-        // Sun reflection sparkle
+        // Fresnel sky reflection & sun sparkle
         vec3 viewD = normalize( cameraPosition - vWorldPos );
         vec3 n = normalize( vec3( w1 * 0.14, 1.0, w2 * 0.14 ) );
+        float fresnel = pow( clamp( 1.0 - max( dot( n, viewD ), 0.0 ), 0.0, 1.0 ), 3.0 );
+        col = mix( col, uFogHorizonColor * 1.05, fresnel * 0.38 );
+
         vec3 h = normalize( normalize( uSunDir ) + viewD );
         float spark = smoothstep( 0.93, 0.97, pow( max( dot( n, h ), 0.0 ), 42.0 ) );
-        col += uSunColor * spark * 0.85;
+        col += uSunColor * spark * 0.88;
 
         float dist = length( cameraPosition - vWorldPos );
         float fogA = clamp( ( dist - uFogStart ) / max( uFogEnd - uFogStart, 1.0 ), 0.0, 0.88 );
-        gl_FragColor = vec4( mix( col, uFogHorizonColor, fogA ), 0.82 );
+        float alpha = mix( 0.64, 0.86, clamp( vDepthApprox / 6.0, 0.0, 1.0 ) );
+        gl_FragColor = vec4( mix( col, uFogHorizonColor, fogA ), max( alpha, shoreFoam * 0.9 ) );
       }
     `,
   });

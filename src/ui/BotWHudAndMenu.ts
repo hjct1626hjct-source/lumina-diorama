@@ -79,6 +79,7 @@ export interface UiCallbacks {
   onAdvanceTime: (hours: number) => void;
   onEnterTrialOfSword: (tier: 'beginning' | 'middle' | 'final') => void;
   onTogglePause: (paused: boolean) => void;
+  onSettingsChanged?: () => void;
   onNotify: (text: string, accent?: 'cyan' | 'amber' | 'red') => void;
 }
 
@@ -193,7 +194,8 @@ export class BotWHudAndMenu {
             <button id="btn-new-master" class="botw-btn master" type="button">▲ マスターモード（DLC1）</button>
           </div>
           <p style="margin-top:20px;font-size:12px;color:#b8cfe0;line-height:1.7;">
-            WASD移動 / Shiftダッシュ / Spaceジャンプ＆パラセール / 右ドラッグ視点 / 左クリック剣攻撃 / Qルーン発動 / 1-7ルーン切替 / C盾ガード(パリィ) / R弓照準(空中バレットタイム) / E調べる・会話 / Tab・Escシーカーストーン / Mマップ / X盾サーフィン
+            PC: WASD移動 / Shiftダッシュ / Spaceジャンプ＆パラセール / 右ドラッグ視点 / 左クリック剣攻撃 / Qルーン発動 / C盾ガード / R弓照準 / E調べる<br />
+            iPad・タッチ端末: 左下スティック移動 / 右・上部ドラッグ360°視点 / 右下ボタン同時操作（攻撃・長押し溜め・跳躍・ダッシュ/回避・盾・注目・ルーン・弓）
           </p>
         </div>
       </section>
@@ -894,6 +896,8 @@ export class BotWHudAndMenu {
     const headPiece = this.save.equippedArmor.head ? ARMOR_MAP[this.save.equippedArmor.head] ?? null : null;
     const bodyPiece = this.save.equippedArmor.body ? ARMOR_MAP[this.save.equippedArmor.body] ?? null : null;
     const legsPiece = this.save.equippedArmor.legs ? ARMOR_MAP[this.save.equippedArmor.legs] ?? null : null;
+    const activeWep = this.save.weapons.find((w) => w.id === this.save.equippedWeaponId);
+    const activeShd = this.save.shields.find((s) => s.id === this.save.equippedShieldId);
     this.previewLink.applyEquipmentVisuals({
       headPiece,
       bodyPiece,
@@ -901,14 +905,16 @@ export class BotWHudAndMenu {
       headDyeHex: headPiece && this.save.armorDyes[headPiece.id] ? KOCHI_DYE_MAP[this.save.armorDyes[headPiece.id]]?.hex : null,
       bodyDyeHex: bodyPiece && this.save.armorDyes[bodyPiece.id] ? KOCHI_DYE_MAP[this.save.armorDyes[bodyPiece.id]]?.hex : null,
       legsDyeHex: legsPiece && this.save.armorDyes[legsPiece.id] ? KOCHI_DYE_MAP[this.save.armorDyes[legsPiece.id]]?.hex : null,
-      weaponDrawn: false,
+      weaponId: activeWep?.id,
+      shieldId: activeShd?.id,
+      weaponDrawn: activeWep?.id === 'torch',
       isMasterSword: this.save.equippedWeaponId === 'master_sword',
       weaponColor: '#d8e6f8',
       shieldColor: '#244d9c',
       bowDrawn: false,
       paragliderOpen: false,
       shieldSurfing: false,
-      holdingTorchFire: false,
+      holdingTorchFire: activeWep?.id === 'torch',
     });
     this.previewLink.root.rotation.y = this.previewYaw;
     this.previewLink.updateAnimation(0.016, 'idle', 0);
@@ -1317,14 +1323,34 @@ export class BotWHudAndMenu {
 
   private async renderSystemTab(): Promise<void> {
     const summaries = await saveManager.listSlots();
+    const touchMode = this.save.settings.touchControlsMode ?? 'auto';
+    const quality = this.save.settings.graphicsQuality ?? 'high';
+    const touchLabels: Record<'auto' | 'always' | 'hidden', string> = {
+      auto: '自動（タッチ端末で表示）',
+      always: '常時表示',
+      hidden: '非表示',
+    };
+    const qualityLabels: Record<'high' | 'medium' | 'low', string> = {
+      high: '高（Bloom有効・最高品質）',
+      medium: '中（iPad推奨・軽量描画）',
+      low: '低（省電力・高FPS優先）',
+    };
+
     this.elSlateBody.innerHTML = `
+      <div class="list-card">
+        <h4>操作・グラフィック設定（iPad / PC対応）</h4>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+          <button id="sys-touch-toggle" class="botw-btn small primary" type="button">📱 タッチ操作UI: ${touchLabels[touchMode]}</button>
+          <button id="sys-quality-toggle" class="botw-btn small primary" type="button">🎨 画質プリセット: ${qualityLabels[quality]}</button>
+          <button id="sys-cam-toggle" class="botw-btn small" type="button">カメラ視点: ${this.save.settings.cameraMode.toUpperCase()}</button>
+          <button id="sys-minimap-toggle" class="botw-btn small" type="button">ミニマップ: ${this.save.settings.northFixedMinimap ? '北固定' : '回転追従'}</button>
+        </div>
+      </div>
       <div class="list-card">
         <h4>モード・物理テクニック・環境操作</h4>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
           <button id="sys-mode-toggle" class="botw-btn small ${this.save.mode === 'master' ? 'master' : 'primary'}" type="button">モード切替（現在: ${this.save.mode === 'master' ? 'マスターモード' : '通常モード'}）</button>
           <button id="sys-glitch-toggle" class="botw-btn small ${this.save.settings.glitchPhysics ? 'primary' : ''}" type="button">高度物理技 (ウインドボム/BTB/口笛): ${this.save.settings.glitchPhysics ? 'ON' : 'OFF'}</button>
-          <button id="sys-cam-toggle" class="botw-btn small" type="button">カメラ視点: ${this.save.settings.cameraMode.toUpperCase()}</button>
-          <button id="sys-minimap-toggle" class="botw-btn small" type="button">ミニマップ: ${this.save.settings.northFixedMinimap ? '北固定' : '回転追従'}</button>
           <button id="sys-time-6h" class="botw-btn small" type="button">⏱ 時間+6時間進める</button>
           <button id="sys-bloodmoon" class="botw-btn small master" type="button">🌕 赤い月を発生させる</button>
         </div>
@@ -1349,6 +1375,20 @@ export class BotWHudAndMenu {
       </div>
     `;
 
+    this.elSlateBody.querySelector('#sys-touch-toggle')?.addEventListener('click', () => {
+      const order: Array<'auto' | 'always' | 'hidden'> = ['auto', 'always', 'hidden'];
+      const cur = this.save.settings.touchControlsMode ?? 'auto';
+      this.save.settings.touchControlsMode = order[(order.indexOf(cur) + 1) % order.length];
+      this.cb.onSettingsChanged?.();
+      this.renderSystemTab();
+    });
+    this.elSlateBody.querySelector('#sys-quality-toggle')?.addEventListener('click', () => {
+      const order: Array<'high' | 'medium' | 'low'> = ['high', 'medium', 'low'];
+      const cur = this.save.settings.graphicsQuality ?? 'high';
+      this.save.settings.graphicsQuality = order[(order.indexOf(cur) + 1) % order.length];
+      this.cb.onSettingsChanged?.();
+      this.renderSystemTab();
+    });
     this.elSlateBody.querySelector('#sys-mode-toggle')?.addEventListener('click', () => {
       this.cb.onSwitchMode(this.save.mode === 'normal' ? 'master' : 'normal');
       this.renderSystemTab();
@@ -1600,7 +1640,7 @@ export class BotWHudAndMenu {
       })
       .join('');
 
-    this.elRupees.innerHTML = `💎 ${ctx.save.rupees} ルピー &nbsp;|&nbsp; 🌿 ${ctx.save.korokSeeds} &nbsp;|&nbsp; ✦ 証 ${ctx.save.spiritOrbs} &nbsp;|&nbsp; ${Math.round(ctx.fps)} FPS ${ctx.korokMaskRattle ? '<span style="color:#66ff7a;">🍃コログ反応！</span>' : ''}`;
+    this.elRupees.innerHTML = `💎 ${ctx.save.rupees} ルピー &nbsp;|&nbsp; 🌿 ${ctx.save.korokSeeds} &nbsp;|&nbsp; ✦ 証 ${ctx.save.spiritOrbs} ${ctx.korokMaskRattle ? '<span style="color:#66ff7a;">🍃コログ反応！</span>' : ''}`;
     this.elMasterBadge.classList.toggle('hidden', ctx.save.mode !== 'master');
 
     // 3. Boss HP Bar

@@ -252,6 +252,8 @@ export type EnemySpecies =
   | 'keese'
   | 'stal_bokoblin'
   | 'stal_moblin'
+  | 'stal_mage'
+  | 'wizzrobe'
   | 'yiga_footsoldier'
   | 'yiga_blademaster'
   | 'waterblight'
@@ -288,6 +290,9 @@ export interface HeroPathSample {
   t: number;
   death?: boolean;
 }
+
+export type TouchControlsMode = 'auto' | 'always' | 'hidden';
+export type GraphicsQuality = 'high' | 'medium' | 'low';
 
 export interface SaveSlotData {
   version: number;
@@ -351,5 +356,7 @@ export interface SaveSlotData {
     glitchPhysics: boolean;
     cameraMode: 'tps' | 'close' | 'fps';
     muted: boolean;
+    touchControlsMode: TouchControlsMode;
+    graphicsQuality: GraphicsQuality;
   };
 }

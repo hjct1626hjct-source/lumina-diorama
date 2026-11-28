@@ -47,7 +47,10 @@ export interface WorldNpc {
   merchantDiscountOnRain?: boolean;
   merchantRainAncientStock?: boolean;
   glbKey: string;
+  tintColor?: string;
+  scaleMultiplier?: number;
   root: THREE.Group;
+  fallbackGroup?: THREE.Group | null;
   glbInstance: NormalizedInstance | null;
   behaviorLabel: string;
 }
@@ -66,6 +69,7 @@ export interface WorldKorok {
 export interface WildlifeEntity {
   id: string;
   type: 'horse' | 'fox' | 'stork' | 'parrot';
+  glbKey: string;
   position: THREE.Vector3;
   homePos: THREE.Vector3;
   yaw: number;
@@ -429,20 +433,17 @@ export class NpcAndKorokSystem {
     const root = new THREE.Group();
     root.position.set(spec.x, y, spec.z);
 
+    const scaleMultiplier = spec.isChild ? 0.72 : 1.0;
     const glb = modelLoader.instantiate(spec.glbKey, {
-      scaleMultiplier: spec.isChild ? 0.72 : 1.0,
+      scaleMultiplier,
       tintColor: spec.tintColor,
     });
+    let fallbackGroup: THREE.Group | null = null;
     if (glb) {
       root.add(glb.root);
     } else {
-      // Sculpted fallback humanoid if GLB unavailable
-      const mat = createBotWToonMaterial({ color: spec.tintColor ?? '#5b7aa8' });
-      const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.24, 0.72, 6, 10), mat);
-      body.position.y = 0.78;
-      const head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 10), createBotWToonMaterial({ color: '#f2cba0' }));
-      head.position.y = 1.44;
-      root.add(body, head);
+      fallbackGroup = this.buildStylizedNpcFallback(spec.tintColor ?? '#5b7aa8', scaleMultiplier, spec.glbKey === 'npc_mage');
+      root.add(fallbackGroup);
     }
 
     this.group.add(root);
@@ -466,10 +467,103 @@ export class NpcAndKorokSystem {
       merchantDiscountOnRain: spec.merchantDiscountOnRain,
       merchantRainAncientStock: spec.merchantRainAncientStock,
       glbKey: spec.glbKey,
+      tintColor: spec.tintColor,
+      scaleMultiplier,
       root,
+      fallbackGroup,
       glbInstance: glb,
       behaviorLabel: '活動中',
     });
+  }
+
+  /**
+   * Sculpted multi-part Hylian NPC placeholder displayed cleanly while heavy animated character GLBs stream in background.
+   */
+  private buildStylizedNpcFallback(tunicHex: string, scale: number, hooded: boolean): THREE.Group {
+    const g = new THREE.Group();
+    g.scale.setScalar(scale);
+    const tunicMat = createBotWToonMaterial({ color: tunicHex, rimStrength: 0.34 });
+    const leatherMat = createBotWToonMaterial({ color: '#5c3c24', rimStrength: 0.24 });
+    const skinMat = createBotWToonMaterial({ color: '#f3cfa6', warmSkinShadow: true, rimStrength: 0.26 });
+    const hairMat = createBotWToonMaterial({ color: hooded ? tunicHex : '#4a3a2c', rimStrength: 0.32 });
+
+    // Boots & legs
+    for (const s of [-1, 1]) {
+      const leg = new THREE.Mesh(new THREE.CapsuleGeometry(0.068, 0.44, 6, 10), leatherMat);
+      leg.position.set(s * 0.11, 0.32, 0);
+      leg.castShadow = true;
+      g.add(leg);
+    }
+
+    // Tunic coat / cloak skirt
+    const skirt = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.28, 0.56, 12), tunicMat);
+    skirt.position.y = 0.68;
+    skirt.castShadow = true;
+    const chest = new THREE.Mesh(new THREE.CapsuleGeometry(0.18, 0.32, 8, 12), tunicMat);
+    chest.position.y = 1.06;
+    chest.scale.set(1.12, 1.0, 0.85);
+    chest.castShadow = true;
+    const belt = new THREE.Mesh(new THREE.TorusGeometry(0.19, 0.025, 6, 14), leatherMat);
+    belt.rotation.x = Math.PI / 2;
+    belt.position.y = 0.90;
+    g.add(skirt, chest, belt);
+
+    // Arms & hands
+    for (const s of [-1, 1]) {
+      const arm = new THREE.Mesh(new THREE.CapsuleGeometry(0.055, 0.40, 6, 10), tunicMat);
+      arm.position.set(s * 0.25, 1.04, 0.02);
+      arm.rotation.z = s * 0.16;
+      const hand = new THREE.Mesh(new THREE.SphereGeometry(0.048, 8, 8), skinMat);
+      hand.position.set(s * 0.29, 0.80, 0.04);
+      g.add(arm, hand);
+    }
+
+    // Head + hair/hood
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.155, 14, 12), skinMat);
+    head.position.y = 1.46;
+    head.castShadow = true;
+    const crown = new THREE.Mesh(
+      new THREE.SphereGeometry(hooded ? 0.182 : 0.166, 14, 10, 0, Math.PI * 2, 0, Math.PI * (hooded ? 0.72 : 0.56)),
+      hairMat
+    );
+    crown.position.set(0, 1.48, -0.015);
+    g.add(head, crown);
+
+    return g;
+  }
+
+  /**
+   * Seamlessly hot-swaps any NPCs or Wildlife matching a freshly background-loaded GLB key
+   * while preserving exact world position, AI schedule state, and animation playback!
+   */
+  public hotSwapModel(key: string): number {
+    let swapped = 0;
+    for (const npc of this.npcs) {
+      if (npc.glbKey !== key || npc.glbInstance) continue;
+      const glb = modelLoader.instantiate(key, {
+        scaleMultiplier: npc.scaleMultiplier,
+        tintColor: npc.tintColor,
+      });
+      if (!glb) continue;
+      if (npc.fallbackGroup) {
+        npc.root.remove(npc.fallbackGroup);
+        npc.fallbackGroup = null;
+      }
+      npc.root.add(glb.root);
+      npc.glbInstance = glb;
+      glb.playClip('idle');
+      swapped++;
+    }
+    for (const w of this.wildlife) {
+      if (w.glbKey !== key || w.glb) continue;
+      const glb = modelLoader.instantiate(key);
+      if (!glb) continue;
+      w.root.add(glb.root);
+      glb.playClip(w.type === 'stork' || w.type === 'parrot' ? 'run' : 'walk');
+      w.glb = glb;
+      swapped++;
+    }
+    return swapped;
   }
 
   private spawnStoryAndVillageNpcs(): void {
@@ -683,6 +777,7 @@ export class NpcAndKorokSystem {
       this.wildlife.push({
         id: `wild_${sp.type}_${i}`,
         type: sp.type,
+        glbKey: sp.key,
         position: new THREE.Vector3(sp.x, y, sp.z),
         homePos: new THREE.Vector3(sp.x, y, sp.z),
         yaw: Math.random() * Math.PI * 2,
