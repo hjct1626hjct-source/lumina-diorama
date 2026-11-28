@@ -18,7 +18,6 @@ import { LANDMARKS, PHYSICAL_SHRINES, REGION_LIST, REGIONS, WORLD_BOUNDS } from 
 import {
   ALL_MEMORIES,
   ALL_QUESTS,
-  AWAKENING_INTRO_SCENES,
   CHAMPIONS_BALLAD_TRIALS,
   COMPENDIUM_CATALOG,
   HYRULE_HISTORY_CHRONICLE,
@@ -49,7 +48,7 @@ export interface HudUpdateContext {
   tempStamina: number;
   exhausted: boolean;
   noiseLevel: number;
-  activeRune: RuneId;
+  activeRune: RuneId | null;
   bulletTime: boolean;
   flurryRush: boolean;
   cameraModeActive: boolean;
@@ -139,11 +138,12 @@ export class BotWHudAndMenu {
   // Active dialogue payload
   private activeDialogue: NpcDialoguePayload | null = null;
   private dialogueLineIndex = 0;
-  private introIndex = 0;
 
   // Cached DOM references
   private elTitle!: HTMLElement;
-  private elIntro!: HTMLElement;
+  private elAwakening!: HTMLElement;
+  private elAwakeningText!: HTMLElement;
+  private elPanoramaTitle!: HTMLElement;
   private elHud!: HTMLElement;
   private elHearts!: HTMLElement;
   private elChamps!: HTMLElement;
@@ -163,7 +163,10 @@ export class BotWHudAndMenu {
   private elWeather!: HTMLElement;
   private elClock!: HTMLElement;
   private elSoundCanvas!: HTMLCanvasElement;
+  private elMinimapWrap!: HTMLElement;
   private elMinimapCanvas!: HTMLCanvasElement;
+  private elBtnHudSlate!: HTMLElement;
+  private elBtnHudMap!: HTMLElement;
   private elSlateModal!: HTMLElement;
   private elSlateBody!: HTMLElement;
   private elDialogueBox!: HTMLElement;
@@ -177,6 +180,50 @@ export class BotWHudAndMenu {
   constructor(callbacks: UiCallbacks) {
     this.cb = callbacks;
     this.mountDom();
+  }
+
+  public isTouchUi(): boolean {
+    return document.body.classList.contains('touch-ui-active');
+  }
+
+  /**
+   * Reliable iPad Safari + Desktop tap binder: handles pointerdown->pointerup within 18px slop
+   * and suppresses duplicate synthetic click firing within 380ms, while preserving regular click & Enter.
+   */
+  private bindTap(el: Element | null | undefined, handler: (ev: Event) => void): void {
+    if (!el) return;
+    let activeId: number | null = null;
+    let startX = 0;
+    let startY = 0;
+    let lastHandledAt = 0;
+
+    el.addEventListener('pointerdown', (ev) => {
+      const pe = ev as PointerEvent;
+      activeId = pe.pointerId;
+      startX = pe.clientX;
+      startY = pe.clientY;
+    });
+
+    el.addEventListener('pointerup', (ev) => {
+      const pe = ev as PointerEvent;
+      if (activeId !== pe.pointerId) return;
+      activeId = null;
+      if (Math.hypot(pe.clientX - startX, pe.clientY - startY) <= 18) {
+        lastHandledAt = performance.now();
+        ev.preventDefault();
+        handler(ev);
+      }
+    });
+
+    el.addEventListener('pointercancel', () => {
+      activeId = null;
+    });
+
+    el.addEventListener('click', (ev) => {
+      if (performance.now() - lastHandledAt < 380) return;
+      lastHandledAt = performance.now();
+      handler(ev);
+    });
   }
 
   private mountDom(): void {
@@ -200,25 +247,25 @@ export class BotWHudAndMenu {
         </div>
       </section>
 
-      <!-- Shrine of Resurrection Awakening Cinematic -->
-      <section id="botw-intro" class="botw-overlay hidden">
-        <div class="title-crest" style="max-width:680px;">
-          <div id="intro-speaker" class="title-kicker">ゼルダ（導きの声）</div>
-          <h2 id="intro-voice" class="title-main" style="font-size:28px;"></h2>
-          <p id="intro-narration" style="font-size:15px;line-height:1.85;color:#e6e2cf;margin:18px 0 28px;"></p>
-          <div class="title-btn-group">
-            <button id="btn-intro-skip" class="botw-btn small" type="button">スキップ</button>
-            <button id="btn-intro-next" class="botw-btn primary" type="button">次へ ▶</button>
-          </div>
-        </div>
-      </section>
+      <!-- Live 3D Shrine of Resurrection Awakening Cut Overlay (non-blocking) -->
+      <div id="awakening-overlay" class="awakening-overlay hidden">
+        <div class="awakening-light"></div>
+        <div id="awakening-subtitle" class="awakening-subtitle">目を開けて…リンク…</div>
+      </div>
+
+      <!-- Live 3D Cliff Overlook Panorama Title Logo Overlay (non-blocking) -->
+      <div id="panorama-title-overlay" class="panorama-title-overlay hidden">
+        <div class="panorama-kicker">THE LEGEND OF ZELDA</div>
+        <div class="panorama-main">BREATH OF THE WILD</div>
+        <div class="panorama-sub">ゼルダの伝説 ブレス オブ ザ ワイルド</div>
+      </div>
 
       <!-- Vignettes & Camera Viewfinder -->
       <div id="bullettime-vig" class="bullettime-vignette"></div>
       <div id="bloodmoon-vig" class="bloodmoon-vignette"></div>
       <div id="camera-viewfinder" class="camera-viewfinder hidden">
         <div class="camera-reticle"></div>
-        <div id="camera-tag" class="camera-tag">📷 ウツシエ待機中 — Q / 左クリックで撮影（Fで自撮り）</div>
+        <div id="camera-tag" class="camera-tag">📷 ウツシエ待機中 — 撮影対象を捉えて発動</div>
       </div>
 
       <!-- In-Game Authentic BotW HUD -->
@@ -252,7 +299,7 @@ export class BotWHudAndMenu {
 
         <div class="hud-bottom-left">
           <button id="hud-interact-btn" class="interact-prompt hidden" type="button"></button>
-          <div id="hud-rune-row" class="rune-pill-row"></div>
+          <div id="hud-rune-row" class="rune-pill-row hidden"></div>
         </div>
 
         <div id="hud-master-badge" class="master-triforce hidden">▲ MASTER MODE</div>
@@ -269,7 +316,7 @@ export class BotWHudAndMenu {
               <span id="hud-clock" class="clock-readout">09:30</span>
             </div>
           </div>
-          <div id="minimap-wrap" class="minimap-circle-wrap" title="クリックでシーカーマップを開く">
+          <div id="minimap-wrap" class="minimap-circle-wrap" title="シーカーマップを開く">
             <canvas id="minimap-canvas" width="146" height="146"></canvas>
             <div id="minimap-north" class="minimap-north">N</div>
           </div>
@@ -295,7 +342,7 @@ export class BotWHudAndMenu {
             <button class="slate-tab-btn" data-tab="compendium" type="button">📷 ハイラル図鑑</button>
             <button class="slate-tab-btn" data-tab="system" type="button">⚙️ システム ＆ セーブ</button>
             <div class="slate-spacer"></div>
-            <button id="btn-slate-close" class="botw-btn small" type="button">✕ 閉じる (Esc)</button>
+            <button id="btn-slate-close" class="botw-btn small" type="button">✕ 閉じる</button>
           </div>
           <div id="slate-body" class="slate-body"></div>
         </div>
@@ -303,7 +350,9 @@ export class BotWHudAndMenu {
     `;
 
     this.elTitle = document.getElementById('botw-title')!;
-    this.elIntro = document.getElementById('botw-intro')!;
+    this.elAwakening = document.getElementById('awakening-overlay')!;
+    this.elAwakeningText = document.getElementById('awakening-subtitle')!;
+    this.elPanoramaTitle = document.getElementById('panorama-title-overlay')!;
     this.elHud = document.getElementById('botw-hud')!;
     this.elHearts = document.getElementById('hud-hearts')!;
     this.elChamps = document.getElementById('hud-champions')!;
@@ -323,7 +372,10 @@ export class BotWHudAndMenu {
     this.elWeather = document.getElementById('hud-weather')!;
     this.elClock = document.getElementById('hud-clock')!;
     this.elSoundCanvas = document.getElementById('sound-wave-canvas') as HTMLCanvasElement;
+    this.elMinimapWrap = document.getElementById('minimap-wrap')!;
     this.elMinimapCanvas = document.getElementById('minimap-canvas') as HTMLCanvasElement;
+    this.elBtnHudSlate = document.getElementById('btn-hud-slate')!;
+    this.elBtnHudMap = document.getElementById('btn-hud-map')!;
     this.elSlateModal = document.getElementById('slate-modal')!;
     this.elSlateBody = document.getElementById('slate-body')!;
     this.elDialogueBox = document.getElementById('dialogue-box')!;
@@ -338,47 +390,37 @@ export class BotWHudAndMenu {
   }
 
   private bindStaticEvents(): void {
-    document.getElementById('btn-continue')?.addEventListener('click', () => {
+    this.bindTap(document.getElementById('btn-continue'), () => {
       this.elTitle.classList.add('hidden');
       this.elHud.classList.remove('hidden');
       this.cb.onContinueGame();
     });
-    document.getElementById('btn-new-normal')?.addEventListener('click', () => {
+    this.bindTap(document.getElementById('btn-new-normal'), () => {
       this.elTitle.classList.add('hidden');
+      this.elHud.classList.remove('hidden');
       this.cb.onStartNewGame('normal', false);
-      this.startAwakeningIntro();
     });
-    document.getElementById('btn-new-master')?.addEventListener('click', () => {
+    this.bindTap(document.getElementById('btn-new-master'), () => {
       this.elTitle.classList.add('hidden');
+      this.elHud.classList.remove('hidden');
       this.cb.onStartNewGame('master', false);
-      this.startAwakeningIntro();
     });
 
-    document.getElementById('btn-intro-next')?.addEventListener('click', () => {
-      this.introIndex++;
-      if (this.introIndex >= AWAKENING_INTRO_SCENES.length) {
-        this.finishAwakeningIntro();
-      } else {
-        this.renderIntroScene();
-      }
-    });
-    document.getElementById('btn-intro-skip')?.addEventListener('click', () => this.finishAwakeningIntro());
-
-    document.getElementById('btn-hud-slate')?.addEventListener('click', () => this.openSlate('inventory'));
-    document.getElementById('btn-hud-map')?.addEventListener('click', () => this.openSlate('map'));
-    document.getElementById('btn-hud-adv')?.addEventListener('click', () => this.openSlate('adventure'));
-    document.getElementById('btn-hud-cook')?.addEventListener('click', () => this.openCookingModal(false));
-    document.getElementById('btn-hud-pro')?.addEventListener('click', () => {
+    this.bindTap(document.getElementById('btn-hud-slate'), () => this.openSlate('inventory'));
+    this.bindTap(document.getElementById('btn-hud-map'), () => this.openSlate('map'));
+    this.bindTap(document.getElementById('btn-hud-adv'), () => this.openSlate('adventure'));
+    this.bindTap(document.getElementById('btn-hud-cook'), () => this.openCookingModal(false));
+    this.bindTap(document.getElementById('btn-hud-pro'), () => {
       if (!this.save) return;
       this.save.settings.proHud = !this.save.settings.proHud;
       this.showToast(this.save.settings.proHud ? 'プロHUD ON（ミニマップ・センサー非表示）' : '通常HUD ON');
     });
-    document.getElementById('minimap-wrap')?.addEventListener('click', () => this.openSlate('map'));
-    this.elInteractBtn.addEventListener('click', () => this.cb.onTriggerInteract());
+    this.bindTap(this.elMinimapWrap, () => this.openSlate('map'));
+    this.bindTap(this.elInteractBtn, () => this.cb.onTriggerInteract());
 
-    document.getElementById('btn-slate-close')?.addEventListener('click', () => this.closeSlate());
+    this.bindTap(document.getElementById('btn-slate-close'), () => this.closeSlate());
     this.elSlateModal.querySelectorAll('.slate-tab-btn').forEach((btn) => {
-      btn.addEventListener('click', () => {
+      this.bindTap(btn, () => {
         const tab = (btn as HTMLElement).dataset.tab as typeof this.currentTab;
         this.currentTab = tab;
         this.renderSlateTab();
@@ -392,35 +434,30 @@ export class BotWHudAndMenu {
 
   public dismissTitleDirectly(): void {
     this.elTitle.classList.add('hidden');
-    this.elIntro.classList.add('hidden');
+    this.elAwakening.classList.add('hidden');
+    this.elPanoramaTitle.classList.add('hidden');
     this.elHud.classList.remove('hidden');
   }
 
-  public startAwakeningIntro(): void {
-    this.introIndex = 0;
-    this.elIntro.classList.remove('hidden');
-    this.elHud.classList.add('hidden');
-    this.renderIntroScene();
+  public setAwakeningOverlay(subtitleText: string | null): void {
+    if (subtitleText) {
+      this.elAwakeningText.textContent = subtitleText;
+      this.elAwakening.classList.remove('hidden');
+    } else {
+      this.elAwakening.classList.add('hidden');
+    }
   }
 
-  private renderIntroScene(): void {
-    const sc = AWAKENING_INTRO_SCENES[this.introIndex] ?? AWAKENING_INTRO_SCENES[0];
-    document.getElementById('intro-speaker')!.textContent = `${sc.speakerJa} (${this.introIndex + 1}/${AWAKENING_INTRO_SCENES.length})`;
-    document.getElementById('intro-voice')!.textContent = sc.voiceTextJa;
-    document.getElementById('intro-narration')!.textContent = sc.narrationJa;
-  }
-
-  private finishAwakeningIntro(): void {
-    this.elIntro.classList.add('hidden');
-    this.elHud.classList.remove('hidden');
-    this.showRegionBanner('始まりの台地', 'GREAT PLATEAU');
-    this.showToast('回生の祠から目覚めた！シーカーストーンとパラセールでハイラルを探索しよう', 'cyan');
+  public setPanoramaLogoVisible(visible: boolean): void {
+    if (visible) {
+      this.elAwakening.classList.add('hidden');
+    }
+    this.elPanoramaTitle.classList.toggle('hidden', !visible);
   }
 
   public isBlockingInput(): boolean {
     return (
       !this.elTitle.classList.contains('hidden') ||
-      !this.elIntro.classList.contains('hidden') ||
       this.isSlateOpen ||
       this.isDialogueOpen ||
       this.isSubModalOpen
@@ -489,20 +526,20 @@ export class BotWHudAndMenu {
       </div>
     `;
 
-    this.elDialogueBox.querySelector('#btn-dlg-next')?.addEventListener('click', () => {
+    this.bindTap(this.elDialogueBox.querySelector('#btn-dlg-next'), () => {
       this.dialogueLineIndex++;
       this.renderDialogue();
     });
-    this.elDialogueBox.querySelector('#btn-dlg-close')?.addEventListener('click', () => this.closeDialogue());
+    this.bindTap(this.elDialogueBox.querySelector('#btn-dlg-close'), () => this.closeDialogue());
     this.elDialogueBox.querySelectorAll('[data-dlg-act]').forEach((el) => {
-      el.addEventListener('click', () => {
+      this.bindTap(el, () => {
         const act = (el as HTMLElement).dataset.dlgAct!;
         this.closeDialogue();
         this.cb.onDialogueAction(act);
       });
     });
     this.elDialogueBox.querySelectorAll('[data-buy-id]').forEach((el) => {
-      el.addEventListener('click', () => {
+      this.bindTap(el, () => {
         const id = (el as HTMLElement).dataset.buyId!;
         const price = Number((el as HTMLElement).dataset.buyPrice!);
         this.cb.onShopBuy(id, price);
@@ -531,7 +568,7 @@ export class BotWHudAndMenu {
         )
         .join('');
       this.elQuickRibbon.querySelectorAll('[data-qw]').forEach((b) => {
-        b.addEventListener('click', () => {
+        this.bindTap(b, () => {
           this.save.equippedWeaponId = (b as HTMLElement).dataset.qw!;
           this.elQuickRibbon.classList.add('hidden');
           this.showToast(`武器装備：${this.save.weapons.find((x) => x.id === this.save.equippedWeaponId)?.nameJa}`);
@@ -555,7 +592,7 @@ export class BotWHudAndMenu {
         )
         .join('');
       this.elQuickRibbon.querySelectorAll('[data-qa]').forEach((b) => {
-        b.addEventListener('click', () => {
+        this.bindTap(b, () => {
           this.save.equippedArrow = (b as HTMLElement).dataset.qa as ArrowType;
           this.elQuickRibbon.classList.add('hidden');
           this.showToast(`矢切替：${this.save.equippedArrow}`);
@@ -571,7 +608,7 @@ export class BotWHudAndMenu {
         )
         .join('');
       this.elQuickRibbon.querySelectorAll('[data-qs]').forEach((b) => {
-        b.addEventListener('click', () => {
+        this.bindTap(b, () => {
           this.save.equippedShieldId = (b as HTMLElement).dataset.qs!;
           this.elQuickRibbon.classList.add('hidden');
         });
@@ -586,7 +623,7 @@ export class BotWHudAndMenu {
         )
         .join('');
       this.elQuickRibbon.querySelectorAll('[data-qb]').forEach((b) => {
-        b.addEventListener('click', () => {
+        this.bindTap(b, () => {
           this.save.equippedBowId = (b as HTMLElement).dataset.qb!;
           this.elQuickRibbon.classList.add('hidden');
         });
@@ -632,8 +669,9 @@ export class BotWHudAndMenu {
 
   private renderInventoryTab(): void {
     const summary = computeArmorSummary(this.save.equippedArmor, this.save.armorStars);
+    const ownedArmors = ARMOR_PIECES.filter((p) => this.save.ownedArmorIds.includes(p.id));
     const subTabs: Array<[typeof this.invSubTab, string]> = [
-      ['armor', `🛡 防具 (${ARMOR_PIECES.length})`],
+      ['armor', `🛡 防具 (${ownedArmors.length})`],
       ['weapons', `⚔ 武器 (${this.save.weapons.length})`],
       ['bows', `🏹 弓・矢`],
       ['shields', `🛡 盾 (${this.save.shields.length})`],
@@ -644,51 +682,75 @@ export class BotWHudAndMenu {
 
     let gridHtml = '';
     if (this.invSubTab === 'armor') {
+      const hasAnyEquipped = Boolean(
+        this.save.equippedArmor.head || this.save.equippedArmor.body || this.save.equippedArmor.legs
+      );
+      const canVai =
+        this.save.ownedArmorIds.includes('gerudo_veil') &&
+        this.save.ownedArmorIds.includes('gerudo_top') &&
+        this.save.ownedArmorIds.includes('gerudo_sirwal');
+      const canChamp =
+        this.save.ownedArmorIds.includes('champions_tunic') &&
+        this.save.ownedArmorIds.includes('hylian_trousers');
       gridHtml = `
         <div style="margin-bottom:8px;display:flex;gap:6px;flex-wrap:wrap;">
-          <button id="btn-strip-naked" class="botw-btn small" type="button">🩳 全防具を外す（裸状態テスト）</button>
-          <button id="btn-equip-vai" class="botw-btn small" type="button">💃 淑女セット（ゲルド入城）</button>
-          <button id="btn-equip-champ" class="botw-btn small" type="button">⚔ 英傑の服セット</button>
-          <button id="btn-open-dye" class="botw-btn small" type="button">🎨 東風屋15色染色</button>
-          <button id="btn-open-fairy" class="botw-btn small" type="button">✨ 大妖精★4強化</button>
+          ${hasAnyEquipped ? `<button id="btn-strip-naked" class="botw-btn small" type="button">🩳 装備を外す</button>` : ''}
+          ${canVai ? `<button id="btn-equip-vai" class="botw-btn small" type="button">💃 淑女セット</button>` : ''}
+          ${canChamp ? `<button id="btn-equip-champ" class="botw-btn small" type="button">⚔ 英傑の服セット</button>` : ''}
+          ${ownedArmors.length > 0 ? `<button id="btn-open-dye" class="botw-btn small" type="button">🎨 東風屋15色染色</button>` : ''}
+          ${ownedArmors.length > 0 ? `<button id="btn-open-fairy" class="botw-btn small" type="button">✨ 大妖精★4強化</button>` : ''}
         </div>
-        <div class="inv-grid">
-          ${ARMOR_PIECES.map((p) => {
-            const isEq =
-              this.save.equippedArmor.head === p.id ||
-              this.save.equippedArmor.body === p.id ||
-              this.save.equippedArmor.legs === p.id;
-            const stars = this.save.armorStars[p.id] ?? 0;
-            const def = getPieceDefense(p.id, stars);
-            const dyeId = this.save.armorDyes[p.id];
-            const dyeBadge = dyeId && KOCHI_DYE_MAP[dyeId] ? ` • 🎨${KOCHI_DYE_MAP[dyeId].nameJa}` : '';
-            return `
+        ${
+          ownedArmors.length === 0
+            ? `<p style="color:#aac2d8;line-height:1.7;">まだ防具を所持していません。回生の祠内の宝箱や各地のショップ・宝箱で防具を手に入れよう！</p>`
+            : `<div class="inv-grid">
+          ${ownedArmors
+            .map((p) => {
+              const isEq =
+                this.save.equippedArmor.head === p.id ||
+                this.save.equippedArmor.body === p.id ||
+                this.save.equippedArmor.legs === p.id;
+              const stars = this.save.armorStars[p.id] ?? 0;
+              const def = getPieceDefense(p.id, stars);
+              const dyeId = this.save.armorDyes[p.id];
+              const dyeBadge = dyeId && KOCHI_DYE_MAP[dyeId] ? ` • 🎨${KOCHI_DYE_MAP[dyeId].nameJa}` : '';
+              return `
               <div class="inv-item ${isEq ? 'equipped' : ''}" data-armor-id="${p.id}">
                 <div class="inv-item-title">${p.nameJa}</div>
                 <div class="inv-item-meta">${p.slot.toUpperCase()} • DEF ${def} ${p.upgradeable ? '★'.repeat(stars) : '(強化不可)'}${dyeBadge}</div>
                 <div class="inv-item-meta" style="color:#e4c465;">${p.effect !== 'none' ? p.effect : p.setBonus !== 'none' ? `Set: ${p.setBonus}` : p.dlcTag ?? 'base'}</div>
               </div>`;
-          }).join('')}
-        </div>`;
+            })
+            .join('')}
+        </div>`
+        }`;
     } else if (this.invSubTab === 'weapons') {
-      gridHtml = `<div class="inv-grid">${this.save.weapons
-        .map(
-          (w) => `<div class="inv-item ${w.id === this.save.equippedWeaponId ? 'equipped' : ''}" data-wep-id="${w.id}">
+      gridHtml =
+        this.save.weapons.length === 0
+          ? `<p style="color:#aac2d8;line-height:1.7;">武器を所持していません。台地の焚き火そばの「たいまつ・木の枝・木こりのオノ」や石台から拾おう！</p>`
+          : `<div class="inv-grid">${this.save.weapons
+              .map(
+                (w) => `<div class="inv-item ${w.id === this.save.equippedWeaponId ? 'equipped' : ''}" data-wep-id="${w.id}">
             <div class="inv-item-title">${w.nameJa}</div>
             <div class="inv-item-meta">ATK ${w.isMasterSword && this.save.masterSwordAwakened ? 60 : w.attack} • 耐久 ${w.currentDurability}/${w.durability}</div>
             <div class="inv-item-meta">${w.element ? `属性: ${w.element}` : w.material}</div>
           </div>`
-        )
-        .join('')}</div>`;
+              )
+              .join('')}</div>`;
     } else if (this.invSubTab === 'bows') {
-      gridHtml = `<div class="inv-grid">${this.save.bows
-        .map(
-          (b) => `<div class="inv-item ${b.id === this.save.equippedBowId ? 'equipped' : ''}" data-bow-id="${b.id}">
+      gridHtml = `
+        ${
+          this.save.bows.length === 0
+            ? `<p style="color:#aac2d8;margin-bottom:10px;">まだ弓を所持していません。</p>`
+            : `<div class="inv-grid">${this.save.bows
+                .map(
+                  (b) => `<div class="inv-item ${b.id === this.save.equippedBowId ? 'equipped' : ''}" data-bow-id="${b.id}">
             <div class="inv-item-title">${b.nameJa}</div>
             <div class="inv-item-meta">ATK ${b.attack} • 耐久 ${b.currentDurability}</div>
           </div>`
-        )
-        .join('')}</div>
+                )
+                .join('')}</div>`
+        }
         <h4 style="margin:12px 0 6px;color:#e4c465;">矢の種類選択</h4>
         <div class="inv-subtabs">
           ${(['normal', 'fire', 'ice', 'shock', 'bomb', 'ancient'] as ArrowType[])
@@ -699,27 +761,34 @@ export class BotWHudAndMenu {
             .join('')}
         </div>`;
     } else if (this.invSubTab === 'shields') {
-      gridHtml = `<div class="inv-grid">${this.save.shields
-        .map(
-          (s) => `<div class="inv-item ${s.id === this.save.equippedShieldId ? 'equipped' : ''}" data-shd-id="${s.id}">
+      gridHtml =
+        this.save.shields.length === 0
+          ? `<p style="color:#aac2d8;line-height:1.7;">まだ盾を所持していません。</p>`
+          : `<div class="inv-grid">${this.save.shields
+              .map(
+                (s) => `<div class="inv-item ${s.id === this.save.equippedShieldId ? 'equipped' : ''}" data-shd-id="${s.id}">
             <div class="inv-item-title">${s.nameJa}</div>
             <div class="inv-item-meta">DEF ${s.attack} • 耐久 ${s.currentDurability}</div>
           </div>`
-        )
-        .join('')}</div>`;
+              )
+              .join('')}</div>`;
     } else if (this.invSubTab === 'materials') {
-      gridHtml = `<div class="inv-grid">${MATERIALS.filter((m) => (this.save.materials[m.id] ?? 0) > 0)
-        .map(
-          (m) => `<div class="inv-item">
+      const ownedMats = MATERIALS.filter((m) => (this.save.materials[m.id] ?? 0) > 0);
+      gridHtml =
+        ownedMats.length === 0
+          ? `<p style="color:#aac2d8;line-height:1.7;">素材を所持していません。焼きリンゴやキノコを集めよう！</p>`
+          : `<div class="inv-grid">${ownedMats
+              .map(
+                (m) => `<div class="inv-item">
             <div class="inv-item-title">${m.nameJa} ×${this.save.materials[m.id]}</div>
             <div class="inv-item-meta">バイク燃料 Tier${m.fuelTier} • 効果:${m.effectType ?? 'none'}</div>
           </div>`
-        )
-        .join('')}</div>`;
+              )
+              .join('')}</div>`;
     } else if (this.invSubTab === 'meals') {
       gridHtml =
         this.save.meals.length === 0
-          ? `<p style="color:#aac2d8;">まだ料理がありません。料理鍋または右上の「🍲 料理」から最大5素材を調理できます！</p>`
+          ? `<p style="color:#aac2d8;">まだ料理がありません。料理鍋に近づいて「調べる」から最大5素材を調理できます！</p>`
           : `<div class="inv-grid">${this.save.meals
               .map(
                 (ml, idx) => `<div class="inv-item" data-eat-idx="${idx}">
@@ -729,22 +798,32 @@ export class BotWHudAndMenu {
               )
               .join('')}</div>`;
     } else {
+      const unlockedChamps = (['mipha', 'daruk', 'revali', 'urbosa'] as const).filter((k) => this.save.champions[k].unlocked);
       gridHtml = `
-        <div class="list-card"><h4>パラセール</h4><p>${this.save.hasParaglider ? '所持済（空中でSpaceで滑空・上昇気流で上昇）' : '未取得'}</p></div>
-        <div class="list-card"><h4>克服の証</h4><p>${this.save.spiritOrbs} 個（時の神殿跡の女神像でハート/がんばりと交換）</p></div>
+        <div class="list-card"><h4>シーカーストーン</h4><p>${this.save.hasSheikahSlate ? `所持済（解放ルーン: ${this.save.unlockedRunes.length}個）` : '未取得（回生の祠の台座を調べよう）'}</p></div>
+        <div class="list-card"><h4>パラセール</h4><p>${this.save.hasParaglider ? '所持済（空中で滑空・上昇気流で上昇）' : '未取得（始まりの台地の4つの試練の祠をクリアしよう）'}</p></div>
+        <div class="list-card"><h4>克服の証</h4><p>${this.save.spiritOrbs} 個</p></div>
         <div class="list-card"><h4>コログのミ</h4><p>${this.save.korokSeeds} 個発見</p></div>
-        <div class="list-card"><h4>マスターバイク零式 (DLC2)</h4><p>残燃料 ${Math.round(this.save.masterCycleFuel)} / 1000 ユニット <button id="btn-refuel-bike" class="botw-btn small" type="button">⛽ リンゴ×5で給油 (+500)</button></p></div>
-        <div class="list-card">
-          <h4>英傑の加護（ON/OFF切替可）</h4>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">
-            ${(['mipha', 'daruk', 'revali', 'urbosa'] as const)
-              .map(
-                (k) =>
-                  `<button class="botw-btn small ${this.save.champions[k].enabled ? 'primary' : ''}" data-champ-toggle="${k}" type="button">${k.toUpperCase()}: ${this.save.champions[k].enabled ? 'ON' : 'OFF'} (${this.save.champions[k].charges}/${this.save.champions[k].maxCharges})</button>`
-              )
-              .join('')}
-          </div>
-        </div>`;
+        ${
+          this.save.unlockedRunes.includes('master_cycle')
+            ? `<div class="list-card"><h4>マスターバイク零式 (DLC2)</h4><p>残燃料 ${Math.round(this.save.masterCycleFuel)} / 1000 ユニット <button id="btn-refuel-bike" class="botw-btn small" type="button">⛽ リンゴ×5で給油 (+500)</button></p></div>`
+            : ''
+        }
+        ${
+          unlockedChamps.length > 0
+            ? `<div class="list-card">
+                <h4>英傑の加護（ON/OFF切替可）</h4>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">
+                  ${unlockedChamps
+                    .map(
+                      (k) =>
+                        `<button class="botw-btn small ${this.save.champions[k].enabled ? 'primary' : ''}" data-champ-toggle="${k}" type="button">${k.toUpperCase()}: ${this.save.champions[k].enabled ? 'ON' : 'OFF'} (${this.save.champions[k].charges}/${this.save.champions[k].maxCharges})</button>`
+                    )
+                    .join('')}
+                </div>
+              </div>`
+            : ''
+        }`;
     }
 
     this.elSlateBody.innerHTML = `
@@ -768,7 +847,7 @@ export class BotWHudAndMenu {
           <canvas id="link-preview-canvas" width="360" height="290"></canvas>
           <div class="stat-badges">
             <span class="stat-tag">セット効果: ${summary.activeSetBonus}</span>
-            ${summary.isNaked ? '<span class="stat-tag" style="border-color:#ff7878;">裸状態（NPC専用会話発火！）</span>' : ''}
+            ${summary.isNaked ? '<span class="stat-tag" style="border-color:#ff7878;">裸状態</span>' : ''}
             ${summary.hasGerudoEntry ? '<span class="stat-tag" style="border-color:#44e664;">ゲルドの街 入城許可</span>' : ''}
             ${summary.triggersNpcFear ? '<span class="stat-tag" style="border-color:#c868ff;">NPC怯え反応</span>' : ''}
             ${summary.coldResist > 0 ? `<span class="stat-tag">耐寒 Lv${summary.coldResist}</span>` : ''}
@@ -781,80 +860,80 @@ export class BotWHudAndMenu {
       </div>
     `;
 
-    // Bind Inventory Interactions
+    // Bind Inventory Interactions with iPad-safe bindTap
     this.elSlateBody.querySelectorAll('[data-inv-sub]').forEach((b) =>
-      b.addEventListener('click', () => {
+      this.bindTap(b, () => {
         this.invSubTab = (b as HTMLElement).dataset.invSub as typeof this.invSubTab;
         this.renderInventoryTab();
       })
     );
     this.elSlateBody.querySelectorAll('[data-armor-id]').forEach((card) =>
-      card.addEventListener('click', () => {
+      this.bindTap(card, () => {
         const id = (card as HTMLElement).dataset.armorId!;
         const piece = ARMOR_MAP[id];
-        if (!piece) return;
+        if (!piece || !this.save.ownedArmorIds.includes(id)) return;
         this.save.equippedArmor[piece.slot] = this.save.equippedArmor[piece.slot] === id ? null : id;
         this.renderInventoryTab();
       })
     );
-    this.elSlateBody.querySelector('#btn-strip-naked')?.addEventListener('click', () => {
+    this.bindTap(this.elSlateBody.querySelector('#btn-strip-naked'), () => {
       this.save.equippedArmor = { head: null, body: null, legs: null };
-      this.showToast('すべての防具を外した（裸状態：NPC会話が変化！）', 'amber');
+      this.showToast('防具をすべて外した', 'amber');
       this.renderInventoryTab();
     });
-    this.elSlateBody.querySelector('#btn-equip-vai')?.addEventListener('click', () => {
+    this.bindTap(this.elSlateBody.querySelector('#btn-equip-vai'), () => {
       this.save.equippedArmor = { head: 'gerudo_veil', body: 'gerudo_top', legs: 'gerudo_sirwal' };
       this.showToast('淑女シリーズ装備（ゲルドの街入城OK！）', 'cyan');
       this.renderInventoryTab();
     });
-    this.elSlateBody.querySelector('#btn-equip-champ')?.addEventListener('click', () => {
+    this.bindTap(this.elSlateBody.querySelector('#btn-equip-champ'), () => {
       this.save.equippedArmor = { head: null, body: 'champions_tunic', legs: 'hylian_trousers' };
       this.renderInventoryTab();
     });
-    this.elSlateBody.querySelector('#btn-open-dye')?.addEventListener('click', () => {
+    this.bindTap(this.elSlateBody.querySelector('#btn-open-dye'), () => {
       this.closeSlate();
       this.openDyeShopModal();
     });
-    this.elSlateBody.querySelector('#btn-open-fairy')?.addEventListener('click', () => {
+    this.bindTap(this.elSlateBody.querySelector('#btn-open-fairy'), () => {
       this.closeSlate();
       this.openGreatFairyModal();
     });
     this.elSlateBody.querySelectorAll('[data-wep-id]').forEach((el) =>
-      el.addEventListener('click', () => {
+      this.bindTap(el, () => {
         this.save.equippedWeaponId = (el as HTMLElement).dataset.wepId!;
         this.renderInventoryTab();
       })
     );
     this.elSlateBody.querySelectorAll('[data-bow-id]').forEach((el) =>
-      el.addEventListener('click', () => {
+      this.bindTap(el, () => {
         this.save.equippedBowId = (el as HTMLElement).dataset.bowId!;
         this.renderInventoryTab();
       })
     );
     this.elSlateBody.querySelectorAll('[data-arrow-sel]').forEach((el) =>
-      el.addEventListener('click', () => {
+      this.bindTap(el, () => {
         this.save.equippedArrow = (el as HTMLElement).dataset.arrowSel as ArrowType;
         this.renderInventoryTab();
       })
     );
     this.elSlateBody.querySelectorAll('[data-shd-id]').forEach((el) =>
-      el.addEventListener('click', () => {
+      this.bindTap(el, () => {
         this.save.equippedShieldId = (el as HTMLElement).dataset.shdId!;
         this.renderInventoryTab();
       })
     );
     this.elSlateBody.querySelectorAll('[data-eat-idx]').forEach((el) =>
-      el.addEventListener('click', () => {
+      this.bindTap(el, () => {
         this.cb.onEatMeal(Number((el as HTMLElement).dataset.eatIdx!));
         this.renderInventoryTab();
       })
     );
-    this.elSlateBody.querySelector('#btn-refuel-bike')?.addEventListener('click', () => {
+    this.bindTap(this.elSlateBody.querySelector('#btn-refuel-bike'), () => {
       this.cb.onRefuelBike(['apple', 'apple', 'apple', 'apple', 'apple']);
       this.renderInventoryTab();
     });
     this.elSlateBody.querySelectorAll('[data-champ-toggle]').forEach((el) =>
-      el.addEventListener('click', () => {
+      this.bindTap(el, () => {
         const k = (el as HTMLElement).dataset.champToggle as keyof SaveSlotData['champions'];
         this.save.champions[k].enabled = !this.save.champions[k].enabled;
         this.renderInventoryTab();
@@ -1003,21 +1082,21 @@ export class BotWHudAndMenu {
       this.showToast(`シーカーピンを設置しました (${Math.round(wx)}, ${Math.round(wz)})`);
     });
 
-    this.elSlateBody.querySelector('#btn-map-zin')?.addEventListener('click', () => {
+    this.bindTap(this.elSlateBody.querySelector('#btn-map-zin'), () => {
       this.mapZoom = Math.min(3, this.mapZoom * 1.25);
       this.drawSheikahMapCanvas();
     });
-    this.elSlateBody.querySelector('#btn-map-zout')?.addEventListener('click', () => {
+    this.bindTap(this.elSlateBody.querySelector('#btn-map-zout'), () => {
       this.mapZoom = Math.max(1, this.mapZoom / 1.25);
       this.drawSheikahMapCanvas();
     });
-    this.elSlateBody.querySelector('#btn-map-reset')?.addEventListener('click', () => {
+    this.bindTap(this.elSlateBody.querySelector('#btn-map-reset'), () => {
       this.mapZoom = 1;
       this.mapPanX = 0;
       this.mapPanZ = 0;
       this.drawSheikahMapCanvas();
     });
-    this.elSlateBody.querySelector('#btn-heropath-toggle')?.addEventListener('click', () => {
+    this.bindTap(this.elSlateBody.querySelector('#btn-heropath-toggle'), () => {
       this.showHeroPath = !this.showHeroPath;
       this.renderMapTab();
     });
@@ -1025,24 +1104,24 @@ export class BotWHudAndMenu {
       this.heroPathPlaybackFrac = Number((ev.target as HTMLInputElement).value);
       this.drawSheikahMapCanvas();
     });
-    this.elSlateBody.querySelector('#btn-place-medallion')?.addEventListener('click', () => {
+    this.bindTap(this.elSlateBody.querySelector('#btn-place-medallion'), () => {
       this.save.travelMedallionPos = { ...this.save.playerPos };
       this.showToast('現在地へワープマーカーを設置しました！', 'cyan');
       this.renderMapTab();
     });
-    this.elSlateBody.querySelector('#btn-warp-medallion')?.addEventListener('click', () => {
+    this.bindTap(this.elSlateBody.querySelector('#btn-warp-medallion'), () => {
       if (!this.save.travelMedallionPos) return;
       this.closeSlate();
       this.cb.onFastTravel(this.save.travelMedallionPos.x, this.save.travelMedallionPos.z, 'ワープマーカー');
     });
     this.elSlateBody.querySelectorAll('[data-pin-col]').forEach((b) =>
-      b.addEventListener('click', () => {
+      this.bindTap(b, () => {
         this.selectedPinColor = (b as HTMLElement).dataset.pinCol!;
         this.renderMapTab();
       })
     );
     this.elSlateBody.querySelectorAll('[data-warp-x]').forEach((b) =>
-      b.addEventListener('click', () => {
+      this.bindTap(b, () => {
         const el = b as HTMLElement;
         this.closeSlate();
         this.cb.onFastTravel(Number(el.dataset.warpX), Number(el.dataset.warpZ), el.dataset.warpName!);
@@ -1246,19 +1325,19 @@ export class BotWHudAndMenu {
     `;
 
     this.elSlateBody.querySelectorAll('[data-adv-sub]').forEach((b) =>
-      b.addEventListener('click', () => {
+      this.bindTap(b, () => {
         this.advSubTab = (b as HTMLElement).dataset.advSub as typeof this.advSubTab;
         this.renderAdventureTab();
       })
     );
     this.elSlateBody.querySelectorAll('[data-mem-play]').forEach((b) =>
-      b.addEventListener('click', () => {
+      this.bindTap(b, () => {
         const mem = ALL_MEMORIES.find((m) => m.id === (b as HTMLElement).dataset.memPlay);
         if (mem) this.openMemoryModal(mem);
       })
     );
     this.elSlateBody.querySelectorAll('[data-mem-warp]').forEach((b) =>
-      b.addEventListener('click', () => {
+      this.bindTap(b, () => {
         const mem = ALL_MEMORIES.find((m) => m.id === (b as HTMLElement).dataset.memWarp);
         if (mem) {
           this.closeSlate();
@@ -1267,24 +1346,24 @@ export class BotWHudAndMenu {
       })
     );
     this.elSlateBody.querySelectorAll('[data-doc-read]').forEach((b) =>
-      b.addEventListener('click', () => {
+      this.bindTap(b, () => {
         const id = (b as HTMLElement).dataset.docRead!;
         this.closeSlate();
         this.openDocumentModal(id);
       })
     );
     this.elSlateBody.querySelectorAll('[data-trial]').forEach((b) =>
-      b.addEventListener('click', () => {
+      this.bindTap(b, () => {
         const t = (b as HTMLElement).dataset.trial as 'beginning' | 'middle' | 'final';
         this.closeSlate();
         this.cb.onEnterTrialOfSword(t);
       })
     );
-    this.elSlateBody.querySelector('#btn-warp-maz')?.addEventListener('click', () => {
+    this.bindTap(this.elSlateBody.querySelector('#btn-warp-maz'), () => {
       this.closeSlate();
       this.cb.onFastTravel(-322, 444, '導師ミィズ・キョシア試練場');
     });
-    this.elSlateBody.querySelector('#btn-play-true-end')?.addEventListener('click', () => {
+    this.bindTap(this.elSlateBody.querySelector('#btn-play-true-end'), () => {
       this.closeSlate();
       this.openSubModalHtml(
         `✨ ${TRUE_ENDING_EPILOGUE.titleJa}`,
@@ -1312,7 +1391,7 @@ export class BotWHudAndMenu {
       </div>
     `;
     this.elSlateBody.querySelectorAll('[data-comp-id]').forEach((el) =>
-      el.addEventListener('click', () => {
+      this.bindTap(el, () => {
         const id = (el as HTMLElement).dataset.compId!;
         this.save.sensorTargetId = id;
         this.showToast(`シーカーセンサー＋の探知対象を「${COMPENDIUM_CATALOG.find((x) => x.id === id)?.nameJa}」に設定！`, 'cyan');
@@ -1375,44 +1454,44 @@ export class BotWHudAndMenu {
       </div>
     `;
 
-    this.elSlateBody.querySelector('#sys-touch-toggle')?.addEventListener('click', () => {
+    this.bindTap(this.elSlateBody.querySelector('#sys-touch-toggle'), () => {
       const order: Array<'auto' | 'always' | 'hidden'> = ['auto', 'always', 'hidden'];
       const cur = this.save.settings.touchControlsMode ?? 'auto';
       this.save.settings.touchControlsMode = order[(order.indexOf(cur) + 1) % order.length];
       this.cb.onSettingsChanged?.();
       this.renderSystemTab();
     });
-    this.elSlateBody.querySelector('#sys-quality-toggle')?.addEventListener('click', () => {
+    this.bindTap(this.elSlateBody.querySelector('#sys-quality-toggle'), () => {
       const order: Array<'high' | 'medium' | 'low'> = ['high', 'medium', 'low'];
       const cur = this.save.settings.graphicsQuality ?? 'high';
       this.save.settings.graphicsQuality = order[(order.indexOf(cur) + 1) % order.length];
       this.cb.onSettingsChanged?.();
       this.renderSystemTab();
     });
-    this.elSlateBody.querySelector('#sys-mode-toggle')?.addEventListener('click', () => {
+    this.bindTap(this.elSlateBody.querySelector('#sys-mode-toggle'), () => {
       this.cb.onSwitchMode(this.save.mode === 'normal' ? 'master' : 'normal');
       this.renderSystemTab();
     });
-    this.elSlateBody.querySelector('#sys-glitch-toggle')?.addEventListener('click', () => {
+    this.bindTap(this.elSlateBody.querySelector('#sys-glitch-toggle'), () => {
       this.save.settings.glitchPhysics = !this.save.settings.glitchPhysics;
       this.renderSystemTab();
     });
-    this.elSlateBody.querySelector('#sys-cam-toggle')?.addEventListener('click', () => {
+    this.bindTap(this.elSlateBody.querySelector('#sys-cam-toggle'), () => {
       const order: Array<'tps' | 'close' | 'fps'> = ['tps', 'close', 'fps'];
       this.save.settings.cameraMode = order[(order.indexOf(this.save.settings.cameraMode) + 1) % order.length];
       this.renderSystemTab();
     });
-    this.elSlateBody.querySelector('#sys-minimap-toggle')?.addEventListener('click', () => {
+    this.bindTap(this.elSlateBody.querySelector('#sys-minimap-toggle'), () => {
       this.save.settings.northFixedMinimap = !this.save.settings.northFixedMinimap;
       this.renderSystemTab();
     });
-    this.elSlateBody.querySelector('#sys-time-6h')?.addEventListener('click', () => this.cb.onAdvanceTime(6));
-    this.elSlateBody.querySelector('#sys-bloodmoon')?.addEventListener('click', () => {
+    this.bindTap(this.elSlateBody.querySelector('#sys-time-6h'), () => this.cb.onAdvanceTime(6));
+    this.bindTap(this.elSlateBody.querySelector('#sys-bloodmoon'), () => {
       this.closeSlate();
       this.cb.onTriggerBloodMoon();
     });
     this.elSlateBody.querySelectorAll('[data-save-idx]').forEach((b) =>
-      b.addEventListener('click', () => {
+      this.bindTap(b, () => {
         const idx = Number((b as HTMLElement).dataset.saveIdx) as 1 | 2 | 3;
         this.cb.onSaveManual(idx);
         this.showToast(`スロット ${getManualSlotId(this.save.mode, idx)} にセーブしました！`);
@@ -1420,7 +1499,7 @@ export class BotWHudAndMenu {
       })
     );
     this.elSlateBody.querySelectorAll('[data-load-slot]').forEach((b) =>
-      b.addEventListener('click', () => {
+      this.bindTap(b, () => {
         this.cb.onLoadSlot((b as HTMLElement).dataset.loadSlot!);
         this.closeSlate();
       })
@@ -1454,7 +1533,7 @@ export class BotWHudAndMenu {
         `
       );
       this.elSubModal.querySelectorAll('[data-cook-add]').forEach((el) =>
-        el.addEventListener('click', () => {
+        this.bindTap(el, () => {
           if (selected.length >= 5) return;
           const id = (el as HTMLElement).dataset.cookAdd!;
           if ((this.save.materials[id] ?? 0) > selected.filter((x) => x === id).length) {
@@ -1463,11 +1542,11 @@ export class BotWHudAndMenu {
           }
         })
       );
-      this.elSubModal.querySelector('#btn-cook-clear')?.addEventListener('click', () => {
+      this.bindTap(this.elSubModal.querySelector('#btn-cook-clear'), () => {
         selected.length = 0;
         render();
       });
-      this.elSubModal.querySelector('#btn-do-cook')?.addEventListener('click', () => {
+      this.bindTap(this.elSubModal.querySelector('#btn-do-cook'), () => {
         if (selected.length === 0) return;
         for (const id of selected) {
           this.save.materials[id] = Math.max(0, (this.save.materials[id] ?? 1) - 1);
@@ -1496,7 +1575,7 @@ export class BotWHudAndMenu {
       `
     );
     this.elSubModal.querySelectorAll('[data-dye-pick]').forEach((b) =>
-      b.addEventListener('click', () => {
+      this.bindTap(b, () => {
         const dyeId = (b as HTMLElement).dataset.dyePick!;
         for (const id of equippedIds) {
           if (ARMOR_MAP[id]?.dyeable) {
@@ -1536,7 +1615,7 @@ export class BotWHudAndMenu {
       `
     );
     this.elSubModal.querySelectorAll('[data-upg-id]').forEach((b) =>
-      b.addEventListener('click', () => {
+      this.bindTap(b, () => {
         const id = (b as HTMLElement).dataset.upgId!;
         const cur = this.save.armorStars[id] ?? 0;
         if (cur < 4) {
@@ -1583,7 +1662,7 @@ export class BotWHudAndMenu {
         <div class="slate-body">${innerHtml}</div>
       </div>
     `;
-    this.elSubModal.querySelector('#btn-sub-close')?.addEventListener('click', () => this.closeSubModal());
+    this.bindTap(this.elSubModal.querySelector('#btn-sub-close'), () => this.closeSubModal());
   }
 
   public closeSubModal(): void {
@@ -1597,6 +1676,12 @@ export class BotWHudAndMenu {
   // ==================== FRAME-BY-FRAME LIVE HUD UPDATE ====================
   public updateHud(dt: number, ctx: HudUpdateContext): void {
     this.save = ctx.save;
+    const isTouch = this.isTouchUi();
+
+    const slateTxt = isTouch ? '📱 ポーチ' : '📱 ポーチ (Tab)';
+    if (this.elBtnHudSlate.textContent !== slateTxt) this.elBtnHudSlate.textContent = slateTxt;
+    const mapTxt = isTouch ? '🗺️ マップ' : '🗺️ マップ (M)';
+    if (this.elBtnHudMap.textContent !== mapTxt) this.elBtnHudMap.textContent = mapTxt;
 
     if (this.isSlateOpen && this.currentTab === 'inventory') {
       this.previewYaw += dt * 0.65;
@@ -1624,23 +1709,38 @@ export class BotWHudAndMenu {
     }
 
     // 1. Top-Left Hearts (Quarter-Heart SVG precision + yellow temp hearts!)
-    this.renderHearts(ctx.save.hearts, ctx.save.maxHearts, ctx.save.tempHearts);
+    const heartsSig = `${ctx.save.hearts}:${ctx.save.maxHearts}:${ctx.save.tempHearts}`;
+    if (this.elHearts.dataset.sig !== heartsSig) {
+      this.elHearts.dataset.sig = heartsSig;
+      this.renderHearts(ctx.save.hearts, ctx.save.maxHearts, ctx.save.tempHearts);
+    }
 
-    // 2. Champions' Abilities badges
+    // 2. Champions' Abilities badges (shown only once unlocked!)
     const ch = ctx.save.champions;
-    this.elChamps.innerHTML = [
-      ['💧 ミファー', ch.mipha],
-      ['🛡 ダルケル', ch.daruk],
-      ['🌪 リーバル(G)', ch.revali],
-      ['⚡ ウルボザ', ch.urbosa],
-    ]
-      .map(([lbl, st]) => {
-        const s = st as SaveSlotData['champions']['mipha'];
-        return `<span class="champ-badge ${!s.enabled || s.charges === 0 ? 'off' : ''}">${lbl} ×${s.charges}</span>`;
-      })
-      .join('');
+    const unlockedChamps = (
+      [
+        ['💧 ミファー', ch.mipha],
+        ['🛡 ダルケル', ch.daruk],
+        [isTouch ? '🌪 リーバル' : '🌪 リーバル(G)', ch.revali],
+        ['⚡ ウルボザ', ch.urbosa],
+      ] as Array<[string, SaveSlotData['champions']['mipha']]>
+    ).filter(([, st]) => st.unlocked);
+    const champSig = unlockedChamps.map(([lbl, s]) => `${lbl}:${s.enabled}:${s.charges}`).join('|');
+    if (this.elChamps.dataset.sig !== champSig) {
+      this.elChamps.dataset.sig = champSig;
+      this.elChamps.innerHTML = unlockedChamps
+        .map(
+          ([lbl, s]) =>
+            `<span class="champ-badge ${!s.enabled || s.charges === 0 ? 'off' : ''}">${lbl} ×${s.charges}</span>`
+        )
+        .join('');
+    }
 
-    this.elRupees.innerHTML = `💎 ${ctx.save.rupees} ルピー &nbsp;|&nbsp; 🌿 ${ctx.save.korokSeeds} &nbsp;|&nbsp; ✦ 証 ${ctx.save.spiritOrbs} ${ctx.korokMaskRattle ? '<span style="color:#66ff7a;">🍃コログ反応！</span>' : ''}`;
+    const rupeeHtml = `💎 ${ctx.save.rupees} ルピー &nbsp;|&nbsp; 🌿 ${ctx.save.korokSeeds} &nbsp;|&nbsp; ✦ 証 ${ctx.save.spiritOrbs} ${ctx.korokMaskRattle ? '<span style="color:#66ff7a;">🍃コログ反応！</span>' : ''}`;
+    if (this.elRupees.dataset.sig !== rupeeHtml) {
+      this.elRupees.dataset.sig = rupeeHtml;
+      this.elRupees.innerHTML = rupeeHtml;
+    }
     this.elMasterBadge.classList.toggle('hidden', ctx.save.mode !== 'master');
 
     // 3. Boss HP Bar
@@ -1661,29 +1761,49 @@ export class BotWHudAndMenu {
       this.renderStaminaWheel(ctx.stamina, ctx.maxStamina, ctx.tempStamina, ctx.exhausted);
     }
 
-    // 5. Active Runes Strip
-    this.elRuneRow.innerHTML = ctx.save.unlockedRunes
-      .map((r, i) => {
-        const info = RUNE_LABELS[r];
-        return `<button class="rune-slot ${ctx.activeRune === r ? 'active' : ''}" data-rune-pick="${r}" type="button">
-          <span>${info.icon}</span><span>${i + 1}:${info.name}</span>
-        </button>`;
-      })
-      .join('');
-    this.elRuneRow.querySelectorAll('[data-rune-pick]').forEach((b) =>
-      b.addEventListener('click', () => this.cb.onSelectRune((b as HTMLElement).dataset.runePick as RuneId))
-    );
+    // 5. Active Runes Strip (hidden until plateau runes unlocked; re-renders only on state change so taps never drop!)
+    if (ctx.save.unlockedRunes.length === 0) {
+      this.elRuneRow.classList.add('hidden');
+      if (this.elRuneRow.dataset.sig !== 'empty') {
+        this.elRuneRow.dataset.sig = 'empty';
+        this.elRuneRow.innerHTML = '';
+      }
+    } else {
+      this.elRuneRow.classList.remove('hidden');
+      const runeSig = `${ctx.save.unlockedRunes.join(',')}:${ctx.activeRune ?? 'none'}:${isTouch}`;
+      if (this.elRuneRow.dataset.sig !== runeSig) {
+        this.elRuneRow.dataset.sig = runeSig;
+        this.elRuneRow.innerHTML = ctx.save.unlockedRunes
+          .map((r, i) => {
+            const info = RUNE_LABELS[r];
+            return `<button class="rune-slot ${ctx.activeRune === r ? 'active' : ''}" data-rune-pick="${r}" type="button">
+              <span>${info.icon}</span><span>${isTouch ? info.name : `${i + 1}:${info.name}`}</span>
+            </button>`;
+          })
+          .join('');
+        this.elRuneRow.querySelectorAll('[data-rune-pick]').forEach((b) =>
+          this.bindTap(b, () => this.cb.onSelectRune((b as HTMLElement).dataset.runePick as RuneId))
+        );
+      }
+    }
 
-    // 6. Interact Prompt
+    // 6. Interact Prompt (PC vs Touch dynamic text, cached by signature so element isn't replaced mid-tap)
     if (ctx.interactLabel) {
       this.elInteractBtn.classList.remove('hidden');
-      this.elInteractBtn.innerHTML = `<span class="key-cap">E</span><span>${ctx.interactLabel}</span>`;
+      const interactSig = `${isTouch}:${ctx.interactLabel}`;
+      if (this.elInteractBtn.dataset.sig !== interactSig) {
+        this.elInteractBtn.dataset.sig = interactSig;
+        this.elInteractBtn.innerHTML = isTouch
+          ? `<span>✋ ${ctx.interactLabel}</span>`
+          : `<span class="key-cap">E</span><span>${ctx.interactLabel}</span>`;
+      }
     } else {
       this.elInteractBtn.classList.add('hidden');
     }
 
     // 7. Bottom-Right Pro HUD Toggle + Sound Sensor + Thermometer + Weather Forecast + Clock + Circular Minimap
     this.elBottomRight.classList.toggle('pro-hidden', ctx.save.settings.proHud);
+    this.elMinimapWrap.classList.toggle('slate-locked', !ctx.save.hasSheikahSlate);
     if (!ctx.save.settings.proHud) {
       this.drawSoundWaveform(ctx.noiseLevel);
       if (ctx.climate.isVolcanicError) {
@@ -1708,7 +1828,11 @@ export class BotWHudAndMenu {
     this.elCameraOverlay.classList.toggle('hidden', !ctx.cameraModeActive);
     if (ctx.cameraModeActive) {
       this.elCameraTag.textContent = ctx.cameraTargetName
-        ? `📷 認識対象：【${ctx.cameraTargetName}】 — Qで撮影＆図鑑登録！`
+        ? isTouch
+          ? `📷 認識対象：【${ctx.cameraTargetName}】 — ルーンボタンで撮影＆図鑑登録！`
+          : `📷 認識対象：【${ctx.cameraTargetName}】 — Qで撮影＆図鑑登録！`
+        : isTouch
+        ? '📷 ウツシエ — 対象を枠に収めてルーンボタンで撮影'
         : '📷 ウツシエ — 対象を枠に収めて Q で撮影（Fで自撮り）';
     }
   }
@@ -1783,14 +1907,29 @@ export class BotWHudAndMenu {
     ctx.fillStyle = '#0e1b29';
     ctx.fillRect(0, 0, w, h);
 
+    if (!this.save.hasSheikahSlate) {
+      ctx.strokeStyle = 'rgba(228, 196, 101, 0.35)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 34, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(228, 196, 101, 0.65)';
+      ctx.font = 'bold 11px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('NO SLATE', cx, cy + 4);
+      return;
+    }
+
+    const hasTowerMapData = this.save.activatedTowers.length > 0;
+
     ctx.save();
     ctx.translate(cx, cy);
     const rot = northFixed ? 0 : cameraYaw;
     ctx.rotate(rot);
 
     const scale = 0.26; // 1m = 0.26px (~280m view radius)
-    // Draw subtle contour rings
-    ctx.strokeStyle = 'rgba(54, 228, 255, 0.14)';
+    // Subtle contour rings
+    ctx.strokeStyle = hasTowerMapData ? 'rgba(54, 228, 255, 0.14)' : 'rgba(54, 228, 255, 0.08)';
     ctx.lineWidth = 1;
     for (const r of [24, 48, 68]) {
       ctx.beginPath();
@@ -1798,37 +1937,46 @@ export class BotWHudAndMenu {
       ctx.stroke();
     }
 
-    // Draw nearby Towers & Shrines & Landmarks
-    for (const reg of REGION_LIST) {
-      const dx = (reg.towerPos.x - playerPos.x) * scale;
-      const dz = (reg.towerPos.z - playerPos.z) * scale;
-      if (dx * dx + dz * dz < 68 * 68) {
-        ctx.fillStyle = this.save.activatedTowers.includes(reg.id) ? '#36e4ff' : '#ff8c24';
-        ctx.fillRect(dx - 3, dz - 3, 6, 6);
+    if (hasTowerMapData) {
+      // Draw nearby Towers & Shrines & Landmarks once Great Plateau / Regional tower unlocked
+      for (const reg of REGION_LIST) {
+        const dx = (reg.towerPos.x - playerPos.x) * scale;
+        const dz = (reg.towerPos.z - playerPos.z) * scale;
+        if (dx * dx + dz * dz < 68 * 68) {
+          ctx.fillStyle = this.save.activatedTowers.includes(reg.id) ? '#36e4ff' : '#ff8c24';
+          ctx.fillRect(dx - 3, dz - 3, 6, 6);
+        }
       }
-    }
-    for (const sh of PHYSICAL_SHRINES) {
-      const dx = (sh.x - playerPos.x) * scale;
-      const dz = (sh.z - playerPos.z) * scale;
-      if (dx * dx + dz * dz < 68 * 68) {
-        ctx.fillStyle = this.save.completedShrines.includes(sh.id) ? '#36e4ff' : '#ff9c38';
-        ctx.beginPath();
-        ctx.arc(dx, dz, 3, 0, Math.PI * 2);
-        ctx.fill();
+      for (const sh of PHYSICAL_SHRINES) {
+        const dx = (sh.x - playerPos.x) * scale;
+        const dz = (sh.z - playerPos.z) * scale;
+        if (dx * dx + dz * dz < 68 * 68) {
+          ctx.fillStyle = this.save.completedShrines.includes(sh.id) ? '#36e4ff' : '#ff9c38';
+          ctx.beginPath();
+          ctx.arc(dx, dz, 3, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
-    }
-    for (const lm of LANDMARKS) {
-      const dx = (lm.x - playerPos.x) * scale;
-      const dz = (lm.z - playerPos.z) * scale;
-      if (dx * dx + dz * dz < 68 * 68) {
-        ctx.fillStyle = lm.type === 'castle' ? '#ff3858' : '#e4c465';
-        ctx.beginPath();
-        ctx.arc(dx, dz, 3.2, 0, Math.PI * 2);
-        ctx.fill();
+      for (const lm of LANDMARKS) {
+        const dx = (lm.x - playerPos.x) * scale;
+        const dz = (lm.z - playerPos.z) * scale;
+        if (dx * dx + dz * dz < 68 * 68) {
+          ctx.fillStyle = lm.type === 'castle' ? '#ff3858' : '#e4c465';
+          ctx.beginPath();
+          ctx.arc(dx, dz, 3.2, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
     }
 
     ctx.restore();
+
+    if (!hasTowerMapData) {
+      ctx.fillStyle = 'rgba(130, 195, 225, 0.55)';
+      ctx.font = '10px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('未登録エリア', cx, cy + 44);
+    }
 
     // Player golden directional arrow at center
     ctx.save();

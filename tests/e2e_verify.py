@@ -8,14 +8,23 @@ OUT_DIR = os.path.abspath("tests/screenshots")
 os.makedirs(OUT_DIR, exist_ok=True)
 
 
+def find_free_port():
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
 def run_e2e():
-    # Serve production dist/ build via Vite preview on port 4175
+    port = find_free_port()
+    base_url = f"http://127.0.0.1:{port}"
+    # Serve production dist/ build via Vite preview on guaranteed free port
     server = subprocess.Popen(
-        ["npx", "vite", "preview", "--port", "4175", "--host", "127.0.0.1"],
+        ["npx", "vite", "preview", "--port", str(port), "--strictPort", "--host", "127.0.0.1"],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
-    time.sleep(2.5)
+    time.sleep(2.2)
 
     console_errors = []
     page_errors = []
@@ -44,20 +53,16 @@ def run_e2e():
             )
             page.on("pageerror", lambda err: page_errors.append(str(err)))
 
-            print("1. Loading production build at http://127.0.0.1:4175 ...")
-            page.goto("http://127.0.0.1:4175", wait_until="networkidle", timeout=30000)
+            print(f"1. Loading production build at {base_url} ...")
+            page.goto(base_url, wait_until="networkidle", timeout=30000)
             page.wait_for_function("() => Boolean(window.__BOTW__)", timeout=30000)
             time.sleep(1.5)
 
-            # Verify Awakening Intro flow -> Great Plateau gameplay
-            print("2. Verifying Awakening intro sequence -> Great Plateau start...")
+            # Verify 3D Awakening Overlay flow -> Shrine of Resurrection start
+            print("2. Verifying 3D Awakening overlay -> Great Plateau start...")
             page.click("#btn-new-normal")
             time.sleep(0.5)
-            assert page.locator("#botw-intro").is_visible(), "Intro overlay should open"
-            page.click("#btn-intro-next")
-            time.sleep(0.3)
-            page.click("#btn-intro-skip")
-            time.sleep(1.0)
+            assert page.locator("#awakening-overlay").is_visible(), "3D Awakening overlay should appear"
             assert page.locator("#botw-hud").is_visible(), "HUD should be visible after awakening"
 
             # SHOT 1: Great Plateau Vista & Terrain (from Shrine of Resurrection overlook looking NE toward Temple of Time, Tower, Dueling Peaks & Hyrule Castle!)
@@ -98,11 +103,26 @@ def run_e2e():
             page.screenshot(path=os.path.join(OUT_DIR, "03_chest_and_shrine.png"))
             print("   Captured 03_chest_and_shrine.png")
 
-            # 3. E2E Gameplay Verification: Runes (Magnesis, Remote Bombs, Stasis, Cryonis) + Fire Updraft Paraglide + Bullet Time Shot!
+            # 3. E2E Gameplay Verification: Unlock Plateau Runes + Collect Campfire Baked Apple + Bullet-Time Arrow + Cooking!
             print("3. Testing Magnesis, Remote Bombs, Stasis, Cryonis, Fire Updraft Paraglider & Bullet-Time...")
             rune_report = page.evaluate("""() => {
                 const B = window.__BOTW__;
                 B.clearCameraOverride();
+                // Obtain Sheikah Slate & clear all 4 Plateau Shrines to unlock Runes authentically!
+                B.teleport(-311.2, 455.0);
+                B.interactNearest();
+                for (const [x, z] of [[-215, 420], [-150, 490], [-275, 555], [-345, 525]]) {
+                    B.teleport(x, z);
+                    B.interactNearest();
+                }
+                // Pick up Campfire baked_apple + Plateau Wooden Chest arrows, plus equip traveler's bow for bullet-time test
+                B.teleport(-286.6, 456.4);
+                B.interactNearest();
+                B.teleport(-292, 452);
+                B.interactNearest();
+                B.engine.save.bows.push({ id: 'travelers_bow', nameJa: '旅人の弓', nameEn: "Traveler's Bow", category: 'bow', attack: 5, durability: 20, currentDurability: 20, material: 'Wood', color: '#8c6a46', accentColor: '#c09f68' });
+                B.engine.save.equippedBowId = 'travelers_bow';
+                B.engine.save.hasParaglider = true;
 
                 // Magnesis near metal box (-288, 444)
                 B.teleport(-290, 448, 0.4);
@@ -155,14 +175,14 @@ def run_e2e():
             assert page.locator("#dialogue-box").is_visible(), "NPC EventFlow dialogue should open"
             dlg_text = page.locator(".dialogue-text").inner_text()
             print("   Naked EventFlow dialogue text:", dlg_text)
-            assert "裸" in dlg_text, f"Expected naked EventFlow branch, got: {dlg_text}"
+            assert "裸" in dlg_text or "何も着ずに" in dlg_text, f"Expected naked EventFlow branch, got: {dlg_text}"
             page.screenshot(path=os.path.join(OUT_DIR, "04_npc_dialogue.png"))
             print("   Captured 04_npc_dialogue.png")
 
-            # Re-equip Champion's Tunic + Cook a meal
+            # Re-equip Well-Worn Shirt / Armor + Cook a meal using gathered campfire baked_apple
             page.evaluate("""() => {
                 window.__BOTW__.closeAllModals();
-                window.__BOTW__.equipArmor(null, 'champions_tunic', 'hylian_trousers');
+                window.__BOTW__.equipArmor(null, 'well_worn_shirt', 'old_trousers');
                 window.__BOTW__.clearCameraOverride();
             }""")
             page.click("#btn-hud-cook")

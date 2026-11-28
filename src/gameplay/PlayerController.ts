@@ -214,11 +214,13 @@ export class PlayerController {
    */
   fireArrow(save: SaveSlotData, aimDir: THREE.Vector3): ActiveArrow | null {
     const aType = save.equippedArrow;
+    if (!save.equippedBowId) return null;
     if ((save.arrows[aType] ?? 0) <= 0) return null;
+    const bow = save.bows.find((b) => b.id === save.equippedBowId);
+    if (!bow) return null;
     save.arrows[aType] -= 1;
 
-    const bow = save.bows.find((b) => b.id === save.equippedBowId);
-    const atk = bow ? bow.attack : 14;
+    const atk = bow.attack;
 
     const grp = new THREE.Group();
     const shaft = new THREE.Mesh(
@@ -702,7 +704,8 @@ export class PlayerController {
     const headPiece = save.equippedArmor.head ? ARMOR_MAP[save.equippedArmor.head] ?? null : null;
     const bodyPiece = save.equippedArmor.body ? ARMOR_MAP[save.equippedArmor.body] ?? null : null;
     const legsPiece = save.equippedArmor.legs ? ARMOR_MAP[save.equippedArmor.legs] ?? null : null;
-    const activeWep = save.weapons.find((w) => w.id === save.equippedWeaponId);
+    const activeWep = save.equippedWeaponId ? save.weapons.find((w) => w.id === save.equippedWeaponId) ?? null : null;
+    const activeShd = save.equippedShieldId ? save.shields.find((s) => s.id === save.equippedShieldId) ?? null : null;
 
     this.model.applyEquipmentVisuals({
       headPiece,
@@ -711,16 +714,18 @@ export class PlayerController {
       headDyeHex: headPiece && save.armorDyes[headPiece.id] ? KOCHI_DYE_MAP[save.armorDyes[headPiece.id]]?.hex : null,
       bodyDyeHex: bodyPiece && save.armorDyes[bodyPiece.id] ? KOCHI_DYE_MAP[save.armorDyes[bodyPiece.id]]?.hex : null,
       legsDyeHex: legsPiece && save.armorDyes[legsPiece.id] ? KOCHI_DYE_MAP[save.armorDyes[legsPiece.id]]?.hex : null,
-      weaponDrawn: this.weaponDrawn,
+      weaponDrawn: this.weaponDrawn && !!activeWep,
       isMasterSword: activeWep?.isMasterSword ?? false,
-      weaponId: activeWep?.id ?? 'master_sword',
-      shieldId: save.equippedShieldId,
+      weaponId: activeWep?.id ?? null,
+      shieldId: activeShd?.id ?? null,
+      bowId: save.equippedBowId,
       weaponColor: activeWep?.color ?? '#d8e4f0',
-      shieldColor: '#244d9c',
-      bowDrawn: this.aimingBow,
+      shieldColor: activeShd?.color ?? '#244d9c',
+      bowDrawn: this.aimingBow && !!save.equippedBowId,
       paragliderOpen: this.paragliding,
-      shieldSurfing: this.shieldSurfing,
+      shieldSurfing: this.shieldSurfing && !!activeShd,
       holdingTorchFire: activeWep?.id === 'torch',
+      hasSheikahSlate: save.hasSheikahSlate,
     });
   }
 }

@@ -73,6 +73,7 @@ export class TouchControls {
 
   private guardPointerId: number | null = null;
   private bowPointerId: number | null = null;
+  private tapButtonPointers = new Map<HTMLButtonElement, number>();
 
   // DOM elements
   private rootEl!: HTMLElement;
@@ -94,6 +95,7 @@ export class TouchControls {
     this.mountDom();
     this.bindGestureAudioUnlock();
     this.bindPointerEvents();
+    this.bindWindowPointerCleanup();
     this.syncVisibility();
   }
 
@@ -378,27 +380,65 @@ export class TouchControls {
   }
 
   private bindTapButton(btn: HTMLButtonElement, onPress: () => void): void {
-    let activeId: number | null = null;
     btn.addEventListener('pointerdown', (e) => {
       if (this.blocked) return;
-      if (activeId !== null) return;
+      if (this.tapButtonPointers.has(btn)) return;
       e.preventDefault();
       e.stopPropagation();
-      activeId = e.pointerId;
+      this.tapButtonPointers.set(btn, e.pointerId);
       this.safeSetCapture(btn, e.pointerId);
       btn.classList.add('pressed');
       onPress();
     });
     const end = (e: PointerEvent) => {
-      if (e.pointerId !== activeId) return;
+      if (this.tapButtonPointers.get(btn) !== e.pointerId) return;
       e.preventDefault();
       e.stopPropagation();
       this.safeReleaseCapture(btn, e.pointerId);
-      activeId = null;
+      this.tapButtonPointers.delete(btn);
       btn.classList.remove('pressed');
     };
     btn.addEventListener('pointerup', end);
     btn.addEventListener('pointercancel', end);
+  }
+
+  private bindWindowPointerCleanup(): void {
+    const cleanLostPointer = (e: PointerEvent) => {
+      const pid = e.pointerId;
+      for (const [btn, trackedId] of this.tapButtonPointers.entries()) {
+        if (trackedId === pid) {
+          this.safeReleaseCapture(btn, pid);
+          this.tapButtonPointers.delete(btn);
+          btn.classList.remove('pressed');
+        }
+      }
+      if (this.stickPointerId === pid) {
+        this.resetStick();
+      }
+      if (this.lookPointerId === pid) {
+        this.lookPointerId = null;
+      }
+      if (this.attackPointerId === pid) {
+        this.clearAttackState();
+      }
+      if (this.dashPointerId === pid) {
+        this.dashPointerId = null;
+        this.state.sprint = false;
+        this.btnDash.classList.remove('pressed');
+      }
+      if (this.guardPointerId === pid) {
+        this.guardPointerId = null;
+        this.state.guard = false;
+        this.btnGuard.classList.remove('pressed');
+      }
+      if (this.bowPointerId === pid) {
+        this.bowPointerId = null;
+        this.state.aimBow = false;
+        this.btnBow.classList.remove('pressed');
+      }
+    };
+    window.addEventListener('pointerup', cleanLostPointer, { passive: true });
+    window.addEventListener('pointercancel', cleanLostPointer, { passive: true });
   }
 
   private updateStickVector(clientX: number, clientY: number): void {
@@ -491,6 +531,10 @@ export class TouchControls {
     }
   }
 
+  public setRunesVisible(visible: boolean): void {
+    this.btnRune.classList.toggle('hidden', !visible);
+  }
+
   public setZLLocked(locked: boolean): void {
     this.btnZL.classList.toggle('locked', locked);
   }
@@ -503,6 +547,11 @@ export class TouchControls {
   }
 
   private resetAllActiveInputs(): void {
+    for (const [btn, pid] of this.tapButtonPointers.entries()) {
+      this.safeReleaseCapture(btn, pid);
+      btn.classList.remove('pressed');
+    }
+    this.tapButtonPointers.clear();
     this.resetStick();
     this.lookPointerId = null;
     this.clearAttackState();

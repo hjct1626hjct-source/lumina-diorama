@@ -63,24 +63,51 @@ def snap(page, filename):
     print(f"   Captured {filename}")
 
 
+def find_free_port():
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
 def run_verification():
     ipad_only = "--ipad-only" in sys.argv
-    # Start production preview server
+    desktop_only = "--desktop-only" in sys.argv
+    port = find_free_port()
+    base_url = f"http://127.0.0.1:{port}"
+    # Start production preview server on guaranteed free port
     server = subprocess.Popen(
-        ["npx", "vite", "preview", "--port", "4176", "--host", "127.0.0.1"],
+        ["npx", "vite", "preview", "--port", str(port), "--strictPort", "--host", "127.0.0.1"],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
-    time.sleep(2.5)
+    time.sleep(2.2)
 
     console_errors = []
+    console_warnings = []
     page_errors = []
     http_404s = []
 
     def attach_monitors(page, tag):
-        page.on("console", lambda m: console_errors.append(f"[{tag}][{m.type}] {m.text}") if m.type == "error" else None)
+        page.on("console", lambda m: console_errors.append(f"[{tag}][{m.type}] {m.text}") if m.type == "error" else (console_warnings.append(f"[{tag}][{m.type}] {m.text}") if m.type == "warning" else None))
         page.on("pageerror", lambda err: page_errors.append(f"[{tag}] {err}"))
         page.on("response", lambda res: http_404s.append(f"[{tag}] {res.status} {res.url}") if res.status >= 400 else None)
+
+    def assert_zero_errors():
+        print(f"\nConsole Errors: {len(console_errors)}")
+        for e in console_errors:
+            print("  ERROR:", e)
+        print(f"Page Errors: {len(page_errors)}")
+        for e in page_errors:
+            print("  PAGEERR:", e)
+        print(f"HTTP 404/4xx+ Responses: {len(http_404s)}")
+        for r in http_404s:
+            print("  HTTP:", r)
+
+        assert len(console_errors) == 0, f"Console errors detected: {console_errors}"
+        assert len(page_errors) == 0, f"Page errors detected: {page_errors}"
+        assert len(http_404s) == 0, f"HTTP 4xx/5xx responses detected: {http_404s}"
+        print("\n✅ ALL OVERHAUL VERIFICATION CHECKS PASSED WITH ZERO ERRORS!")
 
     try:
         with sync_playwright() as p:
@@ -99,11 +126,11 @@ def run_verification():
 
             # ==================== 1. DESKTOP: ALL 21 GLBs, TERRAIN, COLLISION & VISUALS ====================
             if not ipad_only:
-                print("\n=== [1] Desktop 1280x720 Verification ===")
+                print(f"\n=== [1] Desktop 1280x720 Verification ({base_url}) ===")
                 ctx_desk = browser.new_context(viewport={"width": 1280, "height": 720})
                 page = ctx_desk.new_page()
                 attach_monitors(page, "desktop")
-                page.goto("http://127.0.0.1:4176", wait_until="domcontentloaded", timeout=30000)
+                page.goto(base_url, wait_until="domcontentloaded", timeout=30000)
                 page.wait_for_function("() => Boolean(window.__BOTW__)", timeout=30000)
                 page.evaluate("() => window.__BOTW__.startPlayDirectly()")
                 time.sleep(0.8)
@@ -114,9 +141,30 @@ def run_verification():
                 print(f"   Disk GLBs ({len(disk_glbs)}): {disk_glbs}")
                 print(f"   Loaded GLBs ({len(loaded)}): {loaded}")
                 print(f"   Instantiated GLBs ({len(instantiated)}): {instantiated}")
+                if len(loaded) != 21:
+                    print("   Console warnings during model load:", console_warnings)
                 assert len(disk_glbs) == 21
                 assert set(disk_glbs) == set(loaded)
                 assert set(disk_glbs) == set(instantiated)
+
+                # Unlock Camera & Magnesis authentically via Shrine of Resurrection -> Oman Au -> Purah!
+                purah_unlock = page.evaluate("""() => {
+                    const B = window.__BOTW__;
+                    // Collect Sheikah Slate pedestal
+                    B.teleport(-311.2, 455.0);
+                    B.interactNearest();
+                    const hasSlate = B.engine.save.hasSheikahSlate;
+                    // Unlock Magnesis at Oman Au Shrine
+                    B.teleport(-215, 420);
+                    B.interactNearest();
+                    // Speak with Purah at Hateno Lab to unlock Camera Rune
+                    B.teleport(1114, 545);
+                    B.interactNearest();
+                    return hasSlate;
+                }""")
+                assert purah_unlock is True, "Sheikah Slate pedestal should unlock slate"
+                page.locator("#btn-dlg-next").click()
+                page.locator("[data-dlg-act='unlock_camera_rune']").click()
                 page.evaluate("""() => {
                     window.__BOTW__.selectRune('camera');
                     window.__BOTW__.activateRune();
@@ -136,7 +184,98 @@ def run_verification():
                 eb = terr["farExcludeBounds"]
                 assert len(eb) == 4 and (eb[2] - eb[0]) > 300 and (eb[3] - eb[1]) > 300
                 assert phys["staticColliders"] > 100 and phys["propColliders"] > 10
+
+                # Test Authentic New Game 3D Opening Sequence & Old Man 4-Shrine Gate
+                print("   Testing Authentic New Game 3D Opening -> Old Man 4-Shrine Paraglider Gate...")
+                page.reload(wait_until="domcontentloaded", timeout=30000)
+                page.wait_for_function("() => Boolean(window.__BOTW__)", timeout=30000)
+                page.click("#btn-new-normal")
+                time.sleep(0.4)
+                assert page.locator("#awakening-overlay").is_visible(), "3D Awakening overlay should display instead of slideshow modal"
+                init_state = page.evaluate("""() => {
+                    const s = window.__BOTW__.engine.save;
+                    return {
+                        hearts: s.hearts, maxHearts: s.maxHearts, stamina: s.stamina, rupees: s.rupees,
+                        hasSheikahSlate: s.hasSheikahSlate, unlockedRunes: [...s.unlockedRunes],
+                        hasParaglider: s.hasParaglider, ownedArmor: [...s.ownedArmorIds],
+                        runeRowHidden: document.getElementById('hud-rune-row').classList.contains('hidden'),
+                    };
+                }""")
+                print(f"   Fresh New Game State: {init_state}")
+                assert init_state["hearts"] == 3 and init_state["rupees"] == 0
+                assert init_state["hasSheikahSlate"] is False and init_state["unlockedRunes"] == []
+                assert init_state["hasParaglider"] is False and init_state["ownedArmor"] == []
+                assert init_state["runeRowHidden"] is True
+
+                # Inspect Slate Pedestal -> Both Shirt & Trousers Chests -> Exit Terminal -> Overlook Panorama Logo
+                sor_prog = page.evaluate("""() => {
+                    const B = window.__BOTW__;
+                    B.teleport(-311.2, 455.0);
+                    B.interactNearest(); // Collect Sheikah Slate
+                    B.teleport(-310.2, 458.4);
+                    B.interactNearest(); // Shirt Chest
+                    B.teleport(-308.0, 458.4);
+                    B.interactNearest(); // Trousers Chest
+                    B.teleport(-306.4, 456.6);
+                    B.interactNearest(); // Exit Terminal -> Open Stone Seal Door
+                    B.teleport(-293.0, 454.5); // Step onto cliff overlook
+                    return {
+                        slate: B.engine.save.hasSheikahSlate,
+                        doorOpened: B.engine.architecture.sorDoorOpened,
+                        ownedArmor: [...B.engine.save.ownedArmorIds],
+                    };
+                }""")
+                time.sleep(0.4)
+                assert sor_prog["slate"] is True and sor_prog["doorOpened"] is True
+                assert "well_worn_shirt" in sor_prog["ownedArmor"] and "old_trousers" in sor_prog["ownedArmor"]
+                assert page.locator("#panorama-title-overlay").is_visible(), "Live 3D Overlook Panorama Logo must appear outside Shrine!"
+                snap(page, "v4_01_overlook_panorama_logo.png")
+                # Clear cutscene camera override and check Old Man before vs after 4 Shrines
+                page.evaluate("() => { window.__BOTW__.engine.panoramaCutTimer = 0; window.__BOTW__.clearCameraOverride(); document.getElementById('panorama-title-overlay').classList.add('hidden'); }")
+
+                old_man_early = page.evaluate("""() => {
+                    const B = window.__BOTW__;
+                    const npc = B.engine.npcs.npcs.find(n => n.id === 'npc_old_man');
+                    B.teleport(npc.position.x - 1.5, npc.position.z + 1.0);
+                    B.interactNearest();
+                    return {
+                        speaker: document.querySelector('.dialogue-speaker')?.textContent || '',
+                        dropsNearCampfire: B.engine.architecture.weaponDrops.filter(d => d.id.startsWith('drop_campfire_')).map(d => d.weaponId),
+                    };
+                }""")
+                print(f"   Old Man early talk & campfire drops: {old_man_early}")
+                assert old_man_early["speaker"] == "謎の老人", f"Spoiler leak in early speaker: {old_man_early['speaker']}"
+                for expected_item in ["baked_apple", "torch", "tree_branch", "woodcutters_axe"]:
+                    assert expected_item in old_man_early["dropsNearCampfire"], f"Missing campfire drop {expected_item}"
+                page.locator("#btn-dlg-next").click()
+                page.locator("[data-dlg-act='grant_paraglider']").click()
+                assert page.evaluate("() => window.__BOTW__.engine.save.hasParaglider") is False, "Paraglider must NOT be granted before 4 shrines!"
+
+                # Complete the 4 Great Plateau Shrines -> Verify all 4 runes + Old Man King Reveal + Paraglider!
+                plateau_done = page.evaluate("""() => {
+                    const B = window.__BOTW__;
+                    for (const [x, z] of [[-215, 420], [-150, 490], [-275, 555], [-345, 525]]) {
+                        B.teleport(x, z);
+                        B.interactNearest();
+                    }
+                    const npc = B.engine.npcs.npcs.find(n => n.id === 'npc_old_man');
+                    B.teleport(npc.position.x - 1.5, npc.position.z + 1.0);
+                    B.interactNearest();
+                    return [...B.engine.save.unlockedRunes];
+                }""")
+                print(f"   Unlocked runes after 4 Shrines: {plateau_done}")
+                assert set(["magnesis", "bomb_round", "bomb_square", "stasis", "cryonis"]).issubset(set(plateau_done))
+                page.locator("#btn-dlg-next").click()
+                page.locator("[data-dlg-act='grant_paraglider']").click()
+                assert page.evaluate("() => window.__BOTW__.engine.save.hasParaglider") is True, "Paraglider must unlock after all 4 Plateau Shrines!"
+                # Re-talk -> now King Rhoam reveals himself
+                page.evaluate("() => window.__BOTW__.interactNearest()")
+                revealed_speaker = page.locator(".dialogue-speaker").inner_text()
+                print(f"   Post-Paraglider speaker: {revealed_speaker}")
+                assert "ローム" in revealed_speaker
+
                 wall_res = page.evaluate("""async () => {
+                    window.__BOTW__.closeAllModals();
                     window.__BOTW__.teleport(-258.4, 492, Math.PI * 0.5);
                     const e = window.__BOTW__.engine;
                     e.input.cameraYaw = -Math.PI * 0.5;
@@ -156,8 +295,13 @@ def run_verification():
                 assert wall_res["pos"]["x"] > -258.0 and wall_res["pos"]["x"] < -255.5
                 ctx_desk.close()
 
+            if desktop_only:
+                browser.close()
+                assert_zero_errors()
+                return
+
             # ==================== 2. IPAD LANDSCAPE (1024x768, has_touch=True, DPR=2) ====================
-            print("\n=== [2] iPad Landscape 1024x768 Multi-Touch Verification ===")
+            print("\n=== [2] iPad Landscape 1024x768 Multi-Touch & Repeated NPC Tap Verification ===")
             ctx_ipad_l = browser.new_context(
                 viewport={"width": 1024, "height": 768},
                 has_touch=True,
@@ -166,7 +310,7 @@ def run_verification():
             )
             page_l = ctx_ipad_l.new_page()
             attach_monitors(page_l, "ipad-landscape")
-            page_l.goto("http://127.0.0.1:4176", wait_until="domcontentloaded", timeout=30000)
+            page_l.goto(base_url, wait_until="domcontentloaded", timeout=30000)
             page_l.wait_for_function("() => Boolean(window.__BOTW__)", timeout=30000)
 
             page_l.evaluate("() => window.__BOTW__.startPlayDirectly()")
@@ -181,6 +325,58 @@ def run_verification():
             assert gfx_l["useComposer"] is False, "Bloom EffectComposer should be disabled on iPad medium preset!"
             assert gfx_l["dpr"] <= 1.51, f"iPad DPR must be clamped <= 1.5, got {gfx_l['dpr']}"
             assert gfx_l["preserveDrawingBuffer"] is False
+
+            # Minimal Touch HUD check + Repeated #tbtn-interact Multi-Tap Dialogue Regression Test!
+            hud_compaction = page_l.evaluate("""() => {
+                const advHidden = window.getComputedStyle(document.getElementById('btn-hud-adv')).display === 'none';
+                const cookHidden = window.getComputedStyle(document.getElementById('btn-hud-cook')).display === 'none';
+                const runeBtnHidden = window.getComputedStyle(document.getElementById('tbtn-rune')).display === 'none';
+                return { advHidden, cookHidden, runeBtnHidden };
+            }""")
+            print(f"   iPad Minimal HUD state: {hud_compaction}")
+            assert hud_compaction["advHidden"] and hud_compaction["cookHidden"], "PC-only top-right HUD chips must be hidden in touch mode!"
+            assert hud_compaction["runeBtnHidden"], "Touch rune button must hide when 0 runes unlocked!"
+
+            # Teleport beside Old Man and tap #tbtn-interact THREE consecutive times, including dropped-pointerup simulation!
+            page_l.evaluate("""() => {
+                const B = window.__BOTW__;
+                const npc = B.engine.npcs.npcs.find(n => n.id === 'npc_old_man');
+                B.teleport(npc.position.x - 1.5, npc.position.z + 1.0);
+            }""")
+            page_l.evaluate("() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
+
+            for attempt in range(1, 4):
+                # Dispatch real pointerdown on #tbtn-interact (on attempt 2, intentionally SKIP pointerup to mimic iOS safari display:none hide!)
+                page_l.evaluate("""(skipUp) => {
+                    const btn = document.getElementById('tbtn-interact');
+                    const r = btn.getBoundingClientRect();
+                    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+                    btn.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 901, pointerType: 'touch', clientX: cx, clientY: cy, bubbles: true }));
+                    if (!skipUp) {
+                        btn.dispatchEvent(new PointerEvent('pointerup', { pointerId: 901, pointerType: 'touch', clientX: cx, clientY: cy, bubbles: true }));
+                    }
+                }""", attempt == 2)
+                page_l.evaluate("() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
+                assert page_l.locator("#dialogue-box").is_visible(), f"Dialogue must open on touch interact attempt #{attempt}!"
+                # Tap #btn-dlg-next via pointer events
+                page_l.evaluate("""() => {
+                    const btn = document.getElementById('btn-dlg-next');
+                    const r = btn.getBoundingClientRect();
+                    btn.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 902, pointerType: 'touch', clientX: r.left + 10, clientY: r.top + 10, bubbles: true }));
+                    btn.dispatchEvent(new PointerEvent('pointerup', { pointerId: 902, pointerType: 'touch', clientX: r.left + 10, clientY: r.top + 10, bubbles: true }));
+                }""")
+                time.sleep(0.05)
+                # Tap #btn-dlg-close via pointer events
+                page_l.evaluate("""() => {
+                    const btn = document.getElementById('btn-dlg-close');
+                    const r = btn.getBoundingClientRect();
+                    btn.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 903, pointerType: 'touch', clientX: r.left + 10, clientY: r.top + 10, bubbles: true }));
+                    btn.dispatchEvent(new PointerEvent('pointerup', { pointerId: 903, pointerType: 'touch', clientX: r.left + 10, clientY: r.top + 10, bubbles: true }));
+                }""")
+                page_l.evaluate("() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
+                assert not page_l.locator("#dialogue-box").is_visible(), f"Dialogue must close on attempt #{attempt}!"
+                assert page_l.locator("#tbtn-interact").is_visible(), f"Interact touch button must remain usable after dialogue #{attempt}!"
+            print("   ✅ iPad 3x consecutive NPC interact + dropped-pointerup regression test PASSED!")
 
             check_no_overflow(page_l, 1024, 768, "iPad-Landscape-1024x768")
 
@@ -262,7 +458,7 @@ def run_verification():
             )
             page_p = ctx_ipad_p.new_page()
             attach_monitors(page_p, "ipad-portrait")
-            page_p.goto("http://127.0.0.1:4176", wait_until="domcontentloaded", timeout=30000)
+            page_p.goto(base_url, wait_until="domcontentloaded", timeout=30000)
             page_p.wait_for_function("() => Boolean(window.__BOTW__)", timeout=30000)
             page_p.evaluate("() => window.__BOTW__.startPlayDirectly()")
             page_p.evaluate("() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
@@ -280,20 +476,7 @@ def run_verification():
 
             browser.close()
 
-        print(f"\nConsole Errors: {len(console_errors)}")
-        for e in console_errors:
-            print("  ERROR:", e)
-        print(f"Page Errors: {len(page_errors)}")
-        for e in page_errors:
-            print("  PAGEERR:", e)
-        print(f"HTTP 404/4xx+ Responses: {len(http_404s)}")
-        for r in http_404s:
-            print("  HTTP:", r)
-
-        assert len(console_errors) == 0, f"Console errors detected: {console_errors}"
-        assert len(page_errors) == 0, f"Page errors detected: {page_errors}"
-        assert len(http_404s) == 0, f"HTTP 4xx/5xx responses detected: {http_404s}"
-        print("\n✅ ALL OVERHAUL VERIFICATION CHECKS PASSED WITH ZERO ERRORS!")
+        assert_zero_errors()
     finally:
         server.terminate()
         try:

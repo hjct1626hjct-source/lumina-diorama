@@ -37,9 +37,18 @@ export interface RuneNotification {
  * 5. Camera & Hyrule Compendium (photo capture + entity auto-recognition + Sheikah Sensor+)
  * 6. Master Cycle Zero (1,000 fuel tank, 2.777/s burn rate = 360s max, Gerudo/Eldin no-bike check)
  */
+export function isRuneUnlocked(
+  rune: RuneId | null,
+  unlockedRunes: readonly RuneId[],
+  hasSheikahSlate = true
+): boolean {
+  if (!hasSheikahSlate || !rune) return false;
+  return unlockedRunes.includes(rune);
+}
+
 export class SheikahRuneSystem {
   public readonly group = new THREE.Group();
-  public activeRune: RuneId = 'magnesis';
+  public activeRune: RuneId | null = null;
 
   // Magnesis state
   public magnesisActive = false;
@@ -166,7 +175,10 @@ export class SheikahRuneSystem {
     this.bikeGroup.add(seat, thruster);
   }
 
-  selectRune(rune: RuneId): void {
+  selectRune(rune: RuneId | null, unlockedRunes?: RuneId[]): void {
+    if (rune && unlockedRunes && !unlockedRunes.includes(rune)) {
+      return;
+    }
     if (this.activeRune !== rune) {
       this.releaseMagnesis();
       this.cameraModeActive = rune === 'camera';
@@ -194,6 +206,7 @@ export class SheikahRuneSystem {
     physics: PhysicsChemistryEngine;
     upgradedBomb: boolean;
     upgradedStasis: boolean;
+    unlockedRunes?: RuneId[];
     isRaining: boolean;
     isParagliding: boolean;
     onNotify: (n: RuneNotification) => void;
@@ -201,7 +214,12 @@ export class SheikahRuneSystem {
     onStasisEnemy?: (origin: THREE.Vector3, dir: THREE.Vector3, upgraded: boolean) => boolean;
     onCameraSnap?: () => void;
   }): boolean {
-    const { playerPos, forwardDir, physics, upgradedBomb, upgradedStasis, isRaining, onNotify, onExplosionImpact } = params;
+    const { playerPos, forwardDir, physics, upgradedBomb, upgradedStasis, unlockedRunes, isRaining, onNotify, onExplosionImpact } = params;
+
+    if (!this.activeRune || (unlockedRunes && !unlockedRunes.includes(this.activeRune))) {
+      onNotify({ text: 'シーカーアイテムがまだ解放されていません！', accent: 'amber' });
+      return false;
+    }
 
     if (this.activeRune === 'magnesis') {
       if (this.magnesisTarget) {

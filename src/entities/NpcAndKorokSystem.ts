@@ -3,7 +3,25 @@ import { createBotWToonMaterial } from '../rendering/BotWToonShader';
 import { modelLoader, type NormalizedInstance } from '../rendering/ModelLoader';
 import { getTerrainHeight } from '../world/TerrainGenerator';
 import { REGION_LIST } from '../data/regions';
-import type { RegionId, WeatherType } from '../types/botw';
+import type { RegionId, RuneId, WeatherType } from '../types/botw';
+
+export const PLATEAU_RUNE_SHRINE_IDS = [
+  'shrine_oman_au',
+  'shrine_ja_baij',
+  'shrine_owa_daim',
+  'shrine_keh_namut',
+] as const;
+
+export const PLATEAU_SHRINE_RUNE_MAP: Record<string, RuneId[]> = {
+  shrine_oman_au: ['magnesis'],
+  shrine_ja_baij: ['bomb_round', 'bomb_square'],
+  shrine_owa_daim: ['stasis'],
+  shrine_keh_namut: ['cryonis'],
+};
+
+export function hasCompletedAllPlateauShrines(completedShrines: string[]): boolean {
+  return PLATEAU_RUNE_SHRINE_IDS.every((id) => completedShrines.includes(id));
+}
 
 export interface EventFlowContext {
   isNaked: boolean;
@@ -14,6 +32,8 @@ export interface EventFlowContext {
   timeHours: number;
   memoriesCount: number;
   hasParaglider: boolean;
+  plateauShrinesDone?: boolean;
+  hasCameraRune?: boolean;
   tarreyTownStage: number;
   thunderHelmRecovered: boolean;
 }
@@ -151,17 +171,42 @@ export function evaluateNpcEventFlow(npc: WorldNpc, ctx: EventFlowContext): NpcD
       };
     }
     if (npc.id === 'npc_old_man') {
+      const isKingRevealed = ctx.hasParaglider;
       return {
-        speakerName: '謎の老人（ハイラル王ローム）',
-        roleTitle: '始まりの台地の導き手',
+        speakerName: isKingRevealed ? 'ハイラル王ロームの霊' : '謎の老人',
+        roleTitle: isKingRevealed ? '最後のハイラル王' : '始まりの台地',
+        lines: isKingRevealed
+          ? [
+              'ほっほっほ……パラセールを託した後も、裸で台地を駆け回るとはなかなかの豪傑じゃな！',
+              'この先の雪山や火山では防寒着や耐火装備も忘れずにな。ハイラルの未来を頼んだぞ、リンク！',
+            ]
+          : [
+              'ほっほっほ……目を覚ましたばかりとはいえ、何も着ずに外を歩くとは大胆な若者じゃな！',
+              '回生の祠の中の宝箱には服が残っていたはずじゃし、この台地の北にある4つの祠を巡ればパラセールも授けようぞ。',
+            ],
+        choices: isKingRevealed
+          ? [{ label: '『ハイラル王の手記』を読む', action: 'read_king_journal' }]
+          : [
+              {
+                label: ctx.plateauShrinesDone ? '4つの祠を制覇した（パラセールを受け取る）' : '4つの祠とパラセールについて聞く',
+                action: 'grant_paraglider',
+              },
+            ],
+      };
+    }
+    if (npc.id === 'npc_purah') {
+      return {
+        speakerName: 'プルア',
+        roleTitle: 'ハテノ古代研究所 所長',
         lines: [
-          'ほっほっほ……100年の眠りから覚めたばかりとはいえ、裸で出歩くとは大胆な若者じゃな！',
-          '近くの宝箱やポーチから服を着るとよい。雪山マウントハイリアは防寒着なしでは凍えるぞ。',
+          'チェッキー☆ ……って、あらヤダ！？ リンクくん何も着てないじゃないの！！',
+          ctx.hasCameraRune
+            ? 'せめて何か羽織ってよね〜！ ウツシエとハイラル図鑑の調査は引き続き頼んだわよ！'
+            : 'まあ古代研究に服は関係ないか！ 欠損している「ウツシエ」を今すぐシーカーストーンに復旧してあげる！',
         ],
-        choices: [
-          { label: '「パラセール」と4つの祠について聞く', action: 'grant_paraglider' },
-          { label: 'ハイラル王の手記を読む', action: 'read_king_journal' },
-        ],
+        choices: ctx.hasCameraRune
+          ? undefined
+          : [{ label: 'ウツシエ（写真・図鑑機能）を起動する', action: 'unlock_camera_rune' }],
       };
     }
     return {
@@ -169,7 +214,7 @@ export function evaluateNpcEventFlow(npc: WorldNpc, ctx: EventFlowContext): NpcD
       roleTitle: npc.roleJa,
       lines: [
         'うわっ！？ おいおい、なんで裸なんだ！？',
-        '風邪をひく前にポーチ（Esc / Tab）から防具を装備した方がいいぞ！',
+        '風邪をひく前にポーチから防具を装備した方がいいぞ！',
       ],
     };
   }
@@ -200,21 +245,47 @@ export function evaluateNpcEventFlow(npc: WorldNpc, ctx: EventFlowContext): NpcD
 
   // 6. Named Story & Village NPCs with Time-of-day & Rain EventFlow branches!
   if (npc.id === 'npc_old_man') {
+    const isKingRevealed = ctx.hasParaglider;
     return {
-      speakerName: '謎の老人（ハイラル王ローム）',
-      roleTitle: '始まりの台地',
+      speakerName: isKingRevealed ? 'ハイラル王ロームの霊' : '謎の老人',
+      roleTitle: isKingRevealed ? '最後のハイラル王' : '始まりの台地',
+      lines: isKingRevealed
+        ? [
+            'ほっほっほ……ついに4つの試練を乗り越えたか、リンク。わしの真の名はローム・ボスフォレームス・ハイラル。',
+            'パラセールがあれば高台から広大なハイラルへ飛び立てる。草原に火を放てば上昇気流にも乗れるぞ。さあ、カカリコ村のインパを訪ねよ！',
+          ]
+        : [
+            ctx.isRaining
+              ? 'おお、雨が降ってきたのう。濡れた崖は登る途中で滑ってしまうから、焚き火のそばで雨が上がるのを待つのも手じゃ。'
+              : 'ようこそ目覚めたな、若者よ。この台地の北にそびえる古城と、周囲の塔や遺跡に興味があるのかのう？',
+            ctx.plateauShrinesDone
+              ? 'おお……始まりの台地にある4つの試練の祠をすべて踏破したか！約束どおり、時の神殿跡の屋根でも語った「パラセール」と真実を授けよう！'
+              : 'かつてこの台地にはシーカーの試練を司る祠が4つ眠っておった。まずはすべての祠を巡り、克服の証を集めてくるのじゃ！',
+          ],
+      choices: isKingRevealed
+        ? [{ label: '『ハイラル王の手記』を読む', action: 'read_king_journal' }]
+        : [
+            {
+              label: ctx.plateauShrinesDone ? '4つの祠の踏破を報告し、パラセールを受け取る' : '4つの祠とパラセールについて聞く',
+              action: 'grant_paraglider',
+            },
+          ],
+    };
+  }
+
+  if (npc.id === 'npc_purah') {
+    return {
+      speakerName: 'プルア',
+      roleTitle: 'ハテノ古代研究所 所長',
       lines: [
-        ctx.isRaining
-          ? 'おお、雨が降ってきたのう。濡れた崖は登る途中で滑ってしまうから注意せよ。'
-          : 'ようこそ目覚めたな、リンク。この始まりの台地から北にそびえるのが、100年前に厄災ガノンに呑まれたハイラル城じゃ。',
-        ctx.hasParaglider
-          ? 'パラセールがあれば高台からどこへでも飛び立てる。草原に火を放てば上昇気流にも乗れるぞ。さあ、カカリコ村のインパを訪ねよ！'
-          : 'シーカータワーと4つの試練の祠を巡り、シーカーストーンの力を取り戻すがよい。試練の証を集めればパラセールを授けよう！',
+        'チェッキー☆ ……おや？ そのシーカーストーン、古代技術研究者のあたしが放っておくわけにはいかないわね！',
+        ctx.hasCameraRune
+          ? 'ウツシエとシーカーセンサー＋は順調？ 魔物や素材を撮ってハイラル図鑑を埋めてきてちょうだい！'
+          : '基本ルーンだけじゃ物足りないでしょ？ 欠損している「ウツシエ」を今すぐシーカーストーンに復旧してあげる！',
       ],
-      choices: [
-        { label: 'パラセールを受け取る / 確認する', action: 'grant_paraglider' },
-        { label: '『ハイラル王の手記』を読む', action: 'read_king_journal' },
-      ],
+      choices: ctx.hasCameraRune
+        ? undefined
+        : [{ label: 'ウツシエ（写真・図鑑機能）を起動する', action: 'unlock_camera_rune' }],
     };
   }
 

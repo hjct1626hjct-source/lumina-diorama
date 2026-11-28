@@ -281,6 +281,87 @@ describe('3D Spatial-Hash Collision, Camera Clamping & 21-GLB Progressive Loadin
     const save = createDefaultSave('normal');
     expect(save.settings.touchControlsMode).toBe('auto');
     expect(['high', 'medium', 'low']).toContain(save.settings.graphicsQuality);
-    expect(save.weapons.some((w) => w.id === 'torch')).toBe(true);
+    expect(save.hearts).toBe(3);
+    expect(save.maxHearts).toBe(3);
+    expect(save.stamina).toBe(100);
+    expect(save.rupees).toBe(0);
+    expect(save.hasSheikahSlate).toBe(false);
+    expect(save.unlockedRunes).toEqual([]);
+    expect(save.hasParaglider).toBe(false);
+    expect(save.hasMasterSword).toBe(false);
+    expect(save.equippedWeaponId).toBeNull();
+    expect(save.equippedBowId).toBeNull();
+    expect(save.equippedShieldId).toBeNull();
+    expect(save.equippedArmor).toEqual({ head: null, body: null, legs: null });
+    expect(save.ownedArmorIds).toEqual([]);
+    expect(save.weapons).toEqual([]);
+  });
+
+  it('enforces Old Man non-spoiler identity & 4-Shrine Plateau completion gate before Paraglider reveal', async () => {
+    const {
+      PLATEAU_RUNE_SHRINE_IDS,
+      hasCompletedAllPlateauShrines,
+    } = await import('../src/entities/NpcAndKorokSystem');
+    const { isRuneUnlocked } = await import('../src/gameplay/SheikahRunes');
+
+    expect(hasCompletedAllPlateauShrines([])).toBe(false);
+    expect(hasCompletedAllPlateauShrines(PLATEAU_RUNE_SHRINE_IDS.slice(0, 3))).toBe(false);
+    expect(hasCompletedAllPlateauShrines([...PLATEAU_RUNE_SHRINE_IDS])).toBe(true);
+
+    const oldManNpc = {
+      id: 'npc_old_man',
+      nameJa: '謎の老人',
+      displayNameJa: '謎の老人',
+      roleJa: '始まりの台地',
+      region: 'great_plateau' as const,
+      homePos: new THREE.Vector3(),
+      shelterPos: new THREE.Vector3(),
+      nightPos: new THREE.Vector3(),
+      position: new THREE.Vector3(),
+      yaw: 0,
+      wakeHour: 0,
+      sleepHour: 24,
+      glbKey: 'npc_mage',
+      root: new THREE.Group(),
+      glbInstance: null,
+      behaviorLabel: '活動中',
+    };
+
+    const earlyTalk = evaluateNpcEventFlow(oldManNpc, {
+      isNaked: true,
+      triggersNpcFear: false,
+      hasGerudoEntry: false,
+      isBloodMoon: false,
+      isRaining: false,
+      timeHours: 9,
+      memoriesCount: 0,
+      hasParaglider: false,
+      plateauShrinesDone: false,
+      tarreyTownStage: 0,
+      thunderHelmRecovered: false,
+    });
+    expect(earlyTalk.speakerName).toBe('謎の老人');
+    expect(earlyTalk.speakerName).not.toContain('ローム');
+
+    const kingReveal = evaluateNpcEventFlow(oldManNpc, {
+      isNaked: false,
+      triggersNpcFear: false,
+      hasGerudoEntry: false,
+      isBloodMoon: false,
+      isRaining: false,
+      timeHours: 9,
+      memoriesCount: 0,
+      hasParaglider: true,
+      plateauShrinesDone: true,
+      tarreyTownStage: 0,
+      thunderHelmRecovered: false,
+    });
+    expect(kingReveal.speakerName).toContain('ローム');
+
+    expect(isRuneUnlocked(null, [])).toBe(false);
+    expect(isRuneUnlocked('magnesis', [], true)).toBe(false);
+    expect(isRuneUnlocked('magnesis', ['magnesis'], false)).toBe(false);
+    expect(isRuneUnlocked('magnesis', ['magnesis'], true)).toBe(true);
+    expect(isRuneUnlocked('camera', ['magnesis'], true)).toBe(false);
   });
 });

@@ -311,9 +311,9 @@ export interface SaveSlotData {
   rupees: number;
   spiritOrbs: number;
   korokSeeds: number;
-  equippedWeaponId: string;
-  equippedBowId: string;
-  equippedShieldId: string;
+  equippedWeaponId: string | null;
+  equippedBowId: string | null;
+  equippedShieldId: string | null;
   equippedArrow: ArrowType;
   equippedArmor: { head: string | null; body: string | null; legs: string | null };
   armorStars: Record<string, number>;
@@ -325,6 +325,7 @@ export interface SaveSlotData {
   arrows: Record<ArrowType, number>;
   materials: Record<string, number>;
   meals: CookedMeal[];
+  hasSheikahSlate: boolean;
   unlockedRunes: RuneId[];
   upgradedRunes: { bomb: boolean; stasis: boolean; sensor: boolean };
   hasParaglider: boolean;

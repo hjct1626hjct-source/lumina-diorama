@@ -178,7 +178,7 @@ export class EnemyAndBossSystem {
       { id: 'stal_gp_1', species: 'stal_bokoblin', nameJa: 'スタルボコブリン', tier: 'red', x: -292, z: 515, baseHp: 35, atk: 10 },
       { id: 'wizzrobe_gp_fire', species: 'wizzrobe', nameJa: 'ファイアウィズローブ', tier: 'red', x: -178, z: 438, baseHp: 150, atk: 18, casterElement: 'fire' },
       { id: 'stal_mage_gp', species: 'stal_mage', nameJa: 'スタル魔導士', tier: 'blue', x: -268, z: 505, baseHp: 90, atk: 16, casterElement: 'shock' },
-      { id: 'talus_gp', species: 'stone_talus', nameJa: 'イワロック', tier: 'boss', x: -275, z: 410, baseHp: 300, atk: 24, isBoss: true },
+      { id: 'talus_gp', species: 'stone_talus', nameJa: 'イワロック', tier: 'boss', x: -225, z: 365, baseHp: 300, atk: 24, isBoss: true },
       { id: 'guard_gp', species: 'guardian_decayed', nameJa: '朽ちたガーディアン', tier: 'boss', x: -158, z: 486, baseHp: 500, atk: 32 },
       // Central Hyrule & Hyrule Castle
       { id: 'guard_hc_1', species: 'guardian_stalker', nameJa: 'ガーディアン（歩行型）', tier: 'boss', x: -110, z: 120, baseHp: 1500, atk: 38, isBoss: true },

@@ -394,6 +394,17 @@ export class PhysicsChemistryEngine {
     });
   }
 
+  removeCollider(id: string): boolean {
+    const idx = this.staticColliders.findIndex((c) => c.id === id);
+    if (idx < 0) return false;
+    this.staticColliders.splice(idx, 1);
+    this.staticGrid.clear();
+    for (const c of this.staticColliders) {
+      this.staticGrid.insert(c);
+    }
+    return true;
+  }
+
   /**
    * Replaces dynamic foliage/tree/rock static colliders streamed around the player.
    */

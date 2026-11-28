@@ -25,7 +25,14 @@ import { PhysicsChemistryEngine } from '../physics/PhysicsChemistryEngine';
 import { SheikahRuneSystem } from '../gameplay/SheikahRunes';
 import { PlayerController, type InputState } from '../gameplay/PlayerController';
 import { EnemyAndBossSystem, SPECIES_KILL_POINTS, type WorldEnemy } from '../entities/EnemyAndBossSystem';
-import { NpcAndKorokSystem, evaluateNpcEventFlow, type WorldKorok, type WorldNpc } from '../entities/NpcAndKorokSystem';
+import {
+  NpcAndKorokSystem,
+  PLATEAU_SHRINE_RUNE_MAP,
+  evaluateNpcEventFlow,
+  hasCompletedAllPlateauShrines,
+  type WorldKorok,
+  type WorldNpc,
+} from '../entities/NpcAndKorokSystem';
 import { BotWHudAndMenu } from '../ui/BotWHudAndMenu';
 import { TouchControls, isTouchCapableDevice } from '../input/TouchControls';
 import { audioEngine } from '../audio/OpenAirAudioEngine';
@@ -37,9 +44,10 @@ import {
   saveManager,
   type SaveSlotId,
 } from '../save/SaveManager';
-import { computeArmorSummary } from '../data/armors';
+import { ARMOR_MAP, computeArmorSummary } from '../data/armors';
 import {
   AUTO_PARRY_LASER_SHIELD_IDS,
+  MATERIAL_MAP,
   WEAPONS,
   computeBotWDamage,
   computeMasterCycleFuel,
@@ -49,6 +57,8 @@ import { LANDMARKS } from '../data/regions';
 import type { GraphicsQuality, RuneId, SaveSlotData } from '../types/botw';
 
 type NearbyInteractable =
+  | { kind: 'slatePedestal'; label: string }
+  | { kind: 'sorTerminal'; label: string }
   | { kind: 'npc'; npc: WorldNpc; label: string }
   | { kind: 'chest'; chest: WorldChest; label: string }
   | { kind: 'weaponDrop'; drop: WorldWeaponDrop; label: string }
@@ -119,6 +129,9 @@ export class BotWGameEngine {
   private lastMouseX = 0;
   private lastMouseY = 0;
   private cameraOverride: { pos: THREE.Vector3; lookAt: THREE.Vector3 } | null = null;
+  private awakeningCutTimer = 0;
+  private panoramaCutTimer = 0;
+  private readonly panoramaDuration = 4.6;
   private readonly camLookScratch = new THREE.Vector3();
   private readonly camDesiredScratch = new THREE.Vector3();
   private readonly camClampedScratch = new THREE.Vector3();
@@ -203,16 +216,20 @@ export class BotWGameEngine {
     });
 
     this.ui = new BotWHudAndMenu({
-      onStartNewGame: (mode) => {
+      onStartNewGame: (mode, skipIntro) => {
         this.save = createDefaultSave(mode);
         this.ensureSettingsDefaults();
+        this.runes.selectRune(null);
         this.applyLoadedSave();
+        if (!skipIntro) {
+          this.startAwakeningSequence();
+        }
       },
       onContinueGame: () => {
         this.applyLoadedSave();
       },
       onSelectRune: (r) => {
-        this.runes.selectRune(r);
+        this.runes.selectRune(r, this.save.unlockedRunes);
         audioEngine.playUiSelect();
       },
       onTriggerInteract: () => this.performInteract(),
@@ -424,12 +441,9 @@ export class BotWGameEngine {
   private applyLoadedSave(): void {
     this.ui.bindSave(this.save);
     this.applyUserSettings();
-    this.player.teleportTo(this.save.playerPos.x, this.save.playerPos.z, 0.25);
-    this.player.yaw = this.save.playerPos.yaw;
-    this.runes.bikeFuel = this.save.masterCycleFuel;
 
-    // Build all architecture, shrines, towers, chests, memories, enemies, NPCs & Koroks!
-    this.terrain.update(this.player.position.x, this.player.position.z);
+    // Build architecture FIRST so Shrine of Resurrection floor & door colliders are ready before teleporting!
+    this.terrain.update(this.save.playerPos.x, this.save.playerPos.z);
     if (this.architecture.towers.length === 0) {
       this.architecture.buildAll({
         activatedTowers: this.save.activatedTowers,
@@ -438,10 +452,39 @@ export class BotWGameEngine {
         defeatedDivineBeasts: this.save.defeatedDivineBeasts,
         unlockedMemories: this.save.unlockedMemories,
         memoryLocations: ALL_MEMORIES.map((m) => ({ id: m.id, titleJa: m.titleJa, x: m.pos.x, z: m.pos.z })),
+        hasSheikahSlate: this.save.hasSheikahSlate,
+        sorDoorOpened: !!this.save.storyFlags['sor_door_opened'],
       });
+    } else {
+      this.architecture.syncShrineState(this.save.hasSheikahSlate, !!this.save.storyFlags['sor_door_opened']);
     }
+
+    this.player.teleportTo(this.save.playerPos.x, this.save.playerPos.z, 0.25);
+    const insideSor =
+      this.save.playerPos.x <= -304.5 &&
+      this.save.playerPos.x >= -318.0 &&
+      this.save.playerPos.z >= 449.0 &&
+      this.save.playerPos.z <= 461.0;
+    if (insideSor) {
+      this.player.position.y = Math.max(this.player.position.y, this.architecture.shrineFloorY);
+      this.input.cameraYaw = -Math.PI * 0.5;
+      this.input.cameraPitch = 0.08;
+    }
+    this.player.yaw = this.save.playerPos.yaw;
+    this.runes.bikeFuel = this.save.masterCycleFuel;
+    this.runes.selectRune(this.save.unlockedRunes[0] ?? null, this.save.unlockedRunes);
+    this.touchControls.setRunesVisible(this.save.unlockedRunes.length > 0);
+
     this.enemies.populateWorld(this.save.levelSensorPoints, this.save.mode === 'master', this.save.defeatedDivineBeasts.length);
     this.npcs.populateAll(this.save.foundKoroks);
+  }
+
+  private startAwakeningSequence(): void {
+    this.awakeningCutTimer = 3.6;
+    this.panoramaCutTimer = 0;
+    this.ui.setPanoramaLogoVisible(false);
+    this.ui.setAwakeningOverlay('目を開けて…リンク…');
+    audioEngine.playAwakeningChime();
   }
 
   private syncSaveFromRuntime(): void {
@@ -460,9 +503,27 @@ export class BotWGameEngine {
 
   private handleDialogueAction(act: string): void {
     if (act === 'grant_paraglider') {
+      if (!hasCompletedAllPlateauShrines(this.save.completedShrines)) {
+        this.ui.showToast('まずは始まりの台地の4つの試練の祠をすべてクリアしてくるのじゃ！', 'amber');
+        return;
+      }
       this.save.hasParaglider = true;
-      this.ui.showToast('パラセールを授かった！空中でSpaceキーで滑空できます', 'amber');
+      this.save.storyFlags['plateau_king_revealed'] = true;
+      this.ui.showToast(
+        this.ui.isTouchUi()
+          ? 'パラセールを授かった！空中で「跳/滑空」ボタンで滑空できます'
+          : 'パラセールを授かった！空中でSpaceキーで滑空できます',
+        'amber'
+      );
       audioEngine.playChestFanfare();
+    } else if (act === 'unlock_camera_rune') {
+      if (!this.save.unlockedRunes.includes('camera')) {
+        this.save.unlockedRunes.push('camera');
+      }
+      this.save.upgradedRunes.sensor = true;
+      this.runes.selectRune('camera', this.save.unlockedRunes);
+      audioEngine.playShrineChime();
+      this.ui.showToast('📷 ウツシエ ＆ シーカーセンサー＋ が解放された！', 'cyan');
     } else if (act === 'read_king_journal') {
       this.ui.openDocumentModal('doc_king_rhoam_journal');
     } else if (act === 'read_zelda_diary') {
@@ -598,10 +659,11 @@ export class BotWGameEngine {
         case 'Digit5':
         case 'Digit6':
         case 'Digit7': {
+          if (!this.save.hasSheikahSlate || this.save.unlockedRunes.length === 0) break;
           const idx = Number(e.code.replace('Digit', '')) - 1;
           const r = this.save.unlockedRunes[idx];
           if (r) {
-            this.runes.selectRune(r);
+            this.runes.selectRune(r, this.save.unlockedRunes);
             audioEngine.playUiSelect();
           }
           break;
@@ -708,6 +770,11 @@ export class BotWGameEngine {
   }
 
   private activateRune(): void {
+    if (!this.save.hasSheikahSlate || !this.runes.activeRune || !this.save.unlockedRunes.includes(this.runes.activeRune)) {
+      this.ui.showToast('シーカーアイテムがまだ解放されていません！', 'amber');
+      return;
+    }
+
     const fwd = new THREE.Vector3();
     this.camera.getWorldDirection(fwd);
     fwd.y = 0;
@@ -722,6 +789,7 @@ export class BotWGameEngine {
       physics: this.physics,
       upgradedBomb: this.save.upgradedRunes.bomb,
       upgradedStasis: this.save.upgradedRunes.stasis,
+      unlockedRunes: this.save.unlockedRunes,
       isRaining,
       isParagliding: this.player.paragliding,
       onNotify: (n) => this.ui.showToast(n.text, n.accent),
@@ -908,7 +976,26 @@ export class BotWGameEngine {
     this.save.rupees += e.isBoss ? 120 : 25;
     if (e.species.endsWith('blight') && !this.save.defeatedDivineBeasts.includes(e.species)) {
       this.save.defeatedDivineBeasts.push(e.species);
-      this.ui.showToast(`✨ ${e.nameJa} 撃破！神獣解放！`, 'amber');
+      const champMap: Record<string, keyof SaveSlotData['champions']> = {
+        waterblight: 'mipha',
+        fireblight: 'daruk',
+        windblight: 'revali',
+        thunderblight: 'urbosa',
+      };
+      const ck = champMap[e.species];
+      if (ck) {
+        this.save.champions[ck].unlocked = true;
+        this.save.champions[ck].charges = this.save.champions[ck].maxCharges;
+      }
+      this.ui.showToast(`✨ ${e.nameJa} 撃破！神獣解放 ＆ 英傑の加護を授かった！`, 'amber');
+      audioEngine.playChestFanfare();
+    } else if (e.species === 'monk_maz_koshia') {
+      if (!this.save.unlockedRunes.includes('master_cycle')) {
+        this.save.unlockedRunes.push('master_cycle');
+      }
+      this.runes.bikeFuel = 1000;
+      this.save.masterCycleFuel = 1000;
+      this.ui.showToast('🏍 導師ミィズ・キョシア撃破！マスターバイク零式が解放された！', 'amber');
       audioEngine.playChestFanfare();
     }
     if (this.lockedEnemy === e) {
@@ -921,7 +1008,7 @@ export class BotWGameEngine {
     if (this.player.invulnTimer > 0) return;
 
     // 1. Perfect Guard -> Beam Parry Reflection!
-    const hasAncientShield = AUTO_PARRY_LASER_SHIELD_IDS.has(this.save.equippedShieldId);
+    const hasAncientShield = this.save.equippedShieldId ? AUTO_PARRY_LASER_SHIELD_IDS.has(this.save.equippedShieldId) : false;
     if (this.player.guarding && (this.player.perfectGuardWindow > 0 || (isLaser && hasAncientShield))) {
       audioEngine.playParryClang();
       if (isLaser) {
@@ -974,7 +1061,12 @@ export class BotWGameEngine {
         // Record Hero's Path death marker & revive safely at Shrine of Resurrection
         recordHeroPathSample(this.save, this.player.position.x, this.player.position.y, this.player.position.z, true);
         this.save.hearts = this.save.maxHearts;
-        this.player.teleportTo(-298, 454, 0.5);
+        if (this.architecture.sorDoorOpened) {
+          this.player.teleportTo(-298, 454, 0.5);
+        } else {
+          this.player.teleportTo(-314.8, 455, 0.25);
+          this.player.position.y = Math.max(this.player.position.y, this.architecture.shrineFloorY);
+        }
         this.ui.showToast('回生の祠で復活しました', 'red');
       }
     }
@@ -983,6 +1075,12 @@ export class BotWGameEngine {
   private findNearestInteractable(): NearbyInteractable | null {
     const p = this.player.position;
 
+    if (!this.architecture.sheikahSlateCollected && this.architecture.sheikahPedestalPos.distanceTo(p) < 3.4) {
+      return { kind: 'slatePedestal', label: 'シーカーストーンを調べる' };
+    }
+    if (!this.architecture.sorDoorOpened && this.architecture.sorExitTerminalPos.distanceTo(p) < 3.6) {
+      return { kind: 'sorTerminal', label: '端末にシーカーストーンをかざす' };
+    }
     for (const npc of this.npcs.npcs) {
       if (!npc.root.visible) continue;
       if (npc.position.distanceTo(p) < 4.5) {
@@ -1033,10 +1131,26 @@ export class BotWGameEngine {
   }
 
   public performInteract(): void {
-    const target = this.nearestInteract ?? this.findNearestInteractable();
+    const target = this.findNearestInteractable() ?? this.nearestInteract;
+    this.nearestInteract = target;
     if (!target) return;
 
-    if (target.kind === 'npc') {
+    if (target.kind === 'slatePedestal') {
+      this.architecture.collectSheikahSlate();
+      this.save.hasSheikahSlate = true;
+      this.player.syncVisuals(this.save);
+      audioEngine.playShrineChime();
+      this.ui.showToast('📱 シーカーストーンを手に入れた！出口の端末へかざして外へ出よう', 'cyan');
+    } else if (target.kind === 'sorTerminal') {
+      if (!this.save.hasSheikahSlate) {
+        this.ui.showToast('シーカーストーンが反応しない…まずは台座からシーカーストーンを入手しよう', 'amber');
+        return;
+      }
+      this.architecture.openShrineDoor();
+      this.save.storyFlags['sor_door_opened'] = true;
+      audioEngine.playShrineChime();
+      this.ui.showToast('🚪 封印の石扉が開かれた！台地の崖へ向かおう', 'cyan');
+    } else if (target.kind === 'npc') {
       const armor = computeArmorSummary(this.save.equippedArmor, this.save.armorStars);
       const dlg = evaluateNpcEventFlow(target.npc, {
         isNaked: armor.isNaked,
@@ -1047,6 +1161,8 @@ export class BotWGameEngine {
         timeHours: this.climate.timeHours,
         memoriesCount: this.save.unlockedMemories.length,
         hasParaglider: this.save.hasParaglider,
+        plateauShrinesDone: hasCompletedAllPlateauShrines(this.save.completedShrines),
+        hasCameraRune: this.save.unlockedRunes.includes('camera'),
         tarreyTownStage: this.save.tarreyTownStage,
         thunderHelmRecovered: !!this.save.storyFlags['Electric_Relic_GetBack'],
       });
@@ -1055,22 +1171,47 @@ export class BotWGameEngine {
     } else if (target.kind === 'chest') {
       this.architecture.openChest(target.chest);
       if (!this.save.openedChests.includes(target.chest.id)) this.save.openedChests.push(target.chest.id);
-      if (target.chest.rewardType === 'rupees') this.save.rupees += target.chest.rewardAmount;
-      else if (target.chest.rewardType === 'arrow') this.save.arrows.normal += target.chest.rewardAmount;
-      else this.save.materials[target.chest.rewardId] = (this.save.materials[target.chest.rewardId] ?? 0) + target.chest.rewardAmount;
+      if (target.chest.rewardType === 'rupees') {
+        this.save.rupees += target.chest.rewardAmount;
+      } else if (target.chest.rewardType === 'arrow') {
+        this.save.arrows.normal += target.chest.rewardAmount;
+      } else if (target.chest.rewardType === 'armor') {
+        if (!this.save.ownedArmorIds.includes(target.chest.rewardId)) {
+          this.save.ownedArmorIds.push(target.chest.rewardId);
+        }
+        const piece = ARMOR_MAP[target.chest.rewardId];
+        if (piece && !this.save.equippedArmor[piece.slot]) {
+          this.save.equippedArmor[piece.slot] = piece.id;
+          this.player.syncVisuals(this.save);
+        }
+      } else {
+        this.save.materials[target.chest.rewardId] = (this.save.materials[target.chest.rewardId] ?? 0) + target.chest.rewardAmount;
+        if (target.chest.id === 'chest_plateau_ancient' && !this.save.ownedArmorIds.includes('champions_tunic')) {
+          this.save.ownedArmorIds.push('champions_tunic');
+        }
+      }
       audioEngine.playChestFanfare();
       this.ui.showToast(`🎁 宝箱を開けた！ ${target.chest.rewardTextJa} を手に入れた！`, 'amber');
     } else if (target.kind === 'weaponDrop') {
       this.architecture.collectWeaponDrop(target.drop);
-      const template = WEAPONS.find((w) => w.id === target.drop.weaponId);
-      if (template && !this.save.weapons.some((w) => w.id === template.id)) {
-        this.save.weapons.push({ ...template, currentDurability: template.durability });
+      if (target.drop.dropKind === 'material') {
+        const amt = target.drop.materialAmount ?? 1;
+        this.save.materials[target.drop.weaponId] = (this.save.materials[target.drop.weaponId] ?? 0) + amt;
+        const matName = MATERIAL_MAP[target.drop.weaponId]?.nameJa ?? target.drop.nameJa;
+        audioEngine.playUiConfirm();
+        this.ui.showToast(`🍎 ${matName} ×${amt} を手に入れた！`, 'amber');
+      } else {
+        const template = WEAPONS.find((w) => w.id === target.drop.weaponId);
+        if (template && !this.save.weapons.some((w) => w.id === template.id)) {
+          this.save.weapons.push({ ...template, currentDurability: template.durability });
+        }
+        if (template) {
+          this.save.equippedWeaponId = template.id;
+          this.player.syncVisuals(this.save);
+        }
+        audioEngine.playChestFanfare();
+        this.ui.showToast(`⚔ ${target.drop.nameJa} を手に入れた！`, 'amber');
       }
-      if (template) {
-        this.save.equippedWeaponId = template.id;
-      }
-      audioEngine.playChestFanfare();
-      this.ui.showToast(`⚔ ${target.drop.nameJa} を手に入れた！`, 'amber');
     } else if (target.kind === 'torch') {
       this.architecture.igniteTorch(target.torch);
       audioEngine.playUiConfirm();
@@ -1098,8 +1239,24 @@ export class BotWGameEngine {
         this.save.completedShrines.push(target.shrine.id);
         this.save.spiritOrbs += 1;
       }
+      const unlockedHere = PLATEAU_SHRINE_RUNE_MAP[target.shrine.id] ?? [];
+      const newlyAdded: RuneId[] = [];
+      for (const r of unlockedHere) {
+        if (!this.save.unlockedRunes.includes(r)) {
+          this.save.unlockedRunes.push(r);
+          newlyAdded.push(r);
+        }
+      }
+      if (newlyAdded.length > 0 && !this.runes.activeRune) {
+        this.runes.selectRune(newlyAdded[0], this.save.unlockedRunes);
+      }
       audioEngine.playShrineChime();
-      this.ui.showToast(`🔷 ${target.shrine.nameJa} クリア！克服の証を手に入れた（シーカー回路がシアン発光！）`, 'cyan');
+      this.ui.showToast(
+        newlyAdded.length > 0
+          ? `🔷 ${target.shrine.nameJa} クリア！克服の証とシーカーアイテム解放！`
+          : `🔷 ${target.shrine.nameJa} クリア！克服の証を手に入れた（シーカー回路がシアン発光！）`,
+        'cyan'
+      );
     } else if (target.kind === 'tower') {
       this.architecture.activateTower(target.tower.regionId);
       if (!this.save.activatedTowers.includes(target.tower.regionId)) {
@@ -1224,6 +1381,56 @@ export class BotWGameEngine {
 
     // Synchronize TouchControls visibility with Title / Sheikah Slate / Dialogue modal blocking state
     this.touchControls.setBlocked(this.ui.isBlockingInput());
+    this.touchControls.setRunesVisible(this.save.unlockedRunes.length > 0);
+
+    // 3D Awakening Cutscene Overlay Fadeout
+    if (this.awakeningCutTimer > 0) {
+      this.awakeningCutTimer = Math.max(0, this.awakeningCutTimer - rawDt);
+      if (this.awakeningCutTimer <= 1.2 && this.awakeningCutTimer > 0.01) {
+        this.ui.setAwakeningOverlay('台座のシーカーストーンを手にして……');
+      } else if (this.awakeningCutTimer === 0) {
+        this.ui.setAwakeningOverlay(null);
+      }
+    }
+
+    // Overlook Cliff Trigger -> Live 3D Panorama Title Logo Sweep
+    const px = this.player.position.x;
+    const pz = this.player.position.z;
+    if (
+      !this.paused &&
+      !this.save.storyFlags['intro_panorama_done'] &&
+      this.architecture.sorDoorOpened &&
+      px > -296.5 &&
+      px < -286.0 &&
+      Math.hypot(pz - 455) < 8.0
+    ) {
+      this.save.storyFlags['intro_panorama_done'] = true;
+      this.awakeningCutTimer = 0;
+      this.panoramaCutTimer = this.panoramaDuration;
+      this.ui.setPanoramaLogoVisible(true);
+      this.ui.showRegionBanner('始まりの台地', 'GREAT PLATEAU');
+      audioEngine.playTitlePanoramaChord();
+    }
+
+    if (this.panoramaCutTimer > 0) {
+      this.panoramaCutTimer = Math.max(0, this.panoramaCutTimer - rawDt);
+      const t = 1 - this.panoramaCutTimer / this.panoramaDuration;
+      const sweepPos = new THREE.Vector3(
+        THREE.MathUtils.lerp(px - 2.6, px - 1.2, t),
+        this.player.position.y + THREE.MathUtils.lerp(2.5, 4.9, t),
+        THREE.MathUtils.lerp(pz + 3.0, pz + 5.6, t)
+      );
+      const sweepLook = new THREE.Vector3(
+        THREE.MathUtils.lerp(-245, -140, t),
+        THREE.MathUtils.lerp(this.player.position.y + 1.2, 58, t),
+        THREE.MathUtils.lerp(470, 120, t)
+      );
+      this.cameraOverride = { pos: sweepPos, lookAt: sweepLook };
+      if (this.panoramaCutTimer === 0) {
+        this.cameraOverride = null;
+        this.ui.setPanoramaLogoVisible(false);
+      }
+    }
 
     const armor = computeArmorSummary(this.save.equippedArmor, this.save.armorStars);
 
@@ -1424,9 +1631,10 @@ export class BotWGameEngine {
         flurryRush: this.player.flurryRushTimer > 0,
         cameraModeActive: this.runes.cameraModeActive,
         cameraTargetName: this.runes.cameraModeActive ? this.detectCameraTarget()?.nameJa ?? null : null,
-        activeBoss: combatStatus.activeBoss
-          ? { nameJa: combatStatus.activeBoss.nameJa, hp: combatStatus.activeBoss.hp, maxHp: combatStatus.activeBoss.maxHp }
-          : null,
+        activeBoss:
+          combatStatus.activeBoss && this.awakeningCutTimer <= 0 && this.panoramaCutTimer <= 0
+            ? { nameJa: combatStatus.activeBoss.nameJa, hp: combatStatus.activeBoss.hp, maxHp: combatStatus.activeBoss.maxHp }
+            : null,
         interactLabel: this.nearestInteract?.label ?? null,
         korokMaskRattle: armor.korokDetect && npcOut.nearbyKorokDistance < 28,
         fps: this.fps,

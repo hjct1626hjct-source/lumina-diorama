@@ -60,7 +60,9 @@ export interface WorldTorch {
 export interface WorldWeaponDrop {
   id: string;
   nameJa: string;
+  dropKind?: 'weapon' | 'material';
   weaponId: string;
+  materialAmount?: number;
   position: THREE.Vector3;
   collected: boolean;
   root: THREE.Group;
@@ -109,6 +111,17 @@ export class ArchitectureBuilder {
   public divineBeasts: KinematicDivineBeast[] = [];
   public memorySpots: MemorySpot[] = [];
 
+  // Shrine of Resurrection interactive sequence state
+  public shrineFloorY = 52;
+  public sheikahPedestalPos = new THREE.Vector3(-311.2, 52, 455.0);
+  public sheikahSlateCollected = false;
+  public sorExitTerminalPos = new THREE.Vector3(-306.4, 52, 456.6);
+  public sorDoorOpened = false;
+  private sheikahSlateMesh: THREE.Group | null = null;
+  private sorExitGlowMesh: THREE.Mesh | null = null;
+  private sorSealDoorMesh: THREE.Group | null = null;
+  private sorDoorAnim = 0;
+
   private malicePillars: THREE.Mesh[] = [];
   private windmillBlades: THREE.Object3D[] = [];
   private physics: PhysicsChemistryEngine;
@@ -126,7 +139,12 @@ export class ArchitectureBuilder {
     defeatedDivineBeasts: string[];
     unlockedMemories: string[];
     memoryLocations: Array<{ id: string; titleJa: string; x: number; z: number }>;
+    hasSheikahSlate?: boolean;
+    sorDoorOpened?: boolean;
   }): void {
+    this.sheikahSlateCollected = !!opts.hasSheikahSlate;
+    this.sorDoorOpened = !!opts.sorDoorOpened;
+    this.sorDoorAnim = this.sorDoorOpened ? 1 : 0;
     this.buildShrineOfResurrection();
     this.buildTempleOfTime();
     this.buildHyruleCastle();
@@ -224,61 +242,172 @@ export class ArchitectureBuilder {
   private buildShrineOfResurrection(): void {
     const x = -305;
     const z = 455;
-    const y = getTerrainHeight(x, z);
+    let maxSampleY = getTerrainHeight(x, z);
+    for (let sx = -317; sx <= -303; sx += 2) {
+      for (let sz = 449; sz <= 461; sz += 2) {
+        maxSampleY = Math.max(maxSampleY, getTerrainHeight(sx, sz));
+      }
+    }
+    const floorY = maxSampleY + 0.14;
+    this.shrineFloorY = floorY;
+
     const grp = new THREE.Group();
-    grp.position.set(x, y, z);
+    grp.position.set(x, floorY, z);
 
     const shTex = textureBank.getSheikahStoneTexture();
     const stoneMat = createBotWToonMaterial({
-      color: '#505868',
+      color: '#465062',
       map: shTex.map,
       normalMap: shTex.normalMap,
       emissive: '#22ddff',
       emissiveMap: shTex.emissiveMap,
-      emissiveIntensity: 1.4,
+      emissiveIntensity: 1.25,
       sheikahCircuit: true,
       sheikahActivated: 1.0,
       sheikahHeight: 8.0,
     });
+    const darkRockMat = createBotWToonMaterial({
+      color: '#343b46',
+      map: textureBank.getStoneMasonryTexture('#4c525c', '#2a2e36').map,
+    });
 
-    // Cave arch portal opening out onto the iconic Great Plateau cliff vista!
-    const arch = new THREE.Mesh(new THREE.TorusGeometry(4.2, 1.35, 10, 20, Math.PI), stoneMat);
-    arch.position.set(0, 0.2, 0);
-    arch.rotation.y = Math.PI * 0.28;
+    // Walkable Shrine Stone Floor (-318..-304, z: 449..461)
+    const floorMesh = new THREE.Mesh(new THREE.BoxGeometry(14.2, 3.6, 12.2), stoneMat);
+    floorMesh.position.set(-6.0, -1.8, 0);
+    floorMesh.receiveShadow = true;
+    grp.add(floorMesh);
+    this.physics.addBoxCollider('sor_chamber_floor', x - 6.0, z, 14.2, 12.2, floorY - 4.0, floorY, {
+      walkableTop: true,
+      climbable: false,
+    });
+
+    // Outer Exit Ramp leading smoothly from Shrine doorway (-304) out to Overlook Path (-298.5)
+    const rampY = (floorY + getTerrainHeight(-299, 455)) * 0.5;
+    const rampMesh = new THREE.Mesh(new THREE.BoxGeometry(6.2, 3.2, 5.4), darkRockMat);
+    rampMesh.position.set(2.2, rampY - floorY - 1.65, 0);
+    rampMesh.receiveShadow = true;
+    grp.add(rampMesh);
+    this.physics.addBoxCollider('sor_exit_ramp', x + 2.2, z, 6.2, 5.4, rampY - 4.0, rampY, {
+      walkableTop: true,
+      climbable: false,
+    });
+
+    // Cavern Enclosure Walls & Vaulted Ceiling (prevents side clipping + feels inside ancient chamber)
+    const backWall = new THREE.Mesh(new THREE.BoxGeometry(1.4, 5.4, 12.2), darkRockMat);
+    backWall.position.set(-12.6, 2.7, 0);
+    const northWall = new THREE.Mesh(new THREE.BoxGeometry(14.2, 5.4, 1.4), darkRockMat);
+    northWall.position.set(-6.0, 2.7, -5.5);
+    const southWall = new THREE.Mesh(new THREE.BoxGeometry(14.2, 5.4, 1.4), darkRockMat);
+    southWall.position.set(-6.0, 2.7, 5.5);
+    const ceiling = new THREE.Mesh(new THREE.BoxGeometry(14.2, 1.0, 12.2), darkRockMat);
+    ceiling.position.set(-6.0, 5.6, 0);
+    grp.add(backWall, northWall, southWall, ceiling);
+
+    this.physics.addBoxCollider('sor_wall_west', x - 12.6, z, 1.4, 12.2, floorY - 1, floorY + 5.6, { climbable: false });
+    this.physics.addBoxCollider('sor_wall_north', x - 6.0, z - 5.5, 14.2, 1.4, floorY - 1, floorY + 5.6, { climbable: false });
+    this.physics.addBoxCollider('sor_wall_south', x - 6.0, z + 5.5, 14.2, 1.4, floorY - 1, floorY + 5.6, { climbable: false });
+
+    // Front Doorway Framing Walls flanking the 4.2m stone gate opening at x = -305
+    for (const side of [-1, 1]) {
+      const wing = new THREE.Mesh(new THREE.BoxGeometry(1.2, 5.2, 3.8), stoneMat);
+      wing.position.set(0, 2.6, side * 4.0);
+      grp.add(wing);
+      this.physics.addBoxCollider(`sor_front_wing_${side}`, x, z + side * 4.0, 1.2, 3.8, floorY - 1, floorY + 5.4, {
+        climbable: false,
+      });
+    }
+
+    // Blue Glowing Resurrection Cradle / Awakening Bed at (-315.0, 455.0)
+    const cradleBase = new THREE.Mesh(new THREE.CylinderGeometry(1.65, 1.85, 0.34, 16), stoneMat);
+    cradleBase.position.set(-10.0, 0.17, 0);
+    const cradleWater = new THREE.Mesh(
+      new THREE.CylinderGeometry(1.38, 1.38, 0.38, 16),
+      new THREE.MeshBasicMaterial({ color: '#38e8ff', transparent: true, opacity: 0.72 })
+    );
+    cradleWater.position.set(-10.0, 0.19, 0);
+    grp.add(cradleBase, cradleWater);
+
+    // Sheikah Slate Pedestal at (-311.2, 455.0)
+    this.sheikahPedestalPos.set(-311.2, floorY, 455.0);
+    const slatePedestal = new THREE.Mesh(new THREE.CylinderGeometry(0.65, 0.85, 1.1, 8), stoneMat);
+    slatePedestal.position.set(-6.2, 0.55, 0);
+    grp.add(slatePedestal);
+    this.physics.addCylinderCollider('sor_slate_pedestal', -311.2, 455.0, 0.78, floorY - 0.5, floorY + 1.1, {
+      climbable: false,
+      walkableTop: true,
+    });
+
+    // Floating Sheikah Slate model atop podium while uncollected
+    const slateGrp = new THREE.Group();
+    const slateBody = new THREE.Mesh(
+      new THREE.BoxGeometry(0.36, 0.52, 0.08),
+      createBotWToonMaterial({ color: '#2b3446', emissive: '#22e4ff', emissiveIntensity: 1.5, metalHighlight: true })
+    );
+    const slateEye = new THREE.Mesh(
+      new THREE.RingGeometry(0.06, 0.1, 14),
+      new THREE.MeshBasicMaterial({ color: '#8ef5ff', side: THREE.DoubleSide })
+    );
+    slateEye.position.z = 0.045;
+    slateGrp.add(slateBody, slateEye);
+    slateGrp.position.set(-6.2, 1.55, 0);
+    slateGrp.visible = !this.sheikahSlateCollected;
+    grp.add(slateGrp);
+    this.sheikahSlateMesh = slateGrp;
+
+    // Exit Sheikah Terminal (-306.4, 456.6) that unlocks the Stone Seal Door
+    this.sorExitTerminalPos.set(-306.4, floorY, 456.6);
+    const exitPillar = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.58, 1.05, 8), stoneMat);
+    exitPillar.position.set(-1.4, 0.52, 1.6);
+    const exitGlow = new THREE.Mesh(
+      new THREE.SphereGeometry(0.18, 10, 8),
+      new THREE.MeshBasicMaterial({ color: this.sorDoorOpened ? '#28ecff' : '#ff8c28' })
+    );
+    exitGlow.position.set(-1.4, 1.25, 1.6);
+    grp.add(exitPillar, exitGlow);
+    this.sorExitGlowMesh = exitGlow;
+
+    // Stone Seal Door blocking the cave mouth until Exit Terminal is activated with Sheikah Slate
+    const doorGrp = new THREE.Group();
+    const doorSlab = new THREE.Mesh(new THREE.BoxGeometry(0.85, 4.4, 4.2), stoneMat);
+    doorSlab.position.set(0, 2.2, 0);
+    const doorSealRing = new THREE.Mesh(
+      new THREE.TorusGeometry(0.95, 0.08, 8, 20),
+      new THREE.MeshBasicMaterial({ color: '#ff8c28' })
+    );
+    doorSealRing.rotation.y = Math.PI / 2;
+    doorSealRing.position.set(-0.46, 2.2, 0);
+    doorGrp.add(doorSlab, doorSealRing);
+    doorGrp.position.set(0, this.sorDoorOpened ? 4.3 : 0, 0);
+    doorGrp.visible = !this.sorDoorOpened;
+    grp.add(doorGrp);
+    this.sorSealDoorMesh = doorGrp;
+    if (!this.sorDoorOpened) {
+      this.physics.addBoxCollider('sor_seal_door', x, z, 0.9, 4.2, floorY - 0.5, floorY + 4.5, { climbable: false });
+    }
+
+    // Outside Cave Arch Portal framing the iconic Great Plateau cliff vista!
+    const arch = new THREE.Mesh(new THREE.TorusGeometry(4.2, 1.2, 10, 20, Math.PI), stoneMat);
+    arch.position.set(0.8, 0.2, 0);
+    arch.rotation.y = Math.PI * 0.5;
     arch.castShadow = true;
     arch.receiveShadow = true;
     grp.add(arch);
 
-    // Solid arch left/right pier colliders (leaving the center portal archway open to walk through!)
-    const archYaw = Math.PI * 0.28;
-    for (const side of [-1, 1]) {
-      const px = x + Math.cos(archYaw) * side * 4.2;
-      const pz = z - Math.sin(archYaw) * side * 4.2;
-      this.physics.addCylinderCollider(`sor_arch_pier_${side}`, px, pz, 1.4, y - 2, y + 5.5, { climbable: true });
-    }
-
-    // Ancient Sheikah Resurrection Pedestal inside entrance
-    const pedestal = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.4, 0.9, 8), stoneMat);
-    pedestal.position.set(-2.5, 0.45, 2.2);
-    grp.add(pedestal);
-    this.physics.addCylinderCollider('sor_pedestal', x - 2.5, z + 2.2, 1.35, y - 0.5, y + 0.9, { walkableTop: true, climbable: false });
-
-    // Flank glowing Sheikah lantern pillars grounded strictly to local hillside height + colliders!
+    // Exterior guiding torches & pillars along the cliff exit path
     for (const side of [-1, 1]) {
       const glbPillar = modelLoader.instantiate('pillar', { scaleMultiplier: 1.0 });
-      const px = side * 4.4;
-      const pz = side * -1.8;
+      const px = 3.8;
+      const pz = side * 3.6;
       const wy = getTerrainHeight(x + px, z + pz);
       if (glbPillar) {
-        glbPillar.root.position.set(px, wy - y - 0.55, pz);
+        glbPillar.root.position.set(px, wy - floorY - 0.45, pz);
         grp.add(glbPillar.root);
       }
-      this.physics.addCylinderCollider(`sor_pillar_${side}`, x + px, z + pz, 1.05, wy - 1.5, wy + 4.0, { climbable: true });
+      this.physics.addCylinderCollider(`sor_pillar_${side}`, x + px, z + pz, 1.0, wy - 1.5, wy + 4.0, { climbable: true });
     }
 
-    // Guiding torches flanking the Shrine of Resurrection overlook!
     this.addTorchStand(x + 6.5, z - 3.0, '回生の祠の篝火（北）', true);
-    this.addTorchStand(x + 2.5, z + 5.5, '回生の祠の篝火（南）', false);
+    this.addTorchStand(-287.2, 457.6, '謎の老人の焚き火', true);
 
     this.group.add(grp);
   }
@@ -1186,11 +1315,14 @@ export class ArchitectureBuilder {
       type: 'wood' | 'iron' | 'ancient';
       x: number;
       z: number;
+      y?: number;
       rewardTextJa: string;
       rewardType: WorldChest['rewardType'];
       rewardId: string;
       rewardAmount: number;
     }> = [
+      { id: 'chest_sor_shirt', type: 'wood', x: -310.2, z: 458.4, y: this.shrineFloorY, rewardTextJa: '古びたシャツ', rewardType: 'armor', rewardId: 'well_worn_shirt', rewardAmount: 1 },
+      { id: 'chest_sor_trousers', type: 'wood', x: -308.0, z: 458.4, y: this.shrineFloorY, rewardTextJa: '古びたパンツ', rewardType: 'armor', rewardId: 'old_trousers', rewardAmount: 1 },
       { id: 'chest_plateau_ancient', type: 'ancient', x: -232, z: 432, rewardTextJa: '英傑の服 (Champion\'s Tunic) / コハク ×3', rewardType: 'material', rewardId: 'amber', rewardAmount: 3 },
       { id: 'chest_plateau_wood', type: 'wood', x: -292, z: 452, rewardTextJa: '旅人の剣 ＆ 木の矢 ×10', rewardType: 'arrow', rewardId: 'normal', rewardAmount: 10 },
       { id: 'chest_temple_gold', type: 'iron', x: -242, z: 486, rewardTextJa: '銀ルピー (100ルピー)', rewardType: 'rupees', rewardId: 'rupee', rewardAmount: 100 },
@@ -1202,7 +1334,7 @@ export class ArchitectureBuilder {
     ];
 
     for (const spec of chestSpecs) {
-      const cy = getTerrainHeight(spec.x, spec.z);
+      const cy = spec.y ?? getTerrainHeight(spec.x, spec.z);
       const root = new THREE.Group();
       root.position.set(spec.x, cy, spec.z);
       const isOpened = openedIds.includes(spec.id);
@@ -1274,11 +1406,23 @@ export class ArchitectureBuilder {
   }
 
   /**
-   * Places gleaming world Weapon & Shield Drop stands using CC0 `sword_shield.glb`!
+   * Places gleaming world Weapon, Campfire Tool, and Baked Apple Drop pickups!
    */
   private buildWeaponDrops(): void {
-    const dropSpecs = [
-      { id: 'drop_plateau_armory', nameJa: '旅人の剣＆盾セット', weaponId: 'travelers_sword', x: -290, z: 458 },
+    const dropSpecs: Array<{
+      id: string;
+      nameJa: string;
+      dropKind?: 'weapon' | 'material';
+      weaponId: string;
+      materialAmount?: number;
+      x: number;
+      z: number;
+    }> = [
+      { id: 'drop_campfire_apple', nameJa: '焼きリンゴ ×2', dropKind: 'material', weaponId: 'baked_apple', materialAmount: 2, x: -286.6, z: 456.4 },
+      { id: 'drop_campfire_torch', nameJa: 'たいまつ', dropKind: 'weapon', weaponId: 'torch', x: -288.4, z: 458.6 },
+      { id: 'drop_campfire_branch', nameJa: '木の枝', dropKind: 'weapon', weaponId: 'tree_branch', x: -285.2, z: 456.6 },
+      { id: 'drop_campfire_axe', nameJa: '木こりのオノ', dropKind: 'weapon', weaponId: 'woodcutters_axe', x: -289.2, z: 456.0 },
+      { id: 'drop_plateau_armory', nameJa: '旅人の剣＆盾セット', weaponId: 'travelers_sword', x: -290, z: 462 },
       { id: 'drop_temple_royal', nameJa: '王家の剣＆盾セット', weaponId: 'royal_broadsword', x: -252, z: 479 },
       { id: 'drop_castle_knight', nameJa: '騎士の剣＆盾セット', weaponId: 'knights_broadsword', x: -86, z: -145 },
       { id: 'drop_kakariko_guard', nameJa: '兵士の剣＆盾セット', weaponId: 'soldiers_broadsword', x: 425, z: 278 },
@@ -1289,44 +1433,78 @@ export class ArchitectureBuilder {
       const root = new THREE.Group();
       root.position.set(sp.x, y, sp.z);
 
-      // Carved stone weapon plinth
-      const plinth = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.65, 0.8, 0.35, 8),
-        createBotWToonMaterial({ color: '#78756e', map: textureBank.getStoneMasonryTexture().map })
-      );
-      plinth.position.y = 0.175;
-      root.add(plinth);
-
-      // Floating rotating `sword_shield.glb` pickup!
       const spinHolder = new THREE.Group();
-      spinHolder.position.y = 0.55;
-      const glb = modelLoader.instantiate('sword_shield', { scaleMultiplier: 0.72 });
-      if (glb) {
-        spinHolder.add(glb.root);
-      } else {
-        const fallback = new THREE.Mesh(
-          new THREE.BoxGeometry(0.16, 1.0, 0.08),
-          createBotWToonMaterial({ color: '#e4c465', metalHighlight: true })
+      spinHolder.position.y = sp.dropKind === 'material' ? 0.36 : 0.55;
+
+      if (sp.weaponId === 'baked_apple') {
+        const appleMesh = new THREE.Mesh(
+          new THREE.SphereGeometry(0.22, 10, 8),
+          createBotWToonMaterial({ color: '#c44a1c', emissive: '#541b08', emissiveIntensity: 0.35 })
         );
-        fallback.position.y = 0.5;
-        spinHolder.add(fallback);
+        appleMesh.scale.set(1.05, 0.92, 1.05);
+        appleMesh.position.y = 0.22;
+        spinHolder.add(appleMesh);
+      } else if (sp.weaponId === 'tree_branch' || sp.weaponId === 'torch' || sp.weaponId === 'woodcutters_axe') {
+        const shaft = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.04, 0.05, 0.95, 6),
+          createBotWToonMaterial({ color: '#785230' })
+        );
+        shaft.position.y = 0.45;
+        shaft.rotation.z = 0.25;
+        spinHolder.add(shaft);
+        if (sp.weaponId === 'torch') {
+          const ember = new THREE.Mesh(
+            new THREE.SphereGeometry(0.11, 8, 8),
+            new THREE.MeshBasicMaterial({ color: '#ff8a24' })
+          );
+          ember.position.set(-0.1, 0.88, 0);
+          spinHolder.add(ember);
+        } else if (sp.weaponId === 'woodcutters_axe') {
+          const head = new THREE.Mesh(
+            new THREE.BoxGeometry(0.28, 0.22, 0.08),
+            createBotWToonMaterial({ color: '#8f9aa8', metalHighlight: true })
+          );
+          head.position.set(-0.12, 0.82, 0);
+          spinHolder.add(head);
+        }
+      } else {
+        // Carved stone weapon plinth + floating rotating `sword_shield.glb` pickup!
+        const plinth = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.65, 0.8, 0.35, 8),
+          createBotWToonMaterial({ color: '#78756e', map: textureBank.getStoneMasonryTexture().map })
+        );
+        plinth.position.y = 0.175;
+        root.add(plinth);
+        const glb = modelLoader.instantiate('sword_shield', { scaleMultiplier: 0.72 });
+        if (glb) {
+          spinHolder.add(glb.root);
+        } else {
+          const fallback = new THREE.Mesh(
+            new THREE.BoxGeometry(0.16, 1.0, 0.08),
+            createBotWToonMaterial({ color: '#e4c465', metalHighlight: true })
+          );
+          fallback.position.y = 0.5;
+          spinHolder.add(fallback);
+        }
       }
       root.add(spinHolder);
 
       // Subtle golden ground shimmer ring
       const glintRing = new THREE.Mesh(
-        new THREE.TorusGeometry(0.72, 0.035, 6, 18),
-        new THREE.MeshBasicMaterial({ color: '#ffe87a', transparent: true, opacity: 0.72 })
+        new THREE.TorusGeometry(0.58, 0.03, 6, 16),
+        new THREE.MeshBasicMaterial({ color: '#ffe87a', transparent: true, opacity: 0.68 })
       );
       glintRing.rotation.x = Math.PI / 2;
-      glintRing.position.y = 0.38;
+      glintRing.position.y = 0.18;
       root.add(glintRing);
 
       this.group.add(root);
       this.weaponDrops.push({
         id: sp.id,
         nameJa: sp.nameJa,
+        dropKind: sp.dropKind ?? 'weapon',
         weaponId: sp.weaponId,
+        materialAmount: sp.materialAmount,
         position: new THREE.Vector3(sp.x, y, sp.z),
         collected: false,
         root,
@@ -1627,6 +1805,44 @@ export class ArchitectureBuilder {
     return sh;
   }
 
+  collectSheikahSlate(): void {
+    this.sheikahSlateCollected = true;
+    if (this.sheikahSlateMesh) {
+      this.sheikahSlateMesh.visible = false;
+    }
+  }
+
+  openShrineDoor(): void {
+    if (this.sorDoorOpened) return;
+    this.sorDoorOpened = true;
+    this.physics.removeCollider('sor_seal_door');
+    if (this.sorExitGlowMesh) {
+      (this.sorExitGlowMesh.material as THREE.MeshBasicMaterial).color.set('#28ecff');
+    }
+  }
+
+  syncShrineState(hasSheikahSlate: boolean, doorOpened: boolean): void {
+    this.sheikahSlateCollected = hasSheikahSlate;
+    if (this.sheikahSlateMesh) {
+      this.sheikahSlateMesh.visible = !hasSheikahSlate;
+    }
+    this.sorDoorOpened = doorOpened;
+    this.sorDoorAnim = doorOpened ? 1 : 0;
+    if (this.sorSealDoorMesh) {
+      this.sorSealDoorMesh.visible = !doorOpened;
+      this.sorSealDoorMesh.position.y = doorOpened ? 4.5 : 0;
+    }
+    if (this.sorExitGlowMesh) {
+      (this.sorExitGlowMesh.material as THREE.MeshBasicMaterial).color.set(doorOpened ? '#28ecff' : '#ff8c28');
+    }
+    this.physics.removeCollider('sor_seal_door');
+    if (!doorOpened) {
+      this.physics.addBoxCollider('sor_seal_door', -305, 455, 0.9, 4.2, this.shrineFloorY - 0.5, this.shrineFloorY + 4.5, {
+        climbable: false,
+      });
+    }
+  }
+
   openChest(chest: WorldChest): void {
     chest.opened = true;
     if (chest.rewardPreview) {
@@ -1640,6 +1856,18 @@ export class ArchitectureBuilder {
   }
 
   update(dt: number, timeSec: number): void {
+    if (this.sheikahSlateMesh && !this.sheikahSlateCollected) {
+      this.sheikahSlateMesh.rotation.y = timeSec * 1.4;
+      this.sheikahSlateMesh.position.y = 1.55 + Math.sin(timeSec * 2.5) * 0.08;
+    }
+    if (this.sorSealDoorMesh && this.sorDoorOpened && this.sorDoorAnim < 1) {
+      this.sorDoorAnim = Math.min(1, this.sorDoorAnim + dt * 0.85);
+      this.sorSealDoorMesh.position.y = this.sorDoorAnim * 4.5;
+      if (this.sorDoorAnim >= 0.99) {
+        this.sorSealDoorMesh.visible = false;
+      }
+    }
+
     for (const tw of this.towers) {
       if (tw.activated && tw.activationProgress < 1) {
         tw.activationProgress = Math.min(1, tw.activationProgress + dt * 0.45);
@@ -1691,7 +1919,7 @@ export class ArchitectureBuilder {
     for (const wd of this.weaponDrops) {
       if (wd.collected) continue;
       wd.spinTarget.rotation.y = timeSec * 1.15;
-      wd.spinTarget.position.y = 0.56 + Math.sin(timeSec * 2.6 + wd.position.x) * 0.08;
+      wd.spinTarget.position.y = (wd.dropKind === 'material' ? 0.36 : 0.56) + Math.sin(timeSec * 2.6 + wd.position.x) * 0.08;
     }
     for (const c of this.chests) {
       if (c.opened && c.openAnim < 1) {

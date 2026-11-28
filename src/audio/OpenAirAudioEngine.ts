@@ -2392,6 +2392,67 @@ export class OpenAirAudioEngine {
     });
   }
 
+  public playAwakeningChime(): void {
+    const s = this.prepareSfx();
+    if (!s) return;
+    const { ctx, bus, now } = s;
+    const notes = [72, 79, 84, 88, 91];
+    notes.forEach((midi, idx) => {
+      const t0 = now + idx * 0.24;
+      const osc = ctx.createOscillator();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(midiToHz(midi), t0);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.linearRampToValueAtTime(0.09, t0 + 0.04);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + 2.2);
+      osc.connect(g);
+      g.connect(bus);
+      if (this.reverbNode) {
+        const send = ctx.createGain();
+        send.gain.value = 0.72;
+        g.connect(send);
+        send.connect(this.reverbNode);
+      }
+      osc.start(t0);
+      osc.stop(t0 + 2.3);
+    });
+  }
+
+  public playTitlePanoramaChord(): void {
+    const s = this.prepareSfx();
+    if (!s) return;
+    const { ctx, bus, now } = s;
+    const steps = [
+      { midi: 88, t: 0.0, d: 1.6, v: 0.08 },
+      { midi: 83, t: 0.35, d: 1.7, v: 0.08 },
+      { midi: 81, t: 0.75, d: 1.9, v: 0.09 },
+      { midi: 64, t: 1.25, d: 2.8, v: 0.10 },
+      { midi: 71, t: 1.32, d: 2.8, v: 0.08 },
+      { midi: 76, t: 1.40, d: 2.9, v: 0.09 },
+    ];
+    for (const st of steps) {
+      const t0 = now + st.t;
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(midiToHz(st.midi), t0);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.linearRampToValueAtTime(st.v, t0 + 0.03);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + st.d);
+      osc.connect(g);
+      g.connect(bus);
+      if (this.reverbNode) {
+        const send = ctx.createGain();
+        send.gain.value = 0.78;
+        g.connect(send);
+        send.connect(this.reverbNode);
+      }
+      osc.start(t0);
+      osc.stop(t0 + st.d + 0.1);
+    }
+  }
+
   public playChestFanfare(): void {
     const s = this.prepareSfx();
     if (!s) return;

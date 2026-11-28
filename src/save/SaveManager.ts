@@ -5,11 +5,8 @@ import type {
   RegionId,
   RuneId,
   SaveSlotData,
-  WeaponDef,
 } from '../types/botw';
 import { ALL_SHRINES } from '../data/regions';
-import { ARMOR_PIECES } from '../data/armors';
-import { BOW_MAP, SHIELD_MAP, WEAPON_MAP } from '../data/itemsAndCooking';
 
 export type SaveMode = 'normal' | 'master';
 
@@ -101,67 +98,27 @@ interface StoredSaveRecord {
   data: SaveSlotData;
 }
 
-function toInst(w: WeaponDef): WeaponDef & { currentDurability: number } {
-  return { ...w, currentDurability: w.durability };
-}
-
-function createStarterWeapons(): Array<WeaponDef & { currentDurability: number }> {
-  const ids = [
-    'master_sword',
-    'travelers_sword',
-    'torch',
-    'flameblade',
-    'frostblade',
-    'thunderblade',
-    'guardian_sword_pp',
-    'dragonbone_moblin_club',
-    'royal_claymore',
-    'one_hit_obliterator',
-  ];
-  return ids.filter((id) => WEAPON_MAP[id]).map((id) => toInst(WEAPON_MAP[id]));
-}
-
-function createStarterBows(): Array<WeaponDef & { currentDurability: number }> {
-  const ids = ['travelers_bow', 'royal_bow', 'ancient_bow', 'great_eagle_bow', 'savage_lynel_bow'];
-  return ids.filter((id) => BOW_MAP[id]).map((id) => toInst(BOW_MAP[id]));
-}
-
-function createStarterShields(): Array<WeaponDef & { currentDurability: number }> {
-  const ids = ['hylian_shield', 'travelers_shield', 'ancient_shield', 'royal_shield', 'pot_lid'];
-  return ids.filter((id) => SHIELD_MAP[id]).map((id) => toInst(SHIELD_MAP[id]));
-}
-
 function createDefaultChampions(): ChampionsState {
   return {
-    mipha: { unlocked: true, enabled: true, charges: 1, maxCharges: 1, cooldown: 0, upgraded: false },
-    daruk: { unlocked: true, enabled: true, charges: 3, maxCharges: 3, cooldown: 0, upgraded: false },
-    revali: { unlocked: true, enabled: true, charges: 3, maxCharges: 3, cooldown: 0, upgraded: false },
-    urbosa: { unlocked: true, enabled: true, charges: 3, maxCharges: 3, cooldown: 0, upgraded: false },
+    mipha: { unlocked: false, enabled: true, charges: 0, maxCharges: 1, cooldown: 0, upgraded: false },
+    daruk: { unlocked: false, enabled: true, charges: 0, maxCharges: 3, cooldown: 0, upgraded: false },
+    revali: { unlocked: false, enabled: true, charges: 0, maxCharges: 3, cooldown: 0, upgraded: false },
+    urbosa: { unlocked: false, enabled: true, charges: 0, maxCharges: 3, cooldown: 0, upgraded: false },
   };
 }
 
 /**
- * Creates a clean default SaveSlotData for Normal Mode or Master Mode,
- * positioned at the iconic Shrine of Resurrection overlook on the Great Plateau.
+ * Creates an authentic BotW starting SaveSlotData inside the Shrine of Resurrection:
+ * 3 Hearts, 1 Stamina ring (100), 0 Rupees, naked, unarmed, no Sheikah Slate / Runes / Paraglider.
  */
 export function createDefaultSave(mode: SaveMode): SaveSlotData {
-  const defaultRunes: RuneId[] = [
-    'magnesis',
-    'bomb_round',
-    'bomb_square',
-    'stasis',
-    'cryonis',
-    'camera',
-    'master_cycle',
-  ];
-
   const arrows: Record<ArrowType, number> = {
-    normal: 35,
-    fire: 12,
-    ice: 10,
-    shock: 10,
-    bomb: 10,
-    ancient: 5,
+    normal: 0,
+    fire: 0,
+    ice: 0,
+    shock: 0,
+    bomb: 0,
+    ancient: 0,
   };
 
   return {
@@ -169,84 +126,43 @@ export function createDefaultSave(mode: SaveMode): SaveSlotData {
     mode,
     savedAt: Date.now(),
     playTimeSec: 0,
-    inGameTimeHours: 9.5,
+    inGameTimeHours: 7.5,
     daysElapsed: 1,
     bloodMoonTimerSec: 0,
-    playerPos: { x: -298, y: 52, z: 454, yaw: 0.72 },
-    hearts: 13,
-    maxHearts: 13,
+    playerPos: { x: -314.8, y: 52, z: 455, yaw: Math.PI / 2 },
+    hearts: 3,
+    maxHearts: 3,
     tempHearts: 0,
-    stamina: 200,
-    maxStamina: 200,
-    rupees: 1500,
-    spiritOrbs: 4,
+    stamina: 100,
+    maxStamina: 100,
+    rupees: 0,
+    spiritOrbs: 0,
     korokSeeds: 0,
-    equippedWeaponId: 'master_sword',
-    equippedBowId: 'royal_bow',
-    equippedShieldId: 'hylian_shield',
+    equippedWeaponId: null,
+    equippedBowId: null,
+    equippedShieldId: null,
     equippedArrow: 'normal',
     equippedArmor: {
       head: null,
-      body: 'champions_tunic',
-      legs: 'hylian_trousers',
+      body: null,
+      legs: null,
     },
-    armorStars: {
-      champions_tunic: 2,
-      hylian_trousers: 2,
-      hylian_hood: 2,
-      barbarian_helm: 2,
-      barbarian_armor: 2,
-      barbarian_leg_wraps: 2,
-      stealth_mask: 2,
-      stealth_chest_guard: 2,
-      stealth_tights: 2,
-      ancient_helm: 2,
-      ancient_cuirass: 2,
-      ancient_greaves: 2,
-    },
+    armorStars: {},
     armorDyes: {},
-    ownedArmorIds: ARMOR_PIECES.map((p) => p.id),
-    weapons: createStarterWeapons(),
-    bows: createStarterBows(),
-    shields: createStarterShields(),
+    ownedArmorIds: [],
+    weapons: [],
+    bows: [],
+    shields: [],
     arrows,
-    materials: {
-      apple: 12,
-      wood: 30,
-      flint: 8,
-      rock_salt: 6,
-      amber: 8,
-      hyrule_herb: 8,
-      hylian_shroom: 6,
-      spicy_pepper: 6,
-      hydromelon: 6,
-      raw_meat: 6,
-      prime_meat: 4,
-      hearty_durian: 6,
-      mighty_bananas: 6,
-      endura_carrot: 4,
-      silent_princess: 5,
-      ancient_screw: 10,
-      ancient_spring: 8,
-      ancient_gear: 6,
-      ancient_shaft: 6,
-      ancient_core: 4,
-      farosh_horn: 2,
-      star_fragment: 2,
-      fairy: 2,
-      monster_extract: 3,
-      bokoblin_horn: 8,
-      ruby: 3,
-      sapphire: 3,
-      diamond: 2,
-    },
+    materials: {},
     meals: [],
-    unlockedRunes: defaultRunes,
-    upgradedRunes: { bomb: true, stasis: true, sensor: true },
-    hasParaglider: true,
-    hasMasterSword: true,
+    hasSheikahSlate: false,
+    unlockedRunes: [],
+    upgradedRunes: { bomb: false, stasis: false, sensor: false },
+    hasParaglider: false,
+    hasMasterSword: false,
     masterSwordAwakened: false,
-    masterCycleFuel: 1000,
+    masterCycleFuel: 0,
     champions: createDefaultChampions(),
     activatedTowers: [] as RegionId[],
     completedShrines: [],
@@ -263,8 +179,8 @@ export function createDefaultSave(mode: SaveMode): SaveSlotData {
     travelMedallionPos: null,
     heroPath: [],
     mapPins: [],
-    compendiumDiscovered: ['master_sword', 'hylian_shield'],
-    sensorTargetId: 'shrine',
+    compendiumDiscovered: [],
+    sensorTargetId: null,
     tarreyTownStage: 0,
     settings: {
       proHud: false,
@@ -516,6 +432,13 @@ function normalizeSaveData(raw: unknown, mode: SaveMode): SaveSlotData | null {
       : [],
     mapPins: Array.isArray(partial.mapPins) ? deepClone(partial.mapPins) : [],
     compendiumDiscovered: Array.isArray(partial.compendiumDiscovered) ? [...partial.compendiumDiscovered] : [],
+    equippedWeaponId: partial.equippedWeaponId !== undefined ? partial.equippedWeaponId : defaults.equippedWeaponId,
+    equippedBowId: partial.equippedBowId !== undefined ? partial.equippedBowId : defaults.equippedBowId,
+    equippedShieldId: partial.equippedShieldId !== undefined ? partial.equippedShieldId : defaults.equippedShieldId,
+    hasSheikahSlate:
+      typeof partial.hasSheikahSlate === 'boolean'
+        ? partial.hasSheikahSlate
+        : (Array.isArray(partial.unlockedRunes) && partial.unlockedRunes.length > 0) || defaults.hasSheikahSlate,
   };
 
   return merged;

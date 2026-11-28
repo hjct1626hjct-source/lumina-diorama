@@ -290,6 +290,17 @@ export const WEAPONS: WeaponDef[] = [
     color: '#4c9e44',
     accentColor: '#7ec858',
   },
+  {
+    id: 'woodcutters_axe',
+    nameJa: '木こりのオノ',
+    nameEn: "Woodcutter's Axe",
+    category: 'claymore',
+    attack: 3,
+    durability: 42,
+    material: 'Metal',
+    color: '#8f9aa8',
+    accentColor: '#6d4827',
+  },
 ];
 
 // ===========================================================================
@@ -503,6 +514,19 @@ export const MATERIALS: MaterialDef[] = [
     fuelTier: 5,
     price: 3,
     color: '#d83834',
+  },
+  {
+    id: 'baked_apple',
+    nameJa: '焼きリンゴ',
+    nameEn: 'Baked Apple',
+    category: 'fruit',
+    hearts: 0.75,
+    effectType: 'none',
+    potency: 0,
+    durationBonusSec: 0,
+    fuelTier: 5,
+    price: 5,
+    color: '#b84f22',
   },
   {
     id: 'wood',

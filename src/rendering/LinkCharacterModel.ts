@@ -29,8 +29,9 @@ export interface HeroEquipmentVisuals {
   headDyeHex?: string | null;
   bodyDyeHex?: string | null;
   legsDyeHex?: string | null;
-  weaponId?: string;
-  shieldId?: string;
+  weaponId?: string | null;
+  shieldId?: string | null;
+  bowId?: string | null;
   weaponDrawn: boolean;
   isMasterSword: boolean;
   weaponColor: string;
@@ -39,6 +40,7 @@ export interface HeroEquipmentVisuals {
   paragliderOpen: boolean;
   shieldSurfing: boolean;
   holdingTorchFire: boolean;
+  hasSheikahSlate?: boolean;
 }
 
 interface PoseTargets {
@@ -864,19 +866,23 @@ export class LinkCharacterModel {
       this.rebuildArmorAppearance(vis);
     }
 
-    const useTorch = vis.holdingTorchFire || vis.weaponId === 'torch';
-    const useGlbCrestBack = !vis.isMasterSword && vis.shieldId !== 'hylian_shield' && this.backGlbCrestGroup.children.length > 0;
+    const hasWeapon = !!vis.weaponId;
+    const hasShield = !!vis.shieldId;
+    const useTorch = hasWeapon && (vis.holdingTorchFire || vis.weaponId === 'torch');
+    const useGlbCrestBack =
+      hasWeapon && hasShield && !vis.isMasterSword && vis.shieldId !== 'hylian_shield' && this.backGlbCrestGroup.children.length > 0;
 
-    this.backSwordGroup.visible = !vis.weaponDrawn && !useGlbCrestBack;
-    this.backShieldGroup.visible = !vis.weaponDrawn && !vis.shieldSurfing && !useGlbCrestBack;
+    this.backSwordGroup.visible = hasWeapon && !vis.weaponDrawn && !useGlbCrestBack;
+    this.backShieldGroup.visible = hasShield && !vis.weaponDrawn && !vis.shieldSurfing && !useGlbCrestBack;
     this.backGlbCrestGroup.visible = !vis.weaponDrawn && !vis.shieldSurfing && useGlbCrestBack;
 
-    this.handSwordGroup.visible = vis.weaponDrawn && !useTorch && !vis.bowDrawn && !vis.paragliderOpen;
-    this.handTorchGroup.visible = vis.weaponDrawn && useTorch && !vis.bowDrawn && !vis.paragliderOpen;
-    this.handShieldGroup.visible = vis.weaponDrawn && !vis.bowDrawn && !vis.paragliderOpen && !vis.shieldSurfing;
-    this.handBowGroup.visible = vis.bowDrawn && !vis.paragliderOpen;
+    this.handSwordGroup.visible = hasWeapon && vis.weaponDrawn && !useTorch && !vis.bowDrawn && !vis.paragliderOpen;
+    this.handTorchGroup.visible = hasWeapon && vis.weaponDrawn && useTorch && !vis.bowDrawn && !vis.paragliderOpen;
+    this.handShieldGroup.visible = hasShield && vis.weaponDrawn && !vis.bowDrawn && !vis.paragliderOpen && !vis.shieldSurfing;
+    this.handBowGroup.visible = !!vis.bowId && vis.bowDrawn && !vis.paragliderOpen;
     this.paragliderGroup.visible = vis.paragliderOpen;
-    this.surfShieldGroup.visible = vis.shieldSurfing;
+    this.surfShieldGroup.visible = hasShield && vis.shieldSurfing;
+    this.sheikahSlateGroup.visible = vis.hasSheikahSlate !== false;
   }
 
   private rebuildArmorAppearance(vis: HeroEquipmentVisuals): void {
