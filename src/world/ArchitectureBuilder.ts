@@ -81,6 +81,8 @@ export interface CookingPotSpot {
 export interface MemorySpot {
   memoryId: string;
   titleJa: string;
+  isDlc: boolean;
+  visible: boolean;
   position: THREE.Vector3;
   pillarMesh: THREE.Mesh;
   ringMesh: THREE.Mesh;
@@ -143,9 +145,10 @@ export class ArchitectureBuilder {
     openedChests: string[];
     defeatedDivineBeasts: string[];
     unlockedMemories: string[];
-    memoryLocations: Array<{ id: string; titleJa: string; x: number; z: number }>;
+    memoryLocations: Array<{ id: string; titleJa: string; x: number; z: number; isDlc?: boolean }>;
     hasSheikahSlate?: boolean;
     sorDoorOpened?: boolean;
+    hasParaglider?: boolean;
   }): void {
     this.sheikahSlateCollected = !!opts.hasSheikahSlate;
     this.sorInnerDoorAnim = this.sheikahSlateCollected ? 1 : 0;
@@ -162,6 +165,10 @@ export class ArchitectureBuilder {
     this.buildWeaponDrops();
     this.buildInteractivePhysicsProps();
     this.buildMemoryBeams(opts.memoryLocations, opts.unlockedMemories);
+    this.syncMemorySpotsVisibility({
+      hasParaglider: !!opts.hasParaglider,
+      defeatedDivineBeasts: opts.defeatedDivineBeasts,
+    });
   }
 
   /**
@@ -1387,7 +1394,7 @@ export class ArchitectureBuilder {
   /**
    * Builds detailed Treasure Chests across Hyrule + solid colliders + floating `sword_shield.glb` reward preview on open!
    */
-  private buildTreasureChests(openedIds: string[]): void {
+  public buildTreasureChests(openedIds: string[]): void {
     const chestSpecs: Array<{
       id: string;
       type: 'wood' | 'iron' | 'ancient';
@@ -1403,6 +1410,7 @@ export class ArchitectureBuilder {
       { id: 'chest_sor_trousers', type: 'wood', x: -308.5, z: 458.2, y: this.shrineFloorY, rewardTextJa: '古びたパンツ', rewardType: 'armor', rewardId: 'old_trousers', rewardAmount: 1 },
       { id: 'chest_plateau_ancient', type: 'ancient', x: -232, z: 432, rewardTextJa: 'コハク ×3', rewardType: 'material', rewardId: 'amber', rewardAmount: 3 },
       { id: 'chest_plateau_wood', type: 'wood', x: -292, z: 452, rewardTextJa: '旅人の剣 ＆ 木の矢 ×10', rewardType: 'arrow', rewardId: 'normal', rewardAmount: 10 },
+      { id: 'chest_plateau_warm_doublet', type: 'wood', x: -282, z: 458, rewardTextJa: '防寒着（雪山の寒さを防ぐ）', rewardType: 'armor', rewardId: 'warm_doublet', rewardAmount: 1 },
       { id: 'chest_temple_gold', type: 'iron', x: -242, z: 486, rewardTextJa: '銀ルピー (100ルピー)', rewardType: 'rupees', rewardId: 'rupee', rewardAmount: 100 },
       { id: 'chest_kakariko', type: 'wood', x: 438, z: 274, rewardTextJa: '古代のコア ×2', rewardType: 'material', rewardId: 'ancient_core', rewardAmount: 2 },
       { id: 'chest_hyrule_castle', type: 'iron', x: -72, z: -158, rewardTextJa: 'ハイリアの盾 ＆ 金ルピー (300ルピー)', rewardType: 'rupees', rewardId: 'rupee', rewardAmount: 300 },
@@ -1550,6 +1558,7 @@ export class ArchitectureBuilder {
       z: number;
     }> = [
       { id: 'drop_campfire_apple', nameJa: '焼きリンゴ ×2', dropKind: 'material', weaponId: 'baked_apple', materialAmount: 2, x: -286.6, z: 456.4 },
+      { id: 'drop_plateau_spicy_pepper', nameJa: 'ポカポカの実 ×3（防寒料理素材）', dropKind: 'material', weaponId: 'spicy_pepper', materialAmount: 3, x: -284.2, z: 460.8 },
       { id: 'drop_campfire_torch', nameJa: 'たいまつ', dropKind: 'weapon', weaponId: 'torch', x: -288.4, z: 458.6 },
       { id: 'drop_campfire_branch', nameJa: '木の枝', dropKind: 'weapon', weaponId: 'tree_branch', x: -285.2, z: 456.6 },
       { id: 'drop_campfire_axe', nameJa: '木こりのオノ', dropKind: 'weapon', weaponId: 'woodcutters_axe', x: -289.2, z: 456.0 },
@@ -1567,14 +1576,18 @@ export class ArchitectureBuilder {
       const spinHolder = new THREE.Group();
       spinHolder.position.y = sp.dropKind === 'material' ? 0.36 : 0.55;
 
-      if (sp.weaponId === 'baked_apple') {
-        const appleMesh = new THREE.Mesh(
-          new THREE.SphereGeometry(0.22, 10, 8),
-          createBotWToonMaterial({ color: '#c44a1c', emissive: '#541b08', emissiveIntensity: 0.35 })
+      if (sp.weaponId === 'baked_apple' || sp.weaponId === 'spicy_pepper') {
+        const fruitMesh = new THREE.Mesh(
+          sp.weaponId === 'spicy_pepper' ? new THREE.ConeGeometry(0.16, 0.42, 8) : new THREE.SphereGeometry(0.22, 10, 8),
+          createBotWToonMaterial({
+            color: sp.weaponId === 'spicy_pepper' ? '#e82c1a' : '#c44a1c',
+            emissive: sp.weaponId === 'spicy_pepper' ? '#881208' : '#541b08',
+            emissiveIntensity: 0.4,
+          })
         );
-        appleMesh.scale.set(1.05, 0.92, 1.05);
-        appleMesh.position.y = 0.22;
-        spinHolder.add(appleMesh);
+        fruitMesh.scale.set(1.05, 0.92, 1.05);
+        fruitMesh.position.y = 0.22;
+        spinHolder.add(fruitMesh);
       } else if (sp.weaponId === 'tree_branch' || sp.weaponId === 'torch' || sp.weaponId === 'woodcutters_axe') {
         const shaft = new THREE.Mesh(
           new THREE.CylinderGeometry(0.04, 0.05, 0.95, 6),
@@ -1645,16 +1658,17 @@ export class ArchitectureBuilder {
   }
 
   private buildSculptedFallbackChest(parent: THREE.Group, style: 'wood' | 'iron' | 'ancient'): THREE.Group {
-    const shTex = textureBank.getSheikahStoneTexture();
-    const woodTex = textureBank.getWoodPlankTexture('#7b5030');
+    const hasDom = typeof document !== 'undefined';
+    const shTex = hasDom ? textureBank.getSheikahStoneTexture() : null;
+    const woodTex = hasDom ? textureBank.getWoodPlankTexture('#7b5030') : null;
     const bodyMat =
       style === 'ancient'
         ? createBotWToonMaterial({
             color: '#464d5c',
-            map: shTex.map,
-            normalMap: shTex.normalMap,
+            map: shTex?.map,
+            normalMap: shTex?.normalMap,
             emissive: '#22e4ff',
-            emissiveMap: shTex.emissiveMap,
+            emissiveMap: shTex?.emissiveMap,
             emissiveIntensity: 1.5,
             sheikahCircuit: true,
             sheikahActivated: 1.0,
@@ -1662,8 +1676,8 @@ export class ArchitectureBuilder {
           })
         : createBotWToonMaterial({
             color: style === 'iron' ? '#6a7482' : '#855834',
-            map: woodTex.map,
-            normalMap: woodTex.normalMap,
+            map: woodTex?.map,
+            normalMap: woodTex?.normalMap,
             metalHighlight: style === 'iron',
           });
     const bandMat = createBotWToonMaterial({
@@ -1886,10 +1900,14 @@ export class ArchitectureBuilder {
     }
   }
 
-  private buildMemoryBeams(locations: Array<{ id: string; titleJa: string; x: number; z: number }>, unlockedIds: string[]): void {
+  public buildMemoryBeams(
+    locations: Array<{ id: string; titleJa: string; x: number; z: number; isDlc?: boolean }>,
+    unlockedIds: string[]
+  ): void {
     for (const loc of locations) {
       const y = getTerrainHeight(loc.x, loc.z);
       const collected = unlockedIds.includes(loc.id);
+      const isDlc = !!loc.isDlc || loc.id.includes('_ex_') || loc.id.includes('champions_ballad');
       const pillar = new THREE.Mesh(
         new THREE.CylinderGeometry(0.35, 1.2, 22, 12, 1, true),
         new THREE.MeshBasicMaterial({
@@ -1901,22 +1919,42 @@ export class ArchitectureBuilder {
         })
       );
       pillar.position.set(loc.x, y + 11, loc.z);
+      pillar.visible = false;
       const ring = new THREE.Mesh(
         new THREE.TorusGeometry(1.5, 0.08, 8, 24),
         new THREE.MeshBasicMaterial({ color: '#fff2a6', transparent: true, opacity: collected ? 0.2 : 0.85 })
       );
       ring.rotation.x = Math.PI / 2;
       ring.position.set(loc.x, y + 0.35, loc.z);
+      ring.visible = false;
       this.group.add(pillar, ring);
 
       this.memorySpots.push({
         memoryId: loc.id,
         titleJa: loc.titleJa,
+        isDlc,
+        visible: false,
         position: new THREE.Vector3(loc.x, y, loc.z),
         pillarMesh: pillar,
         ringMesh: ring,
         collected,
       });
+    }
+  }
+
+  /**
+   * Synchronizes visibility & interactability of Captured Memory spots:
+   * - Base memories require Paraglider (off the Great Plateau)
+   * - DLC 2 Champions' Ballad memories (EX#1..EX#5) require all 4 Divine Beasts freed!
+   */
+  public syncMemorySpotsVisibility(save: { hasParaglider: boolean; defeatedDivineBeasts: string[] }): void {
+    const canSeeBase = !!save.hasParaglider;
+    const canSeeDlc2 = (save.defeatedDivineBeasts?.length ?? 0) >= 4;
+    for (const ms of this.memorySpots) {
+      const show = ms.isDlc ? canSeeDlc2 : canSeeBase;
+      ms.visible = show;
+      ms.pillarMesh.visible = show;
+      ms.ringMesh.visible = show;
     }
   }
 

@@ -38,6 +38,8 @@ export interface CalamityGanonState {
   position: THREE.Vector3;
   mesh: THREE.Group;
   shieldMesh: THREE.Mesh;
+  telegraphRingMesh: THREE.Mesh;
+  telegraphCued: boolean;
   legs: THREE.Group[];
   freedBeastLasersFired: number;
 }
@@ -382,6 +384,15 @@ export class HyruleCastleInteriorManager {
     shieldMesh.visible = false;
     bossGrp.add(shieldMesh);
 
+    // Bright White Laser Telegraph Flash Ring (clear Perfect Guard timing cue for touch & PC!)
+    const telegraphRingMesh = new THREE.Mesh(
+      new THREE.TorusGeometry(1.75, 0.22, 8, 24),
+      new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.95 })
+    );
+    telegraphRingMesh.position.set(0, 4.5, 3.6);
+    telegraphRingMesh.visible = false;
+    bossGrp.add(telegraphRingMesh);
+
     this.arenaGroup.add(bossGrp);
 
     // Fire opening Divine Beast Red Lasers (one beam per freed beast!)
@@ -419,6 +430,8 @@ export class HyruleCastleInteriorManager {
       position: bossPos,
       mesh: bossGrp,
       shieldMesh,
+      telegraphRingMesh,
+      telegraphCued: false,
       legs,
       freedBeastLasersFired: freedBeasts,
     };
@@ -452,10 +465,35 @@ export class HyruleCastleInteriorManager {
     this.physics.addBoxCollider('dbg_wall_w', -68, 0, 2, 140, y0, y0 + 30);
     this.physics.addBoxCollider('dbg_wall_e', 68, 0, 2, 140, y0, y0 + 30);
 
-    // Permanent updraft columns around Dark Beast Ganon so Link can Paraglide to shoot the top Malice Eye!
-    this.physics.spawnFireUpdraft(new THREE.Vector3(-18, y0, 4), 5.5, 28, 9999);
-    this.physics.spawnFireUpdraft(new THREE.Vector3(18, y0, 4), 5.5, 28, 9999);
-    this.physics.spawnFireUpdraft(new THREE.Vector3(0, y0, -24), 5.5, 28, 9999);
+    // Permanent visible fiery updraft columns around Dark Beast Ganon for Paraglide -> Bullet-Time Final Eye finish!
+    const updraftSpots: Array<[number, number]> = [
+      [-18, 4],
+      [18, 4],
+      [-14, -22],
+      [14, -22],
+      [0, 18],
+    ];
+    const updraftColMat = new THREE.MeshBasicMaterial({
+      color: '#ff9632',
+      transparent: true,
+      opacity: 0.28,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const updraftRingMat = new THREE.MeshBasicMaterial({
+      color: '#ffdf64',
+      transparent: true,
+      opacity: 0.72,
+    });
+    for (const [ux, uz] of updraftSpots) {
+      this.physics.spawnFireUpdraft(new THREE.Vector3(ux, y0, uz), 6.0, 30, 9999);
+      const col = new THREE.Mesh(new THREE.CylinderGeometry(3.2, 4.4, 18, 12, 1, true), updraftColMat);
+      col.position.set(ux, y0 + 9, uz);
+      const baseRing = new THREE.Mesh(new THREE.TorusGeometry(3.8, 0.22, 8, 20), updraftRingMat);
+      baseRing.rotation.x = Math.PI * 0.5;
+      baseRing.position.set(ux, y0 + 0.35, uz);
+      this.arenaGroup.add(col, baseRing);
+    }
 
     // Build colossal Dark Beast Ganon boar silhouette
     const beastPos = new THREE.Vector3(0, y0, -10.0);
@@ -571,11 +609,20 @@ export class HyruleCastleInteriorManager {
     if (this.activeStage === 'dark_beast' && this.darkBeastBoss && !this.darkBeastBoss.defeated) {
       if (!isArrow) return { hit: false };
       const db = this.darkBeastBoss;
-      const hitRadius = isLightArrow ? 4.4 : 3.2;
+      const hitRadius = isLightArrow ? 5.2 : 3.2;
+
+      const isAimAssistHit = (targetPos: THREE.Vector3, extraR: number): boolean => {
+        if (origin.distanceTo(targetPos) <= reach + extraR) return true;
+        if (!isLightArrow) return false;
+        const toT = targetPos.clone().sub(origin);
+        const dist = toT.length();
+        if (dist > 28) return false;
+        return toT.normalize().dot(dir) >= 0.965 && dist <= 22;
+      };
 
       if (!db.finalEyeExposed) {
         const activeCrest = db.crests.find((c) => c.active && !c.destroyed);
-        if (activeCrest && origin.distanceTo(activeCrest.worldPos) <= reach + hitRadius) {
+        if (activeCrest && isAimAssistHit(activeCrest.worldPos, hitRadius)) {
           activeCrest.destroyed = true;
           activeCrest.active = false;
           activeCrest.mesh.visible = false;
@@ -593,7 +640,7 @@ export class HyruleCastleInteriorManager {
             return { hit: true, crestDestroyed: true, finalEyeExposed: true };
           }
         }
-      } else if (origin.distanceTo(db.finalEyePos) <= reach + hitRadius + 1.5) {
+      } else if (isAimAssistHit(db.finalEyePos, hitRadius + 2.0)) {
         db.hp = 0;
         db.defeated = true;
         db.finalEyeMesh.visible = false;
@@ -675,6 +722,7 @@ export class HyruleCastleInteriorManager {
     playerPos: THREE.Vector3
   ): {
     bossHitPlayer?: { damage: number; isLaser: boolean; labelJa: string };
+    laserTelegraph?: boolean;
     phase2Triggered?: boolean;
   } {
     if (!this.activeStage) return {};
@@ -690,6 +738,7 @@ export class HyruleCastleInteriorManager {
     }
 
     let bossHitPlayer: { damage: number; isLaser: boolean; labelJa: string } | undefined;
+    let laserTelegraph = false;
 
     if (this.activeStage === 'sanctum' && this.calamityBoss && this.calamityBoss.state !== 'dead') {
       const boss = this.calamityBoss;
@@ -703,6 +752,8 @@ export class HyruleCastleInteriorManager {
       });
 
       if (boss.state === 'downed') {
+        boss.telegraphRingMesh.visible = false;
+        boss.telegraphCued = false;
         boss.downedTimer -= dt;
         boss.mesh.position.set(boss.position.x, HYRULE_CASTLE_SANCTUM_Y + 0.1, boss.position.z);
         if (boss.downedTimer <= 0) {
@@ -716,7 +767,22 @@ export class HyruleCastleInteriorManager {
       } else {
         boss.mesh.position.copy(boss.position);
         boss.timer -= dt;
+
+        // Clear white flash ring telegraph 0.65s before laser fires!
+        const isTelegraphing = boss.state !== 'intro_lasers' && dist > 8.5 && boss.timer > 0 && boss.timer <= 0.65;
+        boss.telegraphRingMesh.visible = isTelegraphing;
+        if (isTelegraphing) {
+          const pulse = 0.6 + (1 - boss.timer / 0.65) * 1.1;
+          boss.telegraphRingMesh.scale.setScalar(pulse);
+          if (!boss.telegraphCued) {
+            boss.telegraphCued = true;
+            laserTelegraph = true;
+          }
+        }
+
         if (boss.timer <= 0) {
+          boss.telegraphRingMesh.visible = false;
+          boss.telegraphCued = false;
           if (boss.state === 'intro_lasers') {
             boss.state = 'idle';
             boss.timer = 1.8;
@@ -765,6 +831,6 @@ export class HyruleCastleInteriorManager {
       }
     }
 
-    return { bossHitPlayer };
+    return { bossHitPlayer, laserTelegraph };
   }
 }

@@ -123,6 +123,7 @@ export interface PhysicsBody {
   stasisInteractable?: boolean;
   isPlatform?: boolean;
   isMinecart?: boolean;
+  isMetal?: boolean;
   isMetalBox?: boolean;
   isRaft?: boolean;
   isCryonisPillar?: boolean;

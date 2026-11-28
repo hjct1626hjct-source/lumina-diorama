@@ -31,7 +31,15 @@ export function isTouchCapableDevice(): boolean {
 }
 
 /**
- * Full multi-touch iPad / tablet / mobile controller with strict `pointerId` isolation:
+ * Returns true for compact smartphones (iPhone / Android phones where shortest screen edge <= 500px).
+ */
+export function isCompactMobileDevice(): boolean {
+  if (typeof window === 'undefined') return false;
+  return isTouchCapableDevice() && Math.min(window.innerWidth, window.innerHeight) <= 500;
+}
+
+/**
+ * Full multi-touch iPad / iPhone / Android controller with strict `pointerId` isolation:
  * - Bottom-left floating analog movement stick (`setPointerCapture`)
  * - Full screen right/upper 360° camera drag look zone (zero blind spots)
  * - Ergonomic bottom-right BotW action buttons (Attack/Hold Charge, Jump/Paraglider, Dash/Dodge,
@@ -58,7 +66,7 @@ export class TouchControls {
   private stickPointerId: number | null = null;
   private stickOriginX = 0;
   private stickOriginY = 0;
-  private readonly stickMaxRadius = 52;
+  private stickMaxRadius = 52;
 
   private lookPointerId: number | null = null;
   private lookLastX = 0;
@@ -96,7 +104,22 @@ export class TouchControls {
     this.bindGestureAudioUnlock();
     this.bindPointerEvents();
     this.bindWindowPointerCleanup();
+    this.recomputeStickMetrics();
+    window.addEventListener('resize', () => this.recomputeStickMetrics());
+    window.addEventListener('orientationchange', () => {
+      this.resetAllActiveInputs();
+      setTimeout(() => this.recomputeStickMetrics(), 80);
+    });
     this.syncVisibility();
+  }
+
+  public recomputeStickMetrics(): void {
+    const rect = this.stickBaseEl?.getBoundingClientRect();
+    if (rect && rect.width > 20) {
+      this.stickMaxRadius = Math.max(30, Math.round(rect.width * 0.38));
+    } else {
+      this.stickMaxRadius = isCompactMobileDevice() ? 36 : 52;
+    }
   }
 
   private mountDom(): void {

@@ -54,7 +54,7 @@ import {
   type WorldNpc,
 } from '../entities/NpcAndKorokSystem';
 import { BotWHudAndMenu } from '../ui/BotWHudAndMenu';
-import { TouchControls, isTouchCapableDevice } from '../input/TouchControls';
+import { TouchControls, isCompactMobileDevice, isTouchCapableDevice } from '../input/TouchControls';
 import { audioEngine } from '../audio/OpenAirAudioEngine';
 import {
   canPerformMeleeAttack,
@@ -262,7 +262,7 @@ export class BotWGameEngine {
     this.runes = new SheikahRuneSystem(this.scene);
     this.player = new PlayerController(this.scene);
     this.enemies = new EnemyAndBossSystem(this.scene);
-    this.npcs = new NpcAndKorokSystem(this.scene);
+    this.npcs = new NpcAndKorokSystem(this.scene, this.physics);
 
     // Seamless async hot-swap whenever heavy Tier-2 character/skeleton GLBs finish streaming in background
     modelLoader.onAnyModelLoaded((key) => {
@@ -413,6 +413,9 @@ export class BotWGameEngine {
       onDodge: () => this.triggerPlayerDodge(),
       onGuardStart: () => {
         this.player.triggerGuardStart(this.save, (m) => this.ui.showToast(m, 'amber'));
+        if (this.touchControls.isVisible()) {
+          this.player.perfectGuardWindow += 0.12;
+        }
       },
       onToggleZL: () => this.toggleZLTarget(),
       onActivateRune: () => this.activateRune(),
@@ -451,8 +454,18 @@ export class BotWGameEngine {
 
   private applyGraphicsQuality(quality: GraphicsQuality): void {
     this.activeQuality = quality;
+    const isCompactMobile = isCompactMobileDevice();
     const isTouch = isTouchCapableDevice();
-    const maxDpr = quality === 'low' ? 1.0 : isTouch ? 1.5 : quality === 'medium' ? 1.5 : 2.0;
+    const maxDpr =
+      quality === 'low'
+        ? 1.0
+        : isCompactMobile
+          ? 1.25
+          : isTouch
+            ? 1.5
+            : quality === 'medium'
+              ? 1.5
+              : 2.0;
     const dpr = Math.min(window.devicePixelRatio || 1, maxDpr);
 
     this.renderer.setPixelRatio(dpr);
@@ -514,6 +527,7 @@ export class BotWGameEngine {
 
   private applyLoadedSave(): void {
     this.ui.bindSave(this.save);
+    this.ui.setDivineBeastHudVisible(false);
     this.applyUserSettings();
 
     // Build architecture FIRST so Shrine of Resurrection floor & door colliders are ready before teleporting!
@@ -525,12 +539,14 @@ export class BotWGameEngine {
         openedChests: this.save.openedChests,
         defeatedDivineBeasts: this.save.defeatedDivineBeasts,
         unlockedMemories: this.save.unlockedMemories,
-        memoryLocations: ALL_MEMORIES.map((m) => ({ id: m.id, titleJa: m.titleJa, x: m.pos.x, z: m.pos.z })),
+        memoryLocations: ALL_MEMORIES.map((m) => ({ id: m.id, titleJa: m.titleJa, x: m.pos.x, z: m.pos.z, isDlc: m.isDlc })),
         hasSheikahSlate: this.save.hasSheikahSlate,
         sorDoorOpened: !!this.save.storyFlags['sor_door_opened'],
+        hasParaglider: this.save.hasParaglider,
       });
     } else {
       this.architecture.syncShrineState(this.save.hasSheikahSlate, !!this.save.storyFlags['sor_door_opened']);
+      this.architecture.syncMemorySpotsVisibility(this.save);
     }
 
     this.player.teleportTo(this.save.playerPos.x, this.save.playerPos.z, 0.25);
@@ -614,6 +630,7 @@ export class BotWGameEngine {
       }
       this.save.hasParaglider = true;
       this.save.storyFlags['plateau_king_revealed'] = true;
+      this.architecture.syncMemorySpotsVisibility(this.save);
       this.ui.showToast(
         this.ui.isTouchUi()
           ? 'パラセールを授かった！空中で「跳/滑空」ボタンで滑空できます'
@@ -678,6 +695,12 @@ export class BotWGameEngine {
       this.applyGraphicsQuality(this.activeQuality);
     };
     window.addEventListener('resize', handleResize);
+    window.addEventListener('orientationchange', () => {
+      setTimeout(() => {
+        handleResize();
+        this.touchControls.recomputeStickMetrics();
+      }, 90);
+    });
     window.addEventListener('orientationchange', () => window.setTimeout(handleResize, 120));
 
     window.addEventListener('keydown', (e) => {
@@ -1470,6 +1493,7 @@ export class BotWGameEngine {
       }
     }
     for (const m of this.architecture.memorySpots) {
+      if (!m.visible) continue;
       if (m.position.distanceTo(p) < 5.5) {
         return { kind: 'memory', memoryId: m.memoryId, label: `ウツシエの記憶「${m.titleJa}」を思い出す` };
       }
@@ -1588,6 +1612,7 @@ export class BotWGameEngine {
       if (this.divineBeastInterior.bossDefeatedInSession) {
         const reward = applyDivineBeastLiberationRewards(this.save, beastId);
         this.architecture.setDivineBeastFreed(beastId);
+        this.architecture.syncMemorySpotsVisibility(this.save);
         audioEngine.playChestFanfare();
         this.ui.showToast(
           `✨ ${DIVINE_BEAST_METAS[beastId].nameJa} 解放！ハートの器(+1) ＆ ${reward.championAbilityJa} を授かった！`,
@@ -1837,7 +1862,11 @@ export class BotWGameEngine {
         this.save.activatedTowers.push(target.tower.regionId);
       }
       audioEngine.playShrineChime();
-      this.ui.showToast(`📡 ${target.tower.nameJa} 起動！周辺エリアのシーカーマップ情報を入手！`, 'cyan');
+      if (target.tower.regionId === 'great_plateau') {
+        this.ui.showToast('📡 始まりの塔を起動！マップが登録され、始まりの台地の4つの祠が青く共鳴した！', 'cyan');
+      } else {
+        this.ui.showToast(`📡 ${target.tower.nameJa} 起動！周辺エリアのシーカーマップ情報を入手！`, 'cyan');
+      }
     }
   }
 
@@ -2549,6 +2578,10 @@ export class BotWGameEngine {
         }
       } else if (inCastle) {
         const hcOut = this.hyruleCastleInterior.update(worldDt, this.player.position);
+        if (hcOut.laserTelegraph) {
+          audioEngine.playStasisTick(4);
+          this.ui.showToast('⚡ 白い閃光！今だ、盾ガードでレーザーを跳ね返せ！！', 'cyan');
+        }
         if (hcOut.bossHitPlayer && this.player.invulnTimer <= 0) {
           const hit = hcOut.bossHitPlayer;
           if (this.player.guarding && this.player.perfectGuardWindow > 0) {
@@ -2600,16 +2633,20 @@ export class BotWGameEngine {
         // 7. NPCs (24h/Rain AI), Koroks & Wildlife
         npcOut = this.npcs.update(worldDt, this.elapsedSec, this.climate.timeHours, this.climate.weather, this.player.position);
 
-        // 7b. Real Korok Dive Ring & Magnesis Block Checks
+        // 7b. Real Korok Dive Ring & Magnesis Block Checks (real PhysicsBody snap within 1.6m!)
         const diveKorok = this.npcs.checkDiveRingKoroks(this.player.position, this.player.velocity.y, this.player.grounded);
         if (diveKorok) {
           this.grantKorokReward(diveKorok, '💧 水連の輪へダイブ成功！……「ヤハハ！見つかっちゃった！」');
         }
-        if (this.runes.magnesisTarget) {
-          const magKorok = this.npcs.tryMagnesisSolveKorok(this.runes.magnesisTarget.position);
-          if (magKorok) {
-            this.grantKorokReward(magKorok, '🧲 鉄ブロックを枠にはめた！……「ヤハハ！見つかっちゃった！」');
+        const magPlacedKorok = this.npcs.checkKorokMagnesisPlacement(1.6);
+        if (magPlacedKorok) {
+          if (this.runes.magnesisTarget && this.runes.magnesisTarget === magPlacedKorok.magnesisBody) {
+            this.runes.magnesisTarget.magnesisGrabbed = false;
+            this.runes.magnesisTarget = null;
           }
+          this.grantKorokReward(magPlacedKorok, '🧲 鉄ブロックを枠にはめた！……「ヤハハ！見つかっちゃった！」');
+          this.syncSaveFromRuntime();
+          void saveManager.save(getAutoSlotId(this.save.mode), this.save);
         }
 
         // 7c. Mounted Horse Riding, Bucking Stamina Drain & Spur Regeneration

@@ -1934,6 +1934,14 @@ export class BotWHudAndMenu {
     // 7. Bottom-Right Pro HUD Toggle + Sound Sensor + Thermometer + Weather Forecast + Clock + Circular Minimap
     this.elBottomRight.classList.toggle('pro-hidden', ctx.save.settings.proHud);
     this.elMinimapWrap.classList.toggle('slate-locked', !ctx.save.hasSheikahSlate);
+    const hasNearUncompletedShrine =
+      ctx.save.hasSheikahSlate &&
+      PHYSICAL_SHRINES.some(
+        (sh) =>
+          !ctx.save.completedShrines.includes(sh.id) &&
+          Math.hypot(sh.x - ctx.playerPos.x, sh.z - ctx.playerPos.z) < 110
+      );
+    this.elMinimapWrap.classList.toggle('sensor-ping', hasNearUncompletedShrine);
     if (!ctx.save.settings.proHud) {
       this.drawSoundWaveform(ctx.noiseLevel);
       if (ctx.climate.isVolcanicError) {

@@ -3,6 +3,7 @@ import { createBotWToonMaterial } from '../rendering/BotWToonShader';
 import { modelLoader, type NormalizedInstance } from '../rendering/ModelLoader';
 import { getTerrainHeight } from '../world/TerrainGenerator';
 import { REGION_LIST } from '../data/regions';
+import type { PhysicsBody, PhysicsChemistryEngine } from '../physics/PhysicsChemistryEngine';
 import type { RegionId, RuneId, WeatherType } from '../types/botw';
 
 export const PLATEAU_RUNE_SHRINE_IDS = [
@@ -95,6 +96,7 @@ export interface WorldKorok {
   root: THREE.Group;
   propMesh: THREE.Object3D;
   korokMesh: THREE.Group;
+  magnesisBody?: PhysicsBody;
 }
 
 export interface WildlifeEntity {
@@ -275,8 +277,8 @@ export function evaluateNpcEventFlow(npc: WorldNpc, ctx: EventFlowContext): NpcD
               ? 'おお、雨が降ってきたのう。濡れた崖は登る途中で滑ってしまうから、焚き火のそばで雨が上がるのを待つのも手じゃ。'
               : 'ようこそ目覚めたな、若者よ。この台地の北にそびえる古城と、周囲の塔や遺跡に興味があるのかのう？',
             ctx.plateauShrinesDone
-              ? 'おお……始まりの台地にある4つの試練の祠をすべて踏破したか！約束どおり、時の神殿跡の屋根でも語った「パラセール」と真実を授けよう！'
-              : 'かつてこの台地にはシーカーの試練を司る祠が4つ眠っておった。まずはすべての祠を巡り、克服の証を集めてくるのじゃ！',
+              ? 'おお……始まりの台地にある4つの試練の祠をすべて踏破したか！約束どおり、時の神殿跡でも語った「パラセール」と真実をここで授けよう！'
+              : '始まりの塔を起動し、この台地に眠る4つの試練の祠を巡って克服の証を集めてくるのじゃ！雪山の祠へ挑む前に、焚き火そばの宝箱にある「防寒着」や「ポカポカの実」も忘れずにな。4つの祠を制覇したら時の神殿跡で待っている（ここでもパラセールを授けようぞ）。',
           ],
       choices: isKingRevealed
         ? [{ label: '『ハイラル王の手記』を読む', action: 'read_king_journal' }]
@@ -488,13 +490,22 @@ export class NpcAndKorokSystem {
   public npcs: WorldNpc[] = [];
   public koroks: WorldKorok[] = [];
   public wildlife: WildlifeEntity[] = [];
+  private physics?: PhysicsChemistryEngine;
 
-  constructor(scene: THREE.Scene) {
+  constructor(scene: THREE.Scene, physics?: PhysicsChemistryEngine) {
+    this.physics = physics;
     this.group.name = 'HyruleNpcsKoroksWildlife';
     scene.add(this.group);
   }
 
   populateAll(foundKoroks: string[]): void {
+    if (this.physics) {
+      for (const k of this.koroks) {
+        if (k.magnesisBody) {
+          this.physics.removeBody(k.magnesisBody.id);
+        }
+      }
+    }
     while (this.group.children.length > 0) this.group.remove(this.group.children[0]);
     this.npcs = [];
     this.koroks = [];
@@ -826,6 +837,7 @@ export class NpcAndKorokSystem {
 
       // Build distinct 3D puzzle prop per family!
       let propMesh: THREE.Object3D;
+      let magnesisBody: PhysicsBody | undefined;
       const targetPos = new THREE.Vector3(x, y, z);
       if (puzzleFamily === 'lift_rock') {
         const rock = new THREE.Mesh(
@@ -841,14 +853,71 @@ export class NpcAndKorokSystem {
           new THREE.MeshBasicMaterial({ color: '#5c4e3c', wireframe: true })
         );
         frame.position.y = 0.75;
-        const cube = new THREE.Mesh(
-          new THREE.BoxGeometry(1.3, 1.3, 1.3),
-          createBotWToonMaterial({ color: '#8e7448', emissive: '#382210', emissiveIntensity: 0.35, metalHighlight: true })
-        );
-        cube.position.set(3.2, 0.65, 0);
-        grp.add(frame, cube);
+        grp.add(frame);
         propMesh = grp;
         targetPos.set(x, y + 0.75, z);
+
+        if (!found) {
+          const cubeWorldX = x + 3.2;
+          const cubeWorldZ = z;
+          const cubeWorldY = getTerrainHeight(cubeWorldX, cubeWorldZ) + 0.65;
+          const cubeMat = createBotWToonMaterial({
+            color: '#8e7448',
+            emissive: '#382210',
+            emissiveIntensity: 0.35,
+            metalHighlight: true,
+          });
+          const cubeMesh = new THREE.Mesh(new THREE.BoxGeometry(1.3, 1.3, 1.3), cubeMat);
+          const cubeHolder = new THREE.Group();
+          cubeHolder.position.set(cubeWorldX, cubeWorldY, cubeWorldZ);
+          cubeHolder.add(cubeMesh);
+          this.group.add(cubeHolder);
+
+          if (this.physics) {
+            const body: PhysicsBody = {
+              id: `korok_mag_${id}`,
+              labelJa: 'コログの鉄ブロック（マグネキャッチ）',
+              mesh: cubeHolder,
+              position: new THREE.Vector3(cubeWorldX, cubeWorldY, cubeWorldZ),
+              velocity: new THREE.Vector3(),
+              angularVelocity: new THREE.Vector3(),
+              mass: 2.5,
+              radius: 0.85,
+              halfWidth: 0.65,
+              halfDepth: 0.65,
+              halfHeight: 0.65,
+              material: 'Metal',
+              isMetal: true,
+              isStatic: false,
+              isMetalBox: true,
+              isBurning: false,
+              burnTimer: 0,
+              isElectrified: false,
+              shockTimer: 0,
+              isFrozenStasis: false,
+              stasisTimer: 0,
+              stasisHits: 0,
+              stasisAccumImpulse: new THREE.Vector3(),
+              magnesisGrabbed: false,
+              buoyant: false,
+              grounded: true,
+              onMagnesisHighlight: (state) => {
+                if (state === 2) {
+                  cubeMat.emissive.set('#ffdf38');
+                  cubeMat.emissiveIntensity = 1.4;
+                } else if (state === 1) {
+                  cubeMat.emissive.set('#ff3b48');
+                  cubeMat.emissiveIntensity = 0.9;
+                } else {
+                  cubeMat.emissive.set('#382210');
+                  cubeMat.emissiveIntensity = 0.35;
+                }
+              },
+            };
+            magnesisBody = body;
+            this.physics.addBody(body);
+          }
+        }
       } else if (puzzleFamily === 'shoot_target') {
         const balloon = new THREE.Mesh(
           new THREE.SphereGeometry(0.62, 10, 8),
@@ -901,6 +970,7 @@ export class NpcAndKorokSystem {
         root,
         propMesh,
         korokMesh,
+        magnesisBody,
       });
     });
   }
@@ -913,6 +983,13 @@ export class NpcAndKorokSystem {
     korok.found = true;
     korok.propMesh.visible = false;
     korok.korokMesh.visible = true;
+    if (korok.magnesisBody) {
+      korok.magnesisBody.position.copy(korok.targetPos);
+      korok.magnesisBody.velocity.set(0, 0, 0);
+      korok.magnesisBody.isStatic = true;
+      korok.magnesisBody.magnesisGrabbed = false;
+      korok.magnesisBody.mesh.position.copy(korok.targetPos);
+    }
     return true;
   }
 
@@ -959,10 +1036,29 @@ export class NpcAndKorokSystem {
   /**
    * Magnesis metal block placement check for `magnesis_block` Korok puzzles.
    */
-  public tryMagnesisSolveKorok(blockPos: THREE.Vector3, snapRadius = 2.4): WorldKorok | null {
+  public tryMagnesisSolveKorok(blockPos: THREE.Vector3, snapRadius = 1.6): WorldKorok | null {
     for (const k of this.koroks) {
       if (k.found || k.puzzleFamily !== 'magnesis_block') continue;
       if (Math.hypot(blockPos.x - k.targetPos.x, blockPos.z - k.targetPos.z) <= snapRadius) {
+        this.revealKorok(k);
+        return k;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Checks all registered Magnesis Korok physical cubes against their socket targetPos (within 1.6m).
+   * Auto-snaps the cube into the socket and reveals the Korok!
+   */
+  public checkKorokMagnesisPlacement(snapRadius = 1.6): WorldKorok | null {
+    for (const k of this.koroks) {
+      if (k.found || k.puzzleFamily !== 'magnesis_block' || !k.magnesisBody) continue;
+      const d = Math.hypot(
+        k.magnesisBody.position.x - k.targetPos.x,
+        k.magnesisBody.position.z - k.targetPos.z
+      );
+      if (d <= snapRadius) {
         this.revealKorok(k);
         return k;
       }

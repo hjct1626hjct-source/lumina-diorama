@@ -507,8 +507,8 @@ export const ALL_MEMORIES: MemoryDef[] = [
     titleJa: '英傑たちの詩',
     isDlc: true,
     region: 'great_plateau',
-    pos: { x: -305, z: 455 },
-    locationJa: '始まりの台地・回生の祠 地下最終試練',
+    pos: { x: -348, z: 455 },
+    locationJa: '始まりの台地・回生の祠 奥の祭壇（DLC2）',
     summaryJa:
       '五人の英傑の就任式を終えた直後、ハイラル城中庭にてプルアのシーカーストーンで記念のウツシエを撮影するかけがえのないひととき。ダルケルの豪快な抱擁に全員が押しつぶされながらも笑い合う、大厄災前の最も温かく幸せな記憶。この写し絵はハテノ村のマイホームに飾られる。',
     dialogueLines: [

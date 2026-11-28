@@ -30,6 +30,7 @@ import {
   applyDivineBeastLiberationRewards,
   type DivineBeastId,
 } from '../src/world/DivineBeastInteriorManager';
+import { ArchitectureBuilder } from '../src/world/ArchitectureBuilder';
 import {
   HyruleCastleInteriorManager,
   HYRULE_CASTLE_SANCTUM_Y,
@@ -853,6 +854,97 @@ describe('v8 PART 2.3: 33 Real Korok Puzzles & Wild Horse Taming', () => {
     // Register at Stable -> registered!
     expect(npcs.registerHorseAtStable(horse).registered).toBe(true);
     expect(horse.tameState).toBe('registered');
+  });
+});
+
+describe('v9: Memory Visibility Gating, Korok Magnesis PhysicsBody & Great Plateau Warm Doublet', () => {
+  it('hides all memory spots (including EX#5) on new game, reveals base memories on Paraglider, and DLC2 memories after all 4 Divine Beasts', () => {
+    const scene = new THREE.Scene();
+    const physics = new PhysicsChemistryEngine(scene);
+    const arch = new ArchitectureBuilder(scene, physics);
+    const save = createDefaultSave('normal');
+
+    arch.buildMemoryBeams(
+      ALL_MEMORIES.map((m) => ({ id: m.id, titleJa: m.titleJa, x: m.pos.x, z: m.pos.z, isDlc: m.isDlc })),
+      save.unlockedMemories
+    );
+    arch.syncMemorySpotsVisibility(save);
+
+    // New game (hasParaglider=false, defeatedDivineBeasts=[]) -> ALL memory spots hidden & non-interactable!
+    expect(arch.memorySpots.length).toBeGreaterThan(10);
+    expect(arch.memorySpots.every((m) => !m.visible && !m.pillarMesh.visible && !m.ringMesh.visible)).toBe(true);
+
+    // EX#5 is also relocated away from Shrine of Resurrection exit (-306, 455)
+    const ex5 = arch.memorySpots.find((m) => m.memoryId === 'mem_ex_05_champions_ballad')!;
+    expect(ex5).toBeDefined();
+    expect(ex5.isDlc).toBe(true);
+    expect(Math.hypot(ex5.position.x - (-306), ex5.position.z - 455)).toBeGreaterThan(20);
+
+    // Acquire Paraglider -> Base memories visible, DLC2 memories still hidden!
+    save.hasParaglider = true;
+    arch.syncMemorySpotsVisibility(save);
+    const baseMemories = arch.memorySpots.filter((m) => !m.isDlc);
+    const dlcMemories = arch.memorySpots.filter((m) => m.isDlc);
+    expect(baseMemories.length).toBeGreaterThan(0);
+    expect(dlcMemories.length).toBeGreaterThan(0);
+    expect(baseMemories.every((m) => m.visible && m.pillarMesh.visible)).toBe(true);
+    expect(dlcMemories.every((m) => !m.visible && !m.pillarMesh.visible)).toBe(true);
+
+    // Free all 4 Divine Beasts -> DLC2 memories (including EX#5) become visible!
+    save.defeatedDivineBeasts = ['vah_ruta', 'vah_rudania', 'vah_medoh', 'vah_naboris'];
+    arch.syncMemorySpotsVisibility(save);
+    expect(dlcMemories.every((m) => m.visible && m.pillarMesh.visible)).toBe(true);
+  });
+
+  it('registers Korok magnesis_block cubes as real metal PhysicsBodies and solves via checkKorokMagnesisPlacement', () => {
+    const scene = new THREE.Scene();
+    const physics = new PhysicsChemistryEngine(scene);
+    const npcs = new NpcAndKorokSystem(scene, physics);
+    npcs.populateAll([]);
+
+    const magKoroks = npcs.koroks.filter((k) => k.puzzleFamily === 'magnesis_block');
+    expect(magKoroks.length).toBeGreaterThan(0);
+
+    const k = magKoroks[0];
+    expect(k.magnesisBody).toBeDefined();
+    expect(k.magnesisBody!.isMetal).toBe(true);
+    expect(k.magnesisBody!.material).toBe('Metal');
+    expect(physics.bodies.some((b) => b.id === k.magnesisBody!.id)).toBe(true);
+
+    // Before moving the cube into socket -> not solved!
+    expect(npcs.checkKorokMagnesisPlacement(1.6)).toBeNull();
+    expect(k.found).toBe(false);
+
+    // Carry metal cube via Magnesis into targetPos (within 1.6m) -> auto-snaps & reveals Korok!
+    k.magnesisBody!.position.set(k.targetPos.x + 0.5, k.targetPos.y, k.targetPos.z - 0.4);
+    const solved = npcs.checkKorokMagnesisPlacement(1.6);
+    expect(solved).toBe(k);
+    expect(k.found).toBe(true);
+    expect(k.korokMesh.visible).toBe(true);
+    expect(k.magnesisBody!.position.distanceTo(k.targetPos)).toBeLessThan(0.01);
+  });
+
+  it('provides Warm Doublet on the Great Plateau and prevents cold hazard damage when equipped', () => {
+    const scene = new THREE.Scene();
+    const physics = new PhysicsChemistryEngine(scene);
+    const arch = new ArchitectureBuilder(scene, physics);
+    arch.buildTreasureChests([]);
+
+    const warmChest = arch.chests.find((c) => c.id === 'chest_plateau_warm_doublet');
+    expect(warmChest).toBeDefined();
+    expect(warmChest!.rewardType).toBe('armor');
+    expect(warmChest!.rewardId).toBe('warm_doublet');
+
+    const save = createDefaultSave('normal');
+    // Naked on Great Plateau snow peak -> coldResist is 0
+    const nakedArmor = computeArmorSummary(save.equippedArmor, save.armorStars);
+    expect(nakedArmor.coldResist).toBe(0);
+
+    // Equip Warm Doublet -> coldResist >= 1 (protects against Great Plateau Mt. Hylia cold!)
+    save.ownedArmorIds.push('warm_doublet');
+    save.equippedArmor.body = 'warm_doublet';
+    const warmArmor = computeArmorSummary(save.equippedArmor, save.armorStars);
+    expect(warmArmor.coldResist).toBeGreaterThanOrEqual(1);
   });
 });
 
