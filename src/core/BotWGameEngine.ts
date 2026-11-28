@@ -24,6 +24,12 @@ import {
   ShrineInteriorManager,
   PLATEAU_SHRINE_RUNE_MAP as SHRINE_RUNE_INFO,
 } from '../world/ShrineInteriorManager';
+import {
+  DivineBeastInteriorManager,
+  DIVINE_BEAST_METAS,
+  applyDivineBeastLiberationRewards,
+  type DivineBeastId,
+} from '../world/DivineBeastInteriorManager';
 import { getRegionAt, getTerrainHeight } from '../world/TerrainGenerator';
 import { PhysicsChemistryEngine } from '../physics/PhysicsChemistryEngine';
 import { SheikahRuneSystem } from '../gameplay/SheikahRunes';
@@ -79,7 +85,12 @@ type NearbyInteractable =
   | { kind: 'shrineInteriorPedestal'; label: string }
   | { kind: 'shrineInteriorAltar'; label: string }
   | { kind: 'shrineInteriorChest'; id: string; label: string }
-  | { kind: 'shrineInteriorExit'; label: string };
+  | { kind: 'shrineInteriorExit'; label: string }
+  | { kind: 'divineBeastBoard'; beastId: DivineBeastId; label: string }
+  | { kind: 'beastTerminal'; id: string; label: string }
+  | { kind: 'beastMainUnit'; label: string }
+  | { kind: 'beastTorch'; id: string; label: string }
+  | { kind: 'beastExit'; label: string };
 
 /**
  * Master 60fps Three.js WebGL2 Open-Air Breath of the Wild Engine (PC & iPad Multi-Touch Ready).
@@ -99,6 +110,7 @@ export class BotWGameEngine {
   public physics!: PhysicsChemistryEngine;
   public architecture!: ArchitectureBuilder;
   public shrineInterior!: ShrineInteriorManager;
+  public divineBeastInterior!: DivineBeastInteriorManager;
   public runes!: SheikahRuneSystem;
   public player!: PlayerController;
   public enemies!: EnemyAndBossSystem;
@@ -221,6 +233,7 @@ export class BotWGameEngine {
 
     this.architecture = new ArchitectureBuilder(this.scene, this.physics);
     this.shrineInterior = new ShrineInteriorManager(this.scene, this.physics);
+    this.divineBeastInterior = new DivineBeastInteriorManager(this.scene, this.physics);
     this.runes = new SheikahRuneSystem(this.scene);
     this.player = new PlayerController(this.scene);
     this.enemies = new EnemyAndBossSystem(this.scene);
@@ -235,6 +248,7 @@ export class BotWGameEngine {
     this.ui = new BotWHudAndMenu({
       onStartNewGame: (mode, skipIntro) => {
         if (this.shrineInterior.isActive()) this.exitShrineImmediate();
+        if (this.divineBeastInterior.isActive()) this.exitDivineBeastImmediate();
         this.save = createDefaultSave(mode);
         this.ensureSettingsDefaults();
         this.runes.selectRune(null);
@@ -255,6 +269,9 @@ export class BotWGameEngine {
         if (this.shrineInterior.isActive()) {
           this.exitShrineImmediate();
         }
+        if (this.divineBeastInterior.isActive()) {
+          this.exitDivineBeastImmediate();
+        }
         this.player.teleportTo(x, z, 0.5);
         this.terrain.update(x, z);
         this.ui.showToast(`🌀 ワープ完了：${labelJa}`, 'cyan');
@@ -268,6 +285,7 @@ export class BotWGameEngine {
         const loaded = await saveManager.load(slotId as SaveSlotId);
         if (loaded) {
           if (this.shrineInterior.isActive()) this.exitShrineImmediate();
+          if (this.divineBeastInterior.isActive()) this.exitDivineBeastImmediate();
           this.save = loaded;
           this.ensureSettingsDefaults();
           this.applyLoadedSave();
@@ -333,6 +351,7 @@ export class BotWGameEngine {
       onTogglePause: (p) => {
         this.paused = p;
       },
+      onOpenBeastControl: () => this.openDivineBeastControl(),
       onSettingsChanged: () => this.applyUserSettings(),
       onNotify: (t, a) => this.ui.showToast(t, a),
     });
@@ -511,6 +530,13 @@ export class BotWGameEngine {
         y: this.shrineInterior.overworldReturnPos.y,
         z: this.shrineInterior.overworldReturnPos.z,
         yaw: this.shrineInterior.overworldReturnYaw,
+      };
+    } else if (this.divineBeastInterior.isActive()) {
+      this.save.playerPos = {
+        x: this.divineBeastInterior.overworldReturnPos.x,
+        y: this.divineBeastInterior.overworldReturnPos.y,
+        z: this.divineBeastInterior.overworldReturnPos.z,
+        yaw: this.divineBeastInterior.overworldReturnYaw,
       };
     } else {
       this.save.playerPos = {
@@ -699,6 +725,11 @@ export class BotWGameEngine {
         case 'KeyU':
           this.performMeleeAttack(true); // Charged Spin Attack + Urbosa's Fury!
           break;
+        case 'KeyT':
+          if (this.divineBeastInterior.isActive()) {
+            this.openDivineBeastControl();
+          }
+          break;
         case 'Digit1':
         case 'Digit2':
         case 'Digit3':
@@ -827,7 +858,10 @@ export class BotWGameEngine {
     fwd.y = 0;
     fwd.normalize();
 
-    const isRaining = !this.shrineInterior.isActive() && (this.climate?.weather === 'rain' || this.climate?.weather === 'thunderstorm');
+    const isRaining =
+      !this.shrineInterior.isActive() &&
+      !this.divineBeastInterior.isActive() &&
+      (this.climate?.weather === 'rain' || this.climate?.weather === 'thunderstorm');
     audioEngine.playRuneActivate(this.runes.activeRune);
 
     this.runes.activateCurrentRune({
@@ -846,6 +880,15 @@ export class BotWGameEngine {
           const ex = this.shrineInterior.onExplosion(pos, radius, damage);
           if (ex.destroyedWalls > 0) {
             this.ui.showToast('💥 ひび割れた岩壁を粉砕した！', 'amber');
+          }
+          return;
+        }
+        if (this.divineBeastInterior.isActive()) {
+          const ex = this.divineBeastInterior.onBombExploded(pos, radius);
+          if (ex.brokeFireShield) {
+            this.ui.showToast('💥 バクダンを吸い込ませて炎のバリアを破壊！炎のカースガノンがダウン！', 'amber');
+          } else if (ex.damagedBoss) {
+            this.ui.showToast('💥 バクダンがカースガノンに命中！', 'amber');
           }
           return;
         }
@@ -888,6 +931,14 @@ export class BotWGameEngine {
           const res = this.shrineInterior.onCryonisCreated(pillar.body.position);
           if (res.gateLifted) {
             this.ui.showToast('🧊 氷柱で巨大鉄格子を押し上げた！', 'cyan');
+          }
+        } else if (this.divineBeastInterior.isActive()) {
+          const res = this.divineBeastInterior.onCryonisCreated(pillar.body.position);
+          if (res.liftedGate) {
+            this.ui.showToast('🧊 ヴァ・ルッタの水門をアイスメイカーで押し上げた！', 'cyan');
+          }
+          if (res.shatteredIceBlock) {
+            this.ui.showToast('🧊 氷塊ブロックをアイスメイカーで粉砕した！', 'cyan');
           }
         }
       },
@@ -983,6 +1034,22 @@ export class BotWGameEngine {
         audioEngine.playHitImpact(false);
         if (shrineHit.hitGuardian.state === 'dead') {
           this.ui.showToast(`⚔ ${shrineHit.hitGuardian.nameJa} を撃破！`, 'amber');
+        }
+      }
+      return;
+    }
+
+    if (this.divineBeastInterior.isActive()) {
+      const reach = isSpin ? 5.0 : 3.8;
+      const hit = this.divineBeastInterior.onPlayerAttackBoss(this.player.position, fwd, reach, baseAtk, false);
+      if (hit.blockedByShield) {
+        audioEngine.playParryClang();
+        this.ui.showToast('🔥 炎のバリアに弾かれた！リモコンバクダンを吸い込ませて破壊しよう！', 'amber');
+      } else if (hit.hit) {
+        audioEngine.playHitImpact(!!hit.weakpoint);
+        if (hit.defeated) {
+          audioEngine.playChestFanfare();
+          this.ui.showToast('✨ カースガノン撃破！中央のメイン制御端末を起動して神獣を解放しよう！', 'amber');
         }
       }
       return;
@@ -1162,6 +1229,10 @@ export class BotWGameEngine {
           const sp = this.shrineInterior.getSpawnPos();
           this.player.setExactPosition(sp.x, sp.y + 0.05, sp.z);
           this.ui.showToast('祠の入り口へ戻されました', 'red');
+        } else if (this.divineBeastInterior.isActive()) {
+          const sp = this.divineBeastInterior.getSpawnPos();
+          this.player.setExactPosition(sp.x, sp.y + 0.05, sp.z);
+          this.ui.showToast('神獣の入り口へ戻されました', 'red');
         } else if (this.architecture.sorDoorOpened) {
           this.player.teleportTo(-298, 454, 0.5);
           this.ui.showToast('回生の祠で復活しました', 'red');
@@ -1184,6 +1255,15 @@ export class BotWGameEngine {
       if (hit.kind === 'altar') return { kind: 'shrineInteriorAltar', label: hit.label };
       if (hit.kind === 'chest') return { kind: 'shrineInteriorChest', id: hit.id, label: hit.label };
       return { kind: 'shrineInteriorExit', label: hit.label };
+    }
+
+    if (this.divineBeastInterior.isActive()) {
+      const hit = this.divineBeastInterior.getNearestInteractable(p);
+      if (!hit) return null;
+      if (hit.kind === 'terminal') return { kind: 'beastTerminal', id: hit.id, label: hit.label };
+      if (hit.kind === 'mainUnit') return { kind: 'beastMainUnit', label: hit.label };
+      if (hit.kind === 'torch') return { kind: 'beastTorch', id: hit.id, label: hit.label };
+      return { kind: 'beastExit', label: hit.label };
     }
 
     if (!this.architecture.sheikahSlateCollected && this.architecture.sheikahPedestalPos.distanceTo(p) < 3.4) {
@@ -1239,6 +1319,12 @@ export class BotWGameEngine {
       if (!sh.root.visible) continue;
       if (sh.position.distanceTo(p) < 7.5) {
         return { kind: 'shrine', shrine: sh, label: `${sh.nameJa}（${sh.subtitleJa}）に入る` };
+      }
+    }
+    for (const db of this.architecture.divineBeasts) {
+      if (db.freed) continue;
+      if (Math.hypot(db.position.x - p.x, db.position.z - p.z) < 35) {
+        return { kind: 'divineBeastBoard', beastId: db.id as DivineBeastId, label: `${db.nameJa} の内部へ乗り込む` };
       }
     }
     for (const tw of this.architecture.towers) {
@@ -1306,6 +1392,70 @@ export class BotWGameEngine {
 
     if (target.kind === 'shrineInteriorExit') {
       this.exitShrineWithFade();
+      return;
+    }
+
+    if (target.kind === 'divineBeastBoard') {
+      if (!canUseSheikahFeatures(this.save)) {
+        this.ui.showToast('シーカーストーンを持っていないため神獣内部へ侵入できません！', 'amber');
+        return;
+      }
+      this.enterDivineBeastWithFade(target.beastId);
+      return;
+    }
+
+    if (target.kind === 'beastTerminal') {
+      const res = this.divineBeastInterior.activateTerminal(target.id, this.save);
+      if (res.ok) {
+        audioEngine.playShrineChime();
+        this.ui.showToast(res.messageJa, res.allActivated ? 'amber' : 'cyan');
+      } else if (res.messageJa) {
+        this.ui.showToast(res.messageJa, 'amber');
+      }
+      return;
+    }
+
+    if (target.kind === 'beastTorch') {
+      if (this.divineBeastInterior.igniteTorch(target.id)) {
+        audioEngine.playUiConfirm();
+        this.ui.showToast('🔥 青い炎が灯り、神獣内部が明るくなった！', 'cyan');
+      }
+      return;
+    }
+
+    if (target.kind === 'beastMainUnit') {
+      const beastId = this.divineBeastInterior.activeBeastId;
+      if (!beastId) return;
+      if (this.divineBeastInterior.bossDefeatedInSession) {
+        const reward = applyDivineBeastLiberationRewards(this.save, beastId);
+        this.architecture.setDivineBeastFreed(beastId);
+        audioEngine.playChestFanfare();
+        this.ui.showToast(
+          `✨ ${DIVINE_BEAST_METAS[beastId].nameJa} 解放！ハートの器(+1) ＆ ${reward.championAbilityJa} を授かった！`,
+          'amber'
+        );
+        if (reward.allFourFreed) {
+          this.architecture.syncDlc2ShrinesVisibility(true);
+          this.ui.showToast('🏛 4体の神獣解放！始まりの台地に『英傑たちの詩』4祠が出現した！', 'amber');
+        }
+        this.exitDivineBeastWithFade();
+        return;
+      }
+      if (!this.divineBeastInterior.areAllTerminalsActivated()) {
+        const prog = this.divineBeastInterior.getTerminalProgress();
+        this.ui.showToast(`まだ制御端末が足りません（現在 ${prog.activated}/${prog.total} 起動済み）`, 'amber');
+        return;
+      }
+      const boss = this.divineBeastInterior.startBlightBossBattle(this.save);
+      if (boss) {
+        audioEngine.playShrineChime();
+        this.ui.showToast(`⚔️ ${boss.nameJa}（HP ${boss.maxHp}）が出現した！！`, 'red');
+      }
+      return;
+    }
+
+    if (target.kind === 'beastExit') {
+      this.exitDivineBeastWithFade();
       return;
     }
 
@@ -1518,6 +1668,99 @@ export class BotWGameEngine {
     this.player.yaw = out.returnYaw;
   }
 
+  public enterDivineBeastWithFade(beastId: DivineBeastId): void {
+    if (this.isShrineTransitioning || this.divineBeastInterior.isActive()) return;
+    if (this.shrineInterior.isActive()) this.exitShrineImmediate();
+    const meta = DIVINE_BEAST_METAS[beastId];
+    this.isShrineTransitioning = true;
+    this.paused = true;
+    this.ui.setShrineFade(true, meta.nameJa, meta.nameEn);
+    audioEngine.playShrineChime();
+
+    window.setTimeout(() => {
+      this.runes.clearTransientRunes(this.physics);
+      this.savedOverworldBg = this.scene.background;
+      this.savedOverworldFog = this.scene.fog;
+
+      this.terrain.group.visible = false;
+      this.architecture.group.visible = false;
+      this.npcs.group.visible = false;
+      this.enemies.group.visible = false;
+      this.weather.sunLight.visible = false;
+      this.scene.background = new THREE.Color(beastId === 'vah_rudania' ? '#120a08' : '#0b1824');
+      this.scene.fog = new THREE.Fog('#0c1824', 28, 120);
+
+      const entered = this.divineBeastInterior.enterBeast(beastId, this.save, this.player.position, this.player.yaw);
+      this.player.setExactPosition(entered.spawnPos.x, entered.spawnPos.y + 0.05, entered.spawnPos.z);
+      this.player.yaw = entered.spawnYaw;
+      this.input.cameraYaw = 0;
+      this.input.cameraPitch = 0.14;
+      this.ui.setDivineBeastHudVisible(true);
+
+      const prog = this.divineBeastInterior.getTerminalProgress();
+      this.ui.showRegionBanner(meta.nameJa, meta.nameEn);
+      this.ui.showToast(`⚙️ ${meta.nameJa} 内部へ突入！（制御端末 ${prog.activated}/${prog.total} • Tキー/画面右上から神獣操作可能）`, 'cyan');
+
+      window.setTimeout(() => {
+        this.ui.setShrineFade(false);
+        this.paused = false;
+        this.isShrineTransitioning = false;
+      }, 220);
+    }, 320);
+  }
+
+  public exitDivineBeastWithFade(): void {
+    if (!this.divineBeastInterior.isActive() || this.isShrineTransitioning) return;
+    this.isShrineTransitioning = true;
+    this.paused = true;
+    this.ui.setShrineFade(true, 'ハイラルへ帰還', 'RETURNING TO HYRULE');
+    audioEngine.playShrineChime();
+
+    window.setTimeout(() => {
+      this.exitDivineBeastImmediate();
+      window.setTimeout(() => {
+        this.ui.setShrineFade(false);
+        this.paused = false;
+        this.isShrineTransitioning = false;
+      }, 220);
+    }, 320);
+  }
+
+  private exitDivineBeastImmediate(): void {
+    this.runes.clearTransientRunes(this.physics);
+    const out = this.divineBeastInterior.exitBeast();
+    this.ui.setDivineBeastHudVisible(false);
+    this.terrain.group.visible = true;
+    this.architecture.group.visible = true;
+    this.npcs.group.visible = true;
+    this.enemies.group.visible = true;
+    this.weather.sunLight.visible = true;
+    this.scene.background = this.savedOverworldBg ?? new THREE.Color('#8ec8ec');
+    this.scene.fog = this.savedOverworldFog;
+    this.terrain.update(out.returnPos.x, out.returnPos.z);
+    this.player.teleportTo(out.returnPos.x, out.returnPos.z, 0.25);
+    this.player.yaw = out.returnYaw;
+  }
+
+  public openDivineBeastControl(): void {
+    const meta = this.divineBeastInterior.getMeta();
+    const pose = this.divineBeastInterior.getPoseSummary();
+    if (!meta || !pose) return;
+    const prog = this.divineBeastInterior.getTerminalProgress();
+    this.ui.openDivineBeastControlModal({
+      beastNameJa: meta.nameJa,
+      poseTitleJa: pose.titleJa,
+      currentLabel: pose.currentLabel,
+      options: pose.options,
+      activatedTerminals: prog.activated,
+      totalTerminals: prog.total,
+      onApplyOption: (idx) => {
+        audioEngine.playShrineChime();
+        return this.divineBeastInterior.applyPoseAction(idx);
+      },
+    });
+  }
+
   private updateArrows(dt: number, isRaining: boolean): void {
     for (let i = this.player.arrows.length - 1; i >= 0; i--) {
       const a = this.player.arrows[i];
@@ -1534,6 +1777,22 @@ export class BotWGameEngine {
         const shHit = this.shrineInterior.onPlayerMeleeOrArrowHit(a.position, a.velocity.clone().normalize(), 1.25, a.attack);
         if (shHit.hitGuardian || shHit.hitStasisBody) {
           audioEngine.playHitImpact(false);
+          hit = true;
+        }
+      } else if (this.divineBeastInterior.isActive()) {
+        const bHit = this.divineBeastInterior.onPlayerAttackBoss(a.position, a.velocity.clone().normalize(), 1.6, a.attack, true);
+        if (bHit.blockedByShield) {
+          audioEngine.playParryClang();
+          hit = true;
+        } else if (bHit.hit) {
+          audioEngine.playHitImpact(!!bHit.weakpoint);
+          if (bHit.weakpoint) {
+            this.ui.showToast('🎯 弱点の目に命中！風のカースガノンがダウンした！', 'cyan');
+          }
+          if (bHit.defeated) {
+            audioEngine.playChestFanfare();
+            this.ui.showToast('✨ カースガノン撃破！中央のメイン制御端末を起動して神獣を解放しよう！', 'amber');
+          }
           hit = true;
         }
       } else {
@@ -1703,10 +1962,12 @@ export class BotWGameEngine {
       this.save.playTimeSec += rawDt;
 
       const inShrine = this.shrineInterior.isActive();
+      const inBeast = this.divineBeastInterior.isActive();
+      const inInterior = inShrine || inBeast;
 
       // 1. Weather, Climate, Sky Dome & Blood Moon
       const activeWep = this.save.weapons.find((w) => w.id === this.save.equippedWeaponId);
-      if (!inShrine || !this.climate) {
+      if (!inInterior || !this.climate) {
         const nearFire =
           this.physics.isNearFire(this.player.position) ||
           this.architecture.isNearLitTorch(this.player.position) ||
@@ -1721,7 +1982,7 @@ export class BotWGameEngine {
           },
         });
       }
-      if (inShrine) {
+      if (inInterior) {
         this.climate = {
           ...this.climate,
           weather: 'sunny',
@@ -1737,11 +1998,11 @@ export class BotWGameEngine {
         };
       }
 
-      const isRaining = !inShrine && (this.climate.weather === 'rain' || this.climate.weather === 'thunderstorm');
+      const isRaining = !inInterior && (this.climate.weather === 'rain' || this.climate.weather === 'thunderstorm');
       const isNight = this.climate.timeHours >= 20 || this.climate.timeHours < 5;
 
       // 2. Terrain LOD Streaming + Wind Grass + Trees/Rocks + Prop Colliders (overworld only)
-      if (!inShrine) {
+      if (!inInterior) {
         this.terrain.update(this.player.position.x, this.player.position.z);
       }
 
@@ -1776,7 +2037,7 @@ export class BotWGameEngine {
 
       // Pre-Paraglider Great Plateau mist boundary guard: prevent leaving plateau before receiving Paraglider
       if (
-        !inShrine &&
+        !inInterior &&
         !this.save.hasParaglider &&
         this.player.position.y < 28 &&
         Math.hypot(this.player.position.x - (-245), this.player.position.z - 480) > 195
@@ -1787,7 +2048,7 @@ export class BotWGameEngine {
       }
 
       // 4. BTB (Bullet Time Bounce): Landing on a ragdolled enemy with Shield Surfing triggers massive 19x velocity bounce!
-      if (!inShrine && this.save.settings.glitchPhysics && this.player.shieldSurfing && !this.player.grounded) {
+      if (!inInterior && this.save.settings.glitchPhysics && this.player.shieldSurfing && !this.player.grounded) {
         for (const e of this.enemies.enemies) {
           if (e.alive && e.ragdollTimer > 0 && e.position.distanceTo(this.player.position) < 2.4) {
             const launch = this.player.getForwardDirection().multiplyScalar(58);
@@ -1798,7 +2059,7 @@ export class BotWGameEngine {
         }
       }
 
-      // 5. Physics & Chemistry Engine + Sheikah Runes + Arrows + Architecture / Shrine Interior
+      // 5. Physics & Chemistry Engine + Sheikah Runes + Arrows + Architecture / Shrine / Divine Beast Interior
       this.physics.update(worldDt, this.elapsedSec, isRaining);
       const fwd = this.player.getForwardDirection();
       const runeOut = this.runes.update(
@@ -1806,7 +2067,7 @@ export class BotWGameEngine {
         this.player.position,
         fwd,
         this.physics,
-        !inShrine && this.climate.weather === 'thunderstorm',
+        !inInterior && this.climate.weather === 'thunderstorm',
         this.climate.windStrength
       );
       if (runeOut.magnesisShockedPlayer && !armor.lightningProof) {
@@ -1837,6 +2098,13 @@ export class BotWGameEngine {
           audioEngine.playChestFanfare();
           this.ui.showToast('⚙️ 試練の扉が開いた！', 'cyan');
         }
+        if (shOut.boulderHit && this.player.invulnTimer <= 0) {
+          this.applyPlayerDamage(shOut.boulderHit.hearts);
+          this.player.velocity.copy(shOut.boulderHit.knockback);
+          this.player.grounded = false;
+          audioEngine.playHitImpact(false);
+          this.ui.showToast('🪨 転がる大岩に弾き飛ばされた！ (-1 ハート)', 'red');
+        }
         if (shOut.playerHit && this.player.invulnTimer <= 0) {
           const hit = shOut.playerHit;
           if (this.player.guarding && this.player.perfectGuardWindow > 0) {
@@ -1846,6 +2114,32 @@ export class BotWGameEngine {
             const dmgHearts = Math.max(0.25, (hit.damage - armor.totalDefense * 0.55) / 4);
             this.applyPlayerDamage(dmgHearts);
           }
+        }
+      } else if (inBeast) {
+        const dbOut = this.divineBeastInterior.update(worldDt, this.player.position, this.player.grounded);
+        if (dbOut.fellInPit) {
+          this.applyPlayerDamage(1.0);
+          this.player.velocity.set(0, 0, 0);
+          this.ui.showToast('⚠️ 神獣内部の奈落へ落下！足場へ戻された (-1 ハート)', 'amber');
+        }
+        if (dbOut.bossDownedByGimmick) {
+          audioEngine.playHitImpact(true);
+          this.ui.showToast(dbOut.bossDownedByGimmick, 'cyan');
+        }
+        if (dbOut.bossHitPlayer && this.player.invulnTimer <= 0) {
+          const hit = dbOut.bossHitPlayer;
+          if (this.player.guarding && this.player.perfectGuardWindow > 0) {
+            audioEngine.playParryClang();
+            this.divineBeastInterior.onPlayerPerfectCounterBoss();
+            this.ui.showToast('🛡 ジャストガード成功！カースガノンの体勢を崩した！！', 'amber');
+          } else {
+            const dmgHearts = Math.max(0.25, (hit.damage - armor.totalDefense * 0.55) / 4);
+            this.applyPlayerDamage(dmgHearts);
+            this.ui.showToast(`💥 ${hit.labelJa}`, 'red');
+          }
+        }
+        if (this.divineBeastInterior.activeBoss && this.divineBeastInterior.activeBoss.state !== 'dead') {
+          combatStatus.inCombat = true;
         }
       } else {
         this.architecture.update(worldDt, this.elapsedSec);
@@ -1911,9 +2205,14 @@ export class BotWGameEngine {
         void saveManager.save(getAutoSlotId(this.save.mode), this.save);
       }
 
+      const beastBoss =
+        inBeast && this.divineBeastInterior.activeBoss && this.divineBeastInterior.activeBoss.state !== 'dead'
+          ? this.divineBeastInterior.activeBoss
+          : null;
+
       // 10. Open-Air Web Audio Update (CEDEC 2017 spatial wind, insects, birds, 3-layer dynamic BGM!)
       const reg = getRegionAt(this.player.position.x, this.player.position.z);
-      const nearSettlement = !inShrine
+      const nearSettlement = !inInterior
         ? LANDMARKS.find(
             (l) =>
               (l.type === 'settlement' || l.type === 'stable') &&
@@ -1924,16 +2223,16 @@ export class BotWGameEngine {
         regionId: reg.id,
         timeHours: this.climate.timeHours,
         weather: this.climate.weather,
-        altitude: inShrine ? 50 : this.player.position.y,
+        altitude: inInterior ? 50 : this.player.position.y,
         speed: moveSpeed,
         isParagliding: this.player.paragliding,
         inSettlement: nearSettlement?.id ?? null,
-        inCombat: combatStatus.inCombat,
+        inCombat: combatStatus.inCombat || !!beastBoss,
         guardianLocked: combatStatus.guardianLocked,
-        bloodMoon: !inShrine && this.climate.isBloodMoonRising,
-        inHyruleCastle: !inShrine && Math.hypot(this.player.position.x - (-80), this.player.position.z - (-260)) < 140,
+        bloodMoon: !inInterior && this.climate.isBloodMoonRising,
+        inHyruleCastle: !inInterior && Math.hypot(this.player.position.x - (-80), this.player.position.z - (-260)) < 140,
         windStrength: this.climate.windStrength,
-        inBossFight: !!combatStatus.activeBoss,
+        inBossFight: !!combatStatus.activeBoss || !!beastBoss,
       });
 
       // 11. Nearest Interactable + ZL Reticle + Touch Interact Sync + HUD Projection
@@ -1955,6 +2254,12 @@ export class BotWGameEngine {
       const sx = (proj.x * 0.5 + 0.5) * window.innerWidth;
       const sy = (-proj.y * 0.5 + 0.5) * window.innerHeight;
 
+      const hudActiveBoss = beastBoss
+        ? { nameJa: beastBoss.nameJa, hp: beastBoss.hp, maxHp: beastBoss.maxHp }
+        : combatStatus.activeBoss && this.awakeningCutTimer <= 0 && this.panoramaCutTimer <= 0
+          ? { nameJa: combatStatus.activeBoss.nameJa, hp: combatStatus.activeBoss.hp, maxHp: combatStatus.activeBoss.maxHp }
+          : null;
+
       this.ui.updateHud(rawDt, {
         save: this.save,
         climate: this.climate,
@@ -1972,10 +2277,7 @@ export class BotWGameEngine {
         flurryRush: this.player.flurryRushTimer > 0,
         cameraModeActive: this.runes.cameraModeActive,
         cameraTargetName: this.runes.cameraModeActive ? this.detectCameraTarget()?.nameJa ?? null : null,
-        activeBoss:
-          combatStatus.activeBoss && this.awakeningCutTimer <= 0 && this.panoramaCutTimer <= 0
-            ? { nameJa: combatStatus.activeBoss.nameJa, hp: combatStatus.activeBoss.hp, maxHp: combatStatus.activeBoss.maxHp }
-            : null,
+        activeBoss: hudActiveBoss,
         interactLabel: this.nearestInteract?.label ?? null,
         korokMaskRattle: armor.korokDetect && npcOut.nearbyKorokDistance < 28,
         fps: this.fps,

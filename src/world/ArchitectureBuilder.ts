@@ -94,6 +94,7 @@ export interface KinematicDivineBeast {
   root: THREE.Group;
   movingPart: THREE.Object3D;
   laserBeam: THREE.Mesh;
+  materials: THREE.MeshToonMaterial[];
   freed: boolean;
 }
 
@@ -1040,9 +1041,22 @@ export class ArchitectureBuilder {
         root: grp,
         movingPart,
         laserBeam,
+        materials: [mat],
         freed,
       });
     }
+  }
+
+  public setDivineBeastFreed(beastId: string): void {
+    const db = this.divineBeasts.find((d) => d.id === beastId);
+    if (!db) return;
+    db.freed = true;
+    for (const m of db.materials) {
+      m.emissive.set('#20e8ff');
+      m.emissiveIntensity = 1.85;
+    }
+    const beamMat = db.laserBeam.material as THREE.MeshBasicMaterial;
+    beamMat.opacity = 0.65;
   }
 
   /**

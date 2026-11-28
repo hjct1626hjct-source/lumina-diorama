@@ -194,11 +194,6 @@ export class EnemyAndBossSystem {
       { id: 'lynel_pl', species: 'lynel', nameJa: 'ライネル', tier: 'red', x: 990, z: -170, baseHp: 2000, atk: 36, isBoss: true },
       { id: 'hinox_dp', species: 'hinox', nameJa: 'ヒノックス', tier: 'boss', x: 310, z: 440, baseHp: 600, atk: 26, isBoss: true },
       { id: 'stal_ak', species: 'stal_moblin', nameJa: 'スタルモリブリン', tier: 'blue', x: 980, z: -420, baseHp: 65, atk: 18 },
-      // 4 Blight Ganons near Divine Beasts (HP scales 800 -> 1200 -> 1600 -> 2000!)
-      { id: 'boss_waterblight', species: 'waterblight', nameJa: '水のカースガノン', tier: 'boss', x: 1105, z: -165, baseHp: computeBlightGanonHp(defeatedBlights), atk: 28, isBoss: true },
-      { id: 'boss_fireblight', species: 'fireblight', nameJa: '炎のカースガノン', tier: 'boss', x: 545, z: -855, baseHp: computeBlightGanonHp(defeatedBlights), atk: 28, isBoss: true },
-      { id: 'boss_windblight', species: 'windblight', nameJa: '風のカースガノン', tier: 'boss', x: -1055, z: -475, baseHp: computeBlightGanonHp(defeatedBlights), atk: 28, isBoss: true },
-      { id: 'boss_thunderblight', species: 'thunderblight', nameJa: '雷のカースガノン', tier: 'boss', x: -875, z: 965, baseHp: computeBlightGanonHp(defeatedBlights), atk: 32, isBoss: true },
       // DLC 2 Final Trial Boss: Monk Maz Koshia (in dedicated west plateau Trial Chamber arena!)
       { id: 'boss_maz_koshia', species: 'monk_maz_koshia', nameJa: '導師 ミィズ・キョシア', tier: 'boss', x: -395, z: 412, baseHp: 4000, atk: 34, isBoss: true },
     ];

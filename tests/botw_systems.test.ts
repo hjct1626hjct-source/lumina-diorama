@@ -20,9 +20,16 @@ import {
 import { getTerrainHeight, isNoBikeZone } from '../src/world/TerrainGenerator';
 import {
   PhysicsChemistryEngine,
+  computePlatformSupportGroundY,
   evaluateChemistryInteraction,
   evaluateElementVsElement,
 } from '../src/physics/PhysicsChemistryEngine';
+import {
+  DivineBeastInteriorManager,
+  DIVINE_BEAST_BASE_Y,
+  applyDivineBeastLiberationRewards,
+  type DivineBeastId,
+} from '../src/world/DivineBeastInteriorManager';
 import {
   ALL_MODEL_KEYS,
   DEFERRED_CHARACTER_MODELS,
@@ -461,4 +468,125 @@ describe('3D Spatial-Hash Collision, Camera Clamping & 21-GLB Progressive Loadin
     expect(PLATEAU_SHRINE_RUNE_MAP['shrine_keh_namut'].runes).toEqual(['cryonis']);
   });
 });
+
+describe('v7 Hotfixes & Phase B: 4 Divine Beasts 3D Interiors & Blight Ganon Battles', () => {
+  it('supports Oman Au 10.2m metal bridge spanning an 8m chasm via 9-point rotated footprint max height', () => {
+    // Chasm between z=-3.5 and z=4.5 drops to Y=593; North & South ledges sit at Y=600
+    const sampleOmanChasm = (_x: number, z: number) => (z > -3.5 && z < 4.5 ? 593 : 600);
+
+    // Bridge centered directly over chasm (z = 0.5) with halfDepth = 5.1 reaches z=-4.6 and z=5.6 (both on Y=600!)
+    const bridgeGroundY = computePlatformSupportGroundY(0, 0.5, 2.2, 5.1, 0, sampleOmanChasm);
+    expect(bridgeGroundY).toBe(600);
+
+    // Rotated 90° so length lies along X (both ends still over chasm z=0.5 ± 2.2 => z=-1.7..2.7) -> drops into chasm (593)
+    const rotatedGroundY = computePlatformSupportGroundY(0, 0.5, 2.2, 5.1, Math.PI / 2, sampleOmanChasm);
+    expect(rotatedGroundY).toBe(593);
+  });
+
+  it('supports entering all 4 Divine Beasts, 5 control terminals, mid-dungeon exit persistence, and real-time pose controls', () => {
+    const scene = new THREE.Scene();
+    const physics = new PhysicsChemistryEngine(scene);
+    const manager = new DivineBeastInteriorManager(scene, physics);
+    const save = createDefaultSave('normal');
+    save.hasSheikahSlate = true;
+
+    // 1. Vah Ruta: enter -> activate 2 terminals -> exit -> re-enter -> verify 2/5 preserved -> switch Trunk pose 0/1/2
+    const r1 = manager.enterBeast('vah_ruta', save, new THREE.Vector3(1120, 20, -180), 0);
+    expect(r1.spawnPos.y).toBe(DIVINE_BEAST_BASE_Y);
+    expect(manager.getTerminalProgress()).toEqual({ activated: 0, total: 5 });
+    expect(manager.activateTerminal('t1', save).ok).toBe(true);
+    expect(manager.activateTerminal('t2', save).ok).toBe(true);
+    expect(save.divineBeastTerminals['vah_ruta']).toEqual(['t1', 't2']);
+    manager.applyPoseAction(2);
+    expect(manager.poseIndex).toBe(2);
+    manager.exitBeast();
+    expect(manager.isActive()).toBe(false);
+
+    // Re-enter Vah Ruta -> 2 terminals must remain activated!
+    manager.enterBeast('vah_ruta', save, new THREE.Vector3(1120, 20, -180), 0);
+    expect(manager.getTerminalProgress()).toEqual({ activated: 2, total: 5 });
+    expect(manager.activateTerminal('t3', save).ok).toBe(true);
+    expect(manager.activateTerminal('t4', save).ok).toBe(true);
+    const r5 = manager.activateTerminal('t5', save);
+    expect(r5.ok).toBe(true);
+    expect(r5.allActivated).toBe(true);
+    manager.exitBeast();
+
+    // 2. Vah Rudania: 90° sideways tilt toggle + torch lighting
+    manager.enterBeast('vah_rudania', save, new THREE.Vector3(560, 180, -870), 0);
+    expect(manager.poseIndex).toBe(0);
+    manager.applyPoseAction(1);
+    expect(manager.poseIndex).toBe(1);
+    expect(manager.igniteTorch('rud_t1')).toBe(true);
+    expect(manager.rudaniaTorchesLit).toBe(1);
+    manager.exitBeast();
+
+    // 3. Vah Medoh: 3-stage Wing Seesaw Tilt (Left 0 / Level 1 / Right 2)
+    manager.enterBeast('vah_medoh', save, new THREE.Vector3(-1080, 120, -500), 0);
+    expect(manager.poseIndex).toBe(1);
+    manager.applyPoseAction(0);
+    expect(manager.poseIndex).toBe(0);
+    manager.applyPoseAction(2);
+    expect(manager.poseIndex).toBe(2);
+    manager.exitBeast();
+
+    // 4. Vah Naboris: 3 cylindrical drums [90, 180, 270] -> rotate to [0, 0, 0] to connect power circuit and unlock t5!
+    manager.enterBeast('vah_naboris', save, new THREE.Vector3(-890, 20, 980), 0);
+    expect(manager.naborisCircuitConnected).toBe(false);
+    expect(manager.activateTerminal('t5', save).ok).toBe(false); // Blocked until circuit connected!
+    // Front: 90 -> 180 -> 270 -> 0 (3 rotations); Mid: 180 -> 270 -> 0 (2); Rear: 270 -> 0 (1)
+    manager.applyPoseAction(0);
+    manager.applyPoseAction(0);
+    manager.applyPoseAction(0);
+    manager.applyPoseAction(1);
+    manager.applyPoseAction(1);
+    manager.applyPoseAction(2);
+    expect(manager.naborisDrumAngles).toEqual([0, 0, 0]);
+    expect(manager.naborisCircuitConnected).toBe(true);
+    expect(manager.activateTerminal('t5', save).ok).toBe(true);
+    manager.exitBeast();
+  });
+
+  it('scales Blight Ganon HP (800->1200->1600->2000), grants Heart Container +1, unlocks Champion Abilities, and unlocks DLC2 shrines after all 4 beasts', () => {
+    const scene = new THREE.Scene();
+    const physics = new PhysicsChemistryEngine(scene);
+    const manager = new DivineBeastInteriorManager(scene, physics);
+    const save = createDefaultSave('normal');
+    save.hasSheikahSlate = true;
+
+    const beasts: Array<{ id: DivineBeastId; expectedHp: number; champ: keyof typeof save.champions }> = [
+      { id: 'vah_ruta', expectedHp: 800, champ: 'mipha' },
+      { id: 'vah_rudania', expectedHp: 1200, champ: 'daruk' },
+      { id: 'vah_medoh', expectedHp: 1600, champ: 'revali' },
+      { id: 'vah_naboris', expectedHp: 2000, champ: 'urbosa' },
+    ];
+
+    let expectedHearts = 3;
+    for (let i = 0; i < beasts.length; i++) {
+      const b = beasts[i];
+      expect(computeBlightGanonHp(save.defeatedDivineBeasts.length)).toBe(b.expectedHp);
+
+      manager.enterBeast(b.id, save, new THREE.Vector3(0, 10, 0), 0);
+      const boss = manager.startBlightBossBattle(save);
+      expect(boss).not.toBeNull();
+      expect(boss!.maxHp).toBe(b.expectedHp);
+
+      // Defeat boss and claim liberation rewards
+      const reward = applyDivineBeastLiberationRewards(save, b.id);
+      expectedHearts += 1;
+      expect(reward.newlyFreed).toBe(true);
+      expect(reward.newMaxHearts).toBe(expectedHearts);
+      expect(save.maxHearts).toBe(expectedHearts);
+      expect(save.champions[b.champ].unlocked).toBe(true);
+      expect(save.champions[b.champ].charges).toBe(save.champions[b.champ].maxCharges);
+      expect(reward.allFourFreed).toBe(i === 3);
+
+      manager.exitBeast();
+    }
+
+    expect(save.defeatedDivineBeasts).toEqual(['vah_ruta', 'vah_rudania', 'vah_medoh', 'vah_naboris']);
+    expect(save.maxHearts).toBe(7); // 3 base + 4 Heart Containers!
+  });
+});
+
 

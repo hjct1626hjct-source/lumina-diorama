@@ -80,6 +80,7 @@ export interface UiCallbacks {
   onCookDone: (mealName: string, critical: boolean) => void;
   onWaitAtFire: (targetHour: number) => void;
   onTogglePause: (paused: boolean) => void;
+  onOpenBeastControl?: () => void;
   onSettingsChanged?: () => void;
   onNotify: (text: string, accent?: 'cyan' | 'amber' | 'red') => void;
 }
@@ -173,6 +174,7 @@ export class BotWHudAndMenu {
   private elBtnHudSlate!: HTMLElement;
   private elBtnHudMap!: HTMLElement;
   private elBtnHudPro!: HTMLElement;
+  private elBtnBeastCtrl!: HTMLElement;
   private elSlateModal!: HTMLElement;
   private elSlateBody!: HTMLElement;
   private elDialogueBox!: HTMLElement;
@@ -299,6 +301,7 @@ export class BotWHudAndMenu {
         </div>
 
         <div class="hud-top-right">
+          <button id="btn-hud-beast-ctrl" class="hud-chip-btn hidden" type="button" style="border-color:rgba(54,228,255,0.75);color:#7cf2ff;">⚙️ 神獣操作 (T)</button>
           <button id="btn-hud-slate" class="hud-chip-btn" type="button">📱 ポーチ (Tab)</button>
           <button id="btn-hud-map" class="hud-chip-btn" type="button">🗺️ マップ (M)</button>
           <button id="btn-hud-adv" class="hud-chip-btn" type="button">📜 冒険手帳</button>
@@ -392,6 +395,7 @@ export class BotWHudAndMenu {
     this.elBtnHudSlate = document.getElementById('btn-hud-slate')!;
     this.elBtnHudMap = document.getElementById('btn-hud-map')!;
     this.elBtnHudPro = document.getElementById('btn-hud-pro')!;
+    this.elBtnBeastCtrl = document.getElementById('btn-hud-beast-ctrl')!;
     this.elSlateModal = document.getElementById('slate-modal')!;
     this.elSlateBody = document.getElementById('slate-body')!;
     this.elDialogueBox = document.getElementById('dialogue-box')!;
@@ -422,6 +426,7 @@ export class BotWHudAndMenu {
       this.cb.onStartNewGame('master', false);
     });
 
+    this.bindTap(this.elBtnBeastCtrl, () => this.cb.onOpenBeastControl?.());
     this.bindTap(document.getElementById('btn-hud-slate'), () => this.openSlate('inventory'));
     this.bindTap(document.getElementById('btn-hud-map'), () => this.openSlate('map'));
     this.bindTap(document.getElementById('btn-hud-adv'), () => this.openSlate('adventure'));
@@ -1621,6 +1626,50 @@ export class BotWHudAndMenu {
       this.showToast(res.messageJa, res.ok ? 'cyan' : 'red');
       if (res.ok) this.openGoddessStatueModal();
     });
+  }
+
+  public setDivineBeastHudVisible(visible: boolean): void {
+    this.elBtnBeastCtrl.classList.toggle('hidden', !visible);
+    if (visible) {
+      this.elBtnBeastCtrl.textContent = this.isTouchUi() ? '⚙️ 神獣操作' : '⚙️ 神獣操作 (T)';
+    }
+  }
+
+  public openDivineBeastControlModal(params: {
+    beastNameJa: string;
+    poseTitleJa: string;
+    currentLabel: string;
+    options: string[];
+    activatedTerminals: number;
+    totalTerminals: number;
+    onApplyOption: (idx: number) => string;
+  }): void {
+    this.openSubModalHtml(
+      `⚙️ ${params.beastNameJa} — 3D構造・体勢操作`,
+      `
+        <div class="list-card">
+          <h4>${params.poseTitleJa}</h4>
+          <p>現在の状態：<strong style="color:#42ecff;">${params.currentLabel}</strong></p>
+          <p style="margin-top:4px;color:#b8d4e8;">制御端末の起動状況：<strong>${params.activatedTerminals} / ${params.totalTerminals}</strong>（5つ起動で中央のメイン制御端末が解放）</p>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;">
+          ${params.options
+            .map(
+              (opt, idx) =>
+                `<button class="botw-btn primary" data-beast-pose="${idx}" type="button">${opt}</button>`
+            )
+            .join('')}
+        </div>
+      `
+    );
+    this.elSubModal.querySelectorAll('[data-beast-pose]').forEach((el) =>
+      this.bindTap(el, () => {
+        const idx = Number((el as HTMLElement).dataset.beastPose!);
+        const msg = params.onApplyOption(idx);
+        this.closeSubModal();
+        if (msg) this.showToast(msg, 'cyan');
+      })
+    );
   }
 
   public openDyeShopModal(): void {

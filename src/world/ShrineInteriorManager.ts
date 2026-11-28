@@ -473,7 +473,7 @@ export class ShrineInteriorManager {
       position: new THREE.Vector3(x, y, z),
       opened: alreadyOpened,
       openAnim: alreadyOpened ? 1 : 0,
-      root: undefined as never,
+      root,
       lidPivot,
       glowBeam,
     });
@@ -615,25 +615,25 @@ export class ShrineInteriorManager {
       pitGlow1.position.set(0, y0 - 6.95, 0.5);
       this.shrineGroup.add(pitGlow1);
 
-      // Movable Magnesis Metal Bridge Slab placed on South Terrace left side (ready to grab & span chasm!)
+      // Movable Magnesis Metal Bridge Slab placed on South Terrace left side (10.2m long to span 8m chasm cleanly!)
       const bridgeGrp = new THREE.Group();
-      const slabMesh = new THREE.Mesh(new THREE.BoxGeometry(4.4, 0.45, 7.2), this.metalMagMat.clone());
+      const slabMesh = new THREE.Mesh(new THREE.BoxGeometry(4.4, 0.45, 10.2), this.metalMagMat.clone());
       slabMesh.position.y = 0.225;
-      const slabTrim = new THREE.Mesh(new THREE.BoxGeometry(4.46, 0.14, 7.26), this.trimCyanMat);
+      const slabTrim = new THREE.Mesh(new THREE.BoxGeometry(4.46, 0.14, 10.26), this.trimCyanMat);
       slabTrim.position.y = 0.225;
       bridgeGrp.add(slabMesh, slabTrim);
-      bridgeGrp.position.set(-4.6, y0, 9.2);
+      bridgeGrp.position.set(-4.6, y0, 10.2);
       this.shrineGroup.add(bridgeGrp);
       const slabBody = this.createDynamicBody(
         'oman_metal_bridge',
         'マグネキャッチ金属橋',
         bridgeGrp,
-        new THREE.Vector3(-4.6, y0, 9.2),
+        new THREE.Vector3(-4.6, y0, 10.2),
         {
           mass: 6.5,
-          radius: 3.6,
+          radius: 5.1,
           halfWidth: 2.2,
-          halfDepth: 3.6,
+          halfDepth: 5.1,
           halfHeight: 0.225,
           material: 'Metal',
           isStatic: false,
@@ -837,12 +837,12 @@ export class ShrineInteriorManager {
       );
       this.physics.addBody(this.rollingBoulder);
 
-      // Altar Corridor Partition + Giant Blocker Boulder (Stasis + Melee Strikes blast it away!)
-      this.addStaticRoomBox('owa_block_w', -8.0, -23.0, 9.6, 2.0, y0 + 3.4, y0 + 10.5, this.darkWallMat);
-      this.addStaticRoomBox('owa_block_e', 8.0, -23.0, 9.6, 2.0, y0 + 3.4, y0 + 10.5, this.darkWallMat);
+      // Altar Corridor Partition (4.2m gap: x in -2.1..2.1) + Giant Blocker Boulder (radius 2.55m -> seals gap completely!)
+      this.addStaticRoomBox('owa_block_w', -7.8, -23.0, 11.4, 2.0, y0 + 3.4, y0 + 10.5, this.darkWallMat);
+      this.addStaticRoomBox('owa_block_e', 7.8, -23.0, 11.4, 2.0, y0 + 3.4, y0 + 10.5, this.darkWallMat);
       const blkGrp = new THREE.Group();
-      const blkMesh = new THREE.Mesh(new THREE.DodecahedronGeometry(2.15, 0), rollMat.clone());
-      blkMesh.position.y = 2.0;
+      const blkMesh = new THREE.Mesh(new THREE.DodecahedronGeometry(2.55, 0), rollMat.clone());
+      blkMesh.position.y = 2.45;
       blkGrp.add(blkMesh);
       blkGrp.position.set(0, y0 + 3.4, -22.2);
       this.shrineGroup.add(blkGrp);
@@ -853,8 +853,8 @@ export class ShrineInteriorManager {
         new THREE.Vector3(0, y0 + 3.4, -22.2),
         {
           mass: 5.5,
-          radius: 2.1,
-          halfHeight: 2.0,
+          radius: 2.55,
+          halfHeight: 2.45,
           material: 'Stone',
           isStatic: false,
           isBoulder: true,
@@ -1368,6 +1368,7 @@ export class ShrineInteriorManager {
   ): {
     fellInPit: boolean;
     playerHit?: { damage: number; fromPos: THREE.Vector3; isLaser: boolean };
+    boulderHit?: { hearts: number; knockback: THREE.Vector3 };
     switchUnlocked?: boolean;
   } {
     if (!this.activeShrine) return { fellInPit: false };
@@ -1409,10 +1410,22 @@ export class ShrineInteriorManager {
       }
     }
 
-    // Owa Daim: Respawn rolling boulder at top of slope if it rolls into pit
+    // Owa Daim: Rolling boulder damage + knockback when not frozen in Stasis, plus respawn at slope top
+    let boulderHit: { hearts: number; knockback: THREE.Vector3 } | undefined;
     if (this.rollingBoulder) {
       if (!this.rollingBoulder.isFrozenStasis) {
         this.rollingBoulder.mesh.rotation.x += this.rollingBoulder.velocity.z * dt * 0.65;
+        const dx = playerPos.x - this.rollingBoulder.position.x;
+        const dz = playerPos.z - this.rollingBoulder.position.z;
+        const distH = Math.hypot(dx, dz);
+        const dy = Math.abs(playerPos.y + 0.9 - (this.rollingBoulder.position.y + 1.4));
+        if (distH < this.rollingBoulder.radius + 0.65 && dy < 1.85) {
+          const kb = new THREE.Vector3(dx, 0, dz);
+          if (kb.lengthSq() < 0.01) kb.set(0, 0, 1);
+          kb.normalize().multiplyScalar(11.5);
+          kb.y = 5.8;
+          boulderHit = { hearts: 1.0, knockback: kb };
+        }
       }
       if (this.rollingBoulder.position.z > -3.8 || this.rollingBoulder.position.y < SHRINE_INTERIOR_BASE_Y - 3.0) {
         this.rollingBoulder.position.set(-1.2 + Math.sin(this.shrineTime) * 1.6, SHRINE_INTERIOR_BASE_Y + 3.45, -18.0);
@@ -1498,6 +1511,6 @@ export class ShrineInteriorManager {
       }
     }
 
-    return { fellInPit: false, playerHit, switchUnlocked };
+    return { fellInPit: false, playerHit, boulderHit, switchUnlocked };
   }
 }

@@ -1089,8 +1089,17 @@ export class PhysicsChemistryEngine {
         }
       }
 
-      // Terrain collision & slope rolling
-      const groundY = getTerrainHeight(b.position.x, b.position.z);
+      // Terrain collision & slope rolling (9-point footprint max height for bridges/platforms spanning chasms!)
+      const groundY =
+        b.isPlatform && b.halfWidth && b.halfDepth
+          ? computePlatformSupportGroundY(
+              b.position.x,
+              b.position.z,
+              b.halfWidth,
+              b.halfDepth,
+              b.rotY ?? b.mesh.rotation.y ?? 0
+            )
+          : getTerrainHeight(b.position.x, b.position.z);
       if (b.position.y <= groundY) {
         b.position.y = groundY;
         if (b.velocity.y < -3.5) {
@@ -1176,3 +1185,41 @@ export class PhysicsChemistryEngine {
     }
   }
 }
+
+/**
+ * Computes maximum supporting terrain height across 9 rotated footprint points
+ * (center, 4 corners, 4 edge midpoints) so Magnesis bridges spanning chasms rest firmly on both ledges.
+ */
+export function computePlatformSupportGroundY(
+  cx: number,
+  cz: number,
+  halfWidth: number,
+  halfDepth: number,
+  rotY = 0,
+  sampleHeight: (x: number, z: number) => number = getTerrainHeight
+): number {
+  const cosR = Math.cos(rotY);
+  const sinR = Math.sin(rotY);
+  let maxY = -Infinity;
+  const offsets: Array<[number, number]> = [
+    [0, 0],
+    [-halfWidth, -halfDepth],
+    [halfWidth, -halfDepth],
+    [-halfWidth, halfDepth],
+    [halfWidth, halfDepth],
+    [0, -halfDepth],
+    [0, halfDepth],
+    [-halfWidth, 0],
+    [halfWidth, 0],
+  ];
+  for (let i = 0; i < offsets.length; i++) {
+    const lx = offsets[i][0];
+    const lz = offsets[i][1];
+    const wx = cx + lx * cosR + lz * sinR;
+    const wz = cz - lx * sinR + lz * cosR;
+    const h = sampleHeight(wx, wz);
+    if (h > maxY) maxY = h;
+  }
+  return maxY;
+}
+

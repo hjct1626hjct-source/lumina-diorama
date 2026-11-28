@@ -173,6 +173,7 @@ export function createDefaultSave(mode: SaveMode): SaveSlotData {
     activeQuestId: 'main_follow_sheikah_slate',
     completedQuests: [],
     defeatedDivineBeasts: [],
+    divineBeastTerminals: {},
     storyFlags: mode === 'master' ? { master_mode_active: true } : {},
     levelSensorPoints: 0,
     speciesKillCounts: {},
@@ -432,6 +433,12 @@ function normalizeSaveData(raw: unknown, mode: SaveMode): SaveSlotData | null {
     unlockedMemories: Array.isArray(partial.unlockedMemories) ? [...partial.unlockedMemories] : [],
     completedQuests: Array.isArray(partial.completedQuests) ? [...partial.completedQuests] : [],
     defeatedDivineBeasts: Array.isArray(partial.defeatedDivineBeasts) ? [...partial.defeatedDivineBeasts] : [],
+    divineBeastTerminals:
+      partial.divineBeastTerminals && typeof partial.divineBeastTerminals === 'object'
+        ? Object.fromEntries(
+            Object.entries(partial.divineBeastTerminals).map(([k, v]) => [k, Array.isArray(v) ? [...v] : []])
+          )
+        : {},
     openedChests: Array.isArray(partial.openedChests) ? [...partial.openedChests] : [],
     heroPath: Array.isArray(partial.heroPath)
       ? deepClone(partial.heroPath).slice(-HERO_PATH_MAX_SAMPLES)

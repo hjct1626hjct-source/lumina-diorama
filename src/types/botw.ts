@@ -342,6 +342,7 @@ export interface SaveSlotData {
   activeQuestId: string;
   completedQuests: string[];
   defeatedDivineBeasts: string[];
+  divineBeastTerminals: Record<string, string[]>;
   storyFlags: Record<string, boolean>;
   levelSensorPoints: number;
   speciesKillCounts: Record<string, number>;

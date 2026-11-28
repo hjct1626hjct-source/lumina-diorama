@@ -1274,7 +1274,6 @@ html, body {
 
 /* ==================== NON-OVERLAPPING HUD CHOREOGRAPHY ON TOUCH DEVICES ==================== */
 body.touch-ui-active #btn-hud-adv,
-body.touch-ui-active #btn-hud-cook,
 body.touch-ui-active #btn-hud-pro {
   display: none;
 }
